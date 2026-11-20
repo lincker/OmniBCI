@@ -8,15 +8,22 @@ from omnibci.application.processing_source import (
     acquisition_binding_key, binding_for, materialize_processing_binding, processing_binding_key,
     processing_input, requires_signal_preparation, validate_plan_binding, validate_source_binding,
 )
+from omnibci.application.source_metadata import source_descriptor
+from omnibci.application.source_expectations import validate_source_expectations
+from omnibci.domain.ports.acquisition import SourceObservation
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 
 
+def descriptor(source, provenance="protocol-defined"):
+    return source_descriptor(SourceObservation(native_text="native", signal_info=source,
+        native_event="final-row", provenance=provenance), source_id="file_reader", connection_id="connection-one")
+
+
 @pytest.fixture
 def source():
-    return SignalInfo("file_reader", 250, tuple(
-        ChannelDescriptor(index, name, unit="uV") for index, name in enumerate(("C3", "C4", "M1"))),
-        3, connection_id="connection-one")
+    return SignalInfo(sample_rate=250, channels=tuple(
+        ChannelDescriptor(index, name, unit="uV", channel_id=f"channel-{index}") for index, name in enumerate(("C3", "C4", "M1"))))
 
 
 @pytest.fixture
@@ -111,32 +118,37 @@ def test_binding_key_copies_mutable_parameters(snapshot):
 @pytest.mark.parametrize("change,message", [
     ({"source_id": "another-device"}, "different acquisition source"),
     ({"sample_rate": 500}, "sample rate"),
-    ({"channels": (ChannelDescriptor(0, "C3"),), "trigger_row_index": 1}, "channel count"),
+    ({"channels": (ChannelDescriptor(0, "C3", channel_id="channel-0"),)}, "channel count"),
 ])
 def test_source_binding_rejects_descriptor_from_a_different_contract(snapshot, source, change, message):
-    validate_source_binding(snapshot, source)
+    metadata = descriptor(source)
+    validate_source_binding(snapshot, metadata)
+    if "source_id" in change:
+        metadata.update(change)
+    else:
+        metadata = descriptor(replace(source, **change))
     with pytest.raises(ValueError, match=message):
-        validate_source_binding(snapshot, replace(source, **change))
+        validate_source_binding(snapshot, metadata)
 
 
 @pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
 def test_reported_dimensions_remain_visible_but_mismatch_blocks_preparation(snapshot, source, provenance):
-    source = replace(source, sample_rate=1000, channels=source.channels[:2], trigger_row_index=2,
-                     provenance=provenance)
-    validate_source_binding(snapshot, source)
+    source = replace(source, sample_rate=1000, channels=source.channels[:2])
+    metadata = descriptor(source, provenance)
+    validate_source_binding(snapshot, metadata)
     with pytest.raises(ValueError, match="differs from the experiment profile"):
-        validate_plan_binding(snapshot, compile_processing_plan(source, processing_input(snapshot)))
+        validate_source_expectations(snapshot, metadata)
     with pytest.raises(ValueError, match="different acquisition source"):
-        validate_source_binding(snapshot, replace(source, source_id="another-device"))
+        validate_source_binding(snapshot, {**metadata, "source_id": "another-device"})
 
 
-def test_plan_binding_checks_mapping_and_source_identity(snapshot, source):
+def test_plan_binding_checks_mapping_while_host_checks_source_identity(snapshot, source):
     value = processing_input(snapshot)
     validate_plan_binding(snapshot, compile_processing_plan(source, value))
     with pytest.raises(ValueError, match="selected processing input"):
         validate_plan_binding(snapshot, compile_processing_plan(source, ProcessingInput()))
     with pytest.raises(ValueError, match="different acquisition source"):
-        validate_plan_binding(snapshot, compile_processing_plan(replace(source, source_id="different"), value))
+        validate_source_binding(snapshot, {**descriptor(source), "source_id": "different"})
 
 
 def test_unconfigured_snapshots_do_not_prepare():
@@ -166,8 +178,10 @@ def test_selected_decoder_without_input_still_requires_source_preparation(snapsh
 
 @pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
 def test_plan_uses_observed_source_values_for_unspecified_expectations(snapshot, source, provenance):
-    source = replace(source, provenance=provenance)
+    metadata = descriptor(source, provenance)
+    validate_source_expectations(snapshot, metadata)
     plan = compile_processing_plan(source, processing_input(snapshot))
     validate_plan_binding(snapshot, plan)
     binding_for(snapshot, "acquisition.source")["parameters"].pop("sample_rate")
+    validate_source_expectations(snapshot, metadata)
     validate_plan_binding(snapshot, plan)

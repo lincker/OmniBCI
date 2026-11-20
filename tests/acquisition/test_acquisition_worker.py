@@ -21,7 +21,7 @@ def test_managed_worker_forwards_runtime_logs_with_source_context():
     worker = AcquisitionWorker(command_queue=Queue(), log_queue=records, settings_snapshot={
         "ACQUISITION.signal_source": "selected-source", "CONFIG.generation": "generation",
     })
-    worker.data_source = MagicMock(spec=SignalSource)
+    worker.data_source = MagicMock(spec=SignalSource, trigger_mode="events", resume_mode="restart-only")
     with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
         runtime = runtime_class.return_value
         runtime.source_id, runtime.generation = "selected-source", "generation"
@@ -56,10 +56,9 @@ def test_connect_does_not_require_decoder_configuration(bindings):
     commands.put((AcquisitionCommand.connect, CommandRequest("connect")))
     commands.put((AcquisitionCommand.stop_acquisition, None))
     events = MagicMock()
-    source = MagicMock(spec=SignalSource)
-    source.is_connected = source.is_streaming = False
-    source.connect.side_effect = lambda: setattr(source, "is_connected", True) or True
-    source.disconnect.side_effect = lambda: setattr(source, "is_connected", False) or True
+    source = MagicMock(spec=SignalSource, trigger_mode="events", resume_mode="restart-only")
+    source.trigger_mode = "events"
+    source.resume_mode = "restart-only"
     worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot={
         "ACQUISITION.signal_source": "test-source", "PLUGINS.bindings": bindings,
     })
@@ -70,7 +69,7 @@ def test_connect_does_not_require_decoder_configuration(bindings):
     result = next(call.args[0].data for call in events.put_event.call_args_list
                   if call.args[0].type is EventType.CommandResult)
     assert result.ok
-    source.get_metadata.assert_not_called()
+    source.observe.assert_not_called()
 
 
 @pytest.mark.parametrize("decoder", [
@@ -109,7 +108,7 @@ def test_file_source_worker_connects_with_unconfigured_processing(decoder):
     assert results["metadata"].ok, results["metadata"].message
     assert results["metadata"].data["metadata"]
     assert results["metadata"].data["descriptor"]["sample_rate"] > 0
-    assert not worker.data_source.is_connected
+    assert worker.data_source.reader_adapter is None
 
 
 @pytest.mark.parametrize("processing_input", [None, ProcessingInput().to_dict()])
@@ -117,7 +116,7 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
     command_queue = MagicMock()
     data_manager = MagicMock()
     event_bus = MagicMock()
-    data_source = MagicMock(spec=SignalSource)
+    data_source = MagicMock(spec=SignalSource, trigger_mode="events", resume_mode="restart-only")
     snapshot = {
         "ACQUISITION.signal_source": "selected-source",
         "CONFIG.generation": "generation", "CONFIG.module_revisions": {"acquisition": "revision", "processing": "revision", "stimulation": "revision", "actuation": "revision"}, "CONFIG.engine_revision": "engine",
@@ -194,7 +193,7 @@ def test_historical_decoder_projection_requires_preparation():
         "ACQUISITION.signal_source": "test-source",
         "PLUGINS.bindings": [materialize_processing_binding(binding)],
     })
-    worker.data_source = MagicMock(spec=SignalSource)
+    worker.data_source = MagicMock(spec=SignalSource, trigger_mode="events", resume_mode="restart-only")
     with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
         worker._run()
 

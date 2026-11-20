@@ -112,7 +112,6 @@ class ResolvedSignalPlan:
     @property
     def fingerprint(self) -> str:
         data = self.to_dict(include_fingerprint=False)
-        data["source"].pop("connection_id")
         data.pop("acquisition_revision")
         return fingerprint(data)
 

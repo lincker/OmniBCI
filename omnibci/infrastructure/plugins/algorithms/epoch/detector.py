@@ -4,8 +4,7 @@
 # @Date     : 2026-01-15 13:59
 import numpy as np
 
-from omnibci.domain.signal import SignalChunk
-from omnibci.domain.ports.algorithm import EpochDetector
+from omnibci.domain.ports.algorithm import EpochDetector, EpochBoundary
 from omnibci.sdk import PluginContext, PluginParameters
 
 
@@ -17,13 +16,10 @@ class DefaultEpochDetector(EpochDetector):
     ):
         pass
 
-    def detect_start(self, chunk: SignalChunk) -> tuple[int, int]:
-        triggers = chunk.triggers.flatten()
-        nonzero = np.nonzero(triggers)[0]
-        if len(nonzero) > 0:
-            return int(nonzero[0]), int(triggers[nonzero[0]])
-        return -1, 0
-
-
-    def detect_end(self, chunk: SignalChunk) -> tuple[int, int]:
-        return -1, 0
+    def detect(self, raw_data: np.ndarray) -> tuple[EpochBoundary, ...]:
+        events = raw_data[-1]
+        positions = np.nonzero(events)[0]
+        if not positions.size:
+            return ()
+        return tuple(EpochBoundary(offset=int(index), kind="start", event_id=int(events[index]))
+                     for index in positions)

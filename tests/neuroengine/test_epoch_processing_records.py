@@ -18,21 +18,25 @@ from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.signal_processing.signal_processor import (
     SignalProcessorCommand,
 )
-from tests.processing_helpers import make_processor as SignalProcessor
+from tests.processing_helpers import marker_boundaries, make_processor as SignalProcessor
 from omnibci.shared.events import EventType
 
 
 class Markers(EpochDetector):
-    def detect_start(self, chunk):
-        indices = np.flatnonzero((chunk.triggers > 0) & (chunk.triggers < 255))
-        return (int(indices[0]), int(chunk.triggers[indices[0]])) if indices.size else (-1, 0)
-
-    def detect_end(self, chunk):
-        indices = np.flatnonzero(chunk.triggers == 255)
-        return (int(indices[0]), 255) if indices.size else (-1, 0)
+    def detect(self, raw_data):
+        return marker_boundaries(raw_data)
 
 
 class OptionalResult(Decoder):
+    def setup(self):
+        pass
+
+    def begin_epoch(self):
+        pass
+
+    def teardown(self):
+        pass
+
     def __init__(self, *, ready=False, result=None, fail=False):
         self.ready = ready
         self.result = result
@@ -41,7 +45,7 @@ class OptionalResult(Decoder):
     def should_decode(self, window):
         return self.ready
 
-    def decode(self, window, latest_samples):
+    def decode(self, window, *, latest_raw_segment):
         if self.fail:
             raise RuntimeError("decoder failed")
         return self.result
@@ -175,9 +179,9 @@ async def test_direct_state_error_records_failure_and_serve_exit_does_not_duplic
 
 
 @pytest.mark.asyncio
-async def test_per_epoch_decoder_creation_failure_is_recorded_without_signal_data():
+async def test_per_epoch_decoder_reset_failure_is_recorded_without_signal_data():
     class CreationFails(OptionalResult):
-        def for_new_epoch(self):
+        def begin_epoch(self):
             raise RuntimeError("new epoch decoder failed")
 
     value, events = processor(CreationFails())
@@ -228,7 +232,7 @@ async def test_direct_processor_stop_records_interrupted_active_epoch():
 @pytest.mark.asyncio
 async def test_first_success_remains_when_second_epoch_in_same_chunk_fails():
     class SecondFails(OptionalResult):
-        def decode(self, window, latest_samples):
+        def decode(self, window, *, latest_raw_segment):
             if window[0, 0] == 3:
                 raise RuntimeError("second epoch failed")
             return Prediction(2)

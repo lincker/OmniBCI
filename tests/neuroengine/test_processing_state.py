@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
-from tests.processing_helpers import make_processor
+from tests.processing_helpers import make_processor, marker_boundaries
 from omnibci.domain.classification import Classification
 from omnibci.domain.epoch import Epoch
 from omnibci.shared.events import EventType
@@ -26,7 +26,7 @@ def _chunk(samples: int = 6, *, start=None, end=None) -> SignalChunk:
     if end is not None:
         triggers[0, end] = 255
     return SignalChunk(
-        timestamp=1.0,
+        timestamp=1,
         sequence_id=1,
         raw_data=np.vstack((signal, triggers)),
     )
@@ -48,17 +48,10 @@ def _classification(event_id: int = 7) -> Classification:
 def _context(chunk: SignalChunk | None):
     context = MagicMock()
     context.next_chunk = AsyncMock(return_value=chunk)
-    context.detector.detect_start.side_effect = lambda item: _first_marker(item, starts=True)
-    context.detector.detect_end.side_effect = lambda item: _first_marker(item, starts=False)
+    context.detector.detect.side_effect = marker_boundaries
     context.current_epoch = MagicMock()
     context.new_epoch_processor.return_value = MagicMock()
     return context
-
-
-def _first_marker(chunk, *, starts):
-    selected = (chunk.triggers > 0) & (chunk.triggers < 255) if starts else chunk.triggers == 255
-    positions = np.flatnonzero(selected)
-    return (int(positions[0]), int(chunk.triggers[positions[0]])) if positions.size else (-1, None)
 
 
 def _processor():
@@ -67,8 +60,7 @@ def _processor():
         data_manager=MagicMock(), event_bus=MagicMock(),
         generation="run", processing_revision="processor-revision",
     )
-    processor.detector.detect_start.side_effect = lambda item: _first_marker(item, starts=True)
-    processor.detector.detect_end.side_effect = lambda item: _first_marker(item, starts=False)
+    processor.detector.detect.side_effect = marker_boundaries
     processor.current_epoch = MagicMock(
         build_epoch=MagicMock(return_value=_epoch()), processing_revision="epoch-revision",
     )
@@ -90,7 +82,7 @@ class TestAwaitingEpochState:
 
         await AwaitingEpochState(context).run()
 
-        context.detector.detect_start.assert_not_called()
+        context.detector.detect.assert_not_called()
         context.pretrigger.push.assert_not_called()
         context.transition_to_assembling.assert_not_called()
 
@@ -171,8 +163,7 @@ class TestAssemblingEpochState:
 
         await AssemblingEpochState(context).run()
 
-        context.detector.detect_end.assert_not_called()
-        context.detector.detect_start.assert_not_called()
+        context.detector.detect.assert_not_called()
         context.current_epoch.process_chunk.assert_not_called()
 
     @pytest.mark.asyncio

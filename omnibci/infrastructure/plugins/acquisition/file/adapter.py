@@ -54,16 +54,14 @@ class CNTReaderAdapter(ReaderAdapter):
         """Return file information captured before selecting output channels."""
         return self._metadata
 
-    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
+    def describe_output(self) -> SignalInfo:
         return signal_info(
-            source_id=source_id, connection_id=connection_id,
             signal_channel_count=len(self.file.ch_names),
             sample_rate=self.file.info["sfreq"],
             channel_labels=self.file.ch_names,
             channel_types=self.file.get_channel_types(),
             channel_units=["V" if channel["unit"] == 107 else None
                            for channel in self.file.info["chs"]],
-            native_event="annotations", provenance="file-reported",
         )
 
     async def read_chunk(self, start: int, end: int):

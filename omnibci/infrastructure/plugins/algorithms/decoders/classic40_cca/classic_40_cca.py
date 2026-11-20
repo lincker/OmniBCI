@@ -27,7 +27,7 @@ from omnibci.sdk import PluginContext, PluginParameters
 class Classic40CCA(Decoder):
     plugin_type = 'THUBCI_SSVEP_classic40CCA'
     class Template:
-        # 倍频数
+        # Harmonic count
         MULTIPLY_TIME = 5
 
         def __init__(self, sample_rate, sample_count) -> None:
@@ -61,28 +61,38 @@ class Classic40CCA(Decoder):
         context: PluginContext,
     ) -> None:
         super().__init__()
-        if context is None or context.sample_rate is None:
-            raise ValueError("Classic40CCA requires context.sample_rate")
-        self.SAMPLE_RATE = context.sample_rate
+        if context is None or context.input_signal is None:
+            raise ValueError("Classic40CCA requires context.input_signal.sample_rate")
+        self.SAMPLE_RATE = context.input_signal.sample_rate
         window_duration = parameters.get('window_duration', 3.0)
         offset_time = parameters.get('offset_time', 0.14)
         self.SAMPLE_COUNT = int(window_duration * self.SAMPLE_RATE)
         if self.SAMPLE_COUNT < 2:
             raise ValueError("Decode window must contain at least two samples")
         self.OFFSET_LENGTH = math.floor(offset_time * self.SAMPLE_RATE)
+        self.template_set = self.cca = None
+
+    def setup(self) -> None:
         self.template_set = self.Template(sample_rate=self.SAMPLE_RATE,
                                           sample_count=self.SAMPLE_COUNT).generate_template()
         self.cca = skCCA(n_components=1)
+
+    def begin_epoch(self) -> None:
+        # Each decode fits from the whole window; there is no accumulated trial state.
+        pass
+
+    def teardown(self) -> None:
+        self.template_set = self.cca = None
 
     def should_decode(self, window: npt.NDArray) -> bool:
         return window.shape[1] > self.SAMPLE_COUNT + self.OFFSET_LENGTH
 
     def decode(
         self,
-        window: npt.NDArray,
-        latest: npt.NDArray,
+        filtered_window: npt.NDArray,
+        *, latest_raw_segment: npt.NDArray,
     ) -> Optional[Prediction]:
-        calc_data = window[
+        calc_data = filtered_window[
             :,
             self.OFFSET_LENGTH:int(self.SAMPLE_COUNT + self.OFFSET_LENGTH),
         ]
@@ -95,8 +105,8 @@ class Classic40CCA(Decoder):
         data_t = data.T
         for frequencyIndex in range(0, len(self.template_set)):
             template = self.template_set[frequencyIndex]
-            # 确保模板与数据时间点对齐
-            template_t = template[:, :data.shape[1]].T  # 截断并转置
+            # Align reference and signal sample counts.
+            template_t = template[:, :data.shape[1]].T  # Truncate and transpose.
             self.cca.fit(data_t, template_t)
             S_d, S_t = self.cca.transform(data_t, template_t)
 

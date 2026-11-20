@@ -18,7 +18,7 @@ from omnibci.application.runtime_admission import admitted
 from omnibci.application.services.command_result_service import CommandTimeoutError
 from omnibci.application.events import StreamDrainReceipt
 from omnibci.application.source_expectations import validate_source_expectations
-from omnibci.domain.signal_info import SignalInfo
+from omnibci.application.source_metadata import descriptor_layout, source_fingerprint
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.shared.events import EventType
 
@@ -97,7 +97,7 @@ class SignalSetupService:
         metadata = self.acquisition.cached_descriptor_for(source_binding) if active else None
         if metadata is not None:
             try:
-                validate_source_binding(selected, SignalInfo.from_dict(metadata))
+                validate_source_binding(selected, metadata)
             except ValueError:
                 metadata = None
         receipt = deepcopy(self._receipt)
@@ -118,7 +118,7 @@ class SignalSetupService:
                      and receipt["engine_revision"] == active.get("CONFIG.engine_revision")
                      and receipt["acquisition_revision"] == active.get("CONFIG.module_revisions", {}).get("acquisition")
                      and receipt["processing_revision"] == active.get("CONFIG.module_revisions", {}).get("processing")
-                     and receipt["source_fingerprint"] == SignalInfo.from_dict(metadata).fingerprint
+                     and receipt["source_fingerprint"] == source_fingerprint(metadata)
                      and receipt["connection_id"] == metadata.get("connection_id"))
         source_id = selected.get("ACQUISITION.signal_source")
         profile = self._profile(source_binding)
@@ -171,7 +171,7 @@ class SignalSetupService:
             if context["acquisition_descriptor"] is None:
                 raise ValueError(context["source_error"] or
                                  "Connect the acquisition source and get metadata before previewing processing input")
-            source = SignalInfo.from_dict(context["acquisition_descriptor"])
+            source = descriptor_layout(context["acquisition_descriptor"])
             plan = compile_processing_plan(source, draft)
             self._validate_decoder_channels(decoder_selection or context["selected_decoder_selection"], plan)
             # A source switch while resolving a draft must not publish an obsolete preview.
@@ -180,7 +180,7 @@ class SignalSetupService:
                 raise ProfileRevisionConflict("Acquisition source changed; refresh its information and preview again")
             if decoder_selection is None and context["selected_decoder_selection"] != current["selected_decoder_selection"]:
                 raise ProfileRevisionConflict("Selected decoder changed; review its requirements and preview again")
-            return {"plan": plan.to_dict(), "warnings": [],
+            return {"plan": {**plan.to_dict(), "source": context["acquisition_descriptor"]}, "warnings": [],
                     "source_revision": context["source_revision"]}
         except (ValueError, TypeError) as exc:
             raise ConfigProfileValidationError(str(exc)) from exc
@@ -266,17 +266,17 @@ class SignalSetupService:
             if self._receipt is not None:
                 self.detach()
             return None
-        metadata = SignalInfo.from_dict(self.acquisition.get_descriptor(refresh=not status.streaming))
+        metadata = self.acquisition.get_descriptor(refresh=not status.streaming)
         source_key = processing_binding_key(snapshot)
         if (self._bound_key == source_key and self._receipt
                 and self._receipt["generation"] == snapshot.get("CONFIG.generation")
-                and self._source_fingerprint != metadata.fingerprint):
+                and self._source_fingerprint != source_fingerprint(metadata)):
             raise ConfigProfileValidationError(
                 "Source metadata changed since preparation; inspect and explicitly update the acquisition or decoder input")
         if (self._receipt and self._preparation_error is None and self._bound_key == source_key
                 and self._receipt["generation"] == snapshot.get("CONFIG.generation")
                 and self._receipt["engine_revision"] == snapshot.get("CONFIG.engine_revision")
-                and self._receipt["connection_id"] == metadata.connection_id
+                and self._receipt["connection_id"] == metadata["connection_id"]
                 and self._receipt["acquisition_revision"] == snapshot["CONFIG.module_revisions"]["acquisition"]):
             self._receipt["processing_revision"] = snapshot["CONFIG.module_revisions"]["processing"]
             self._preparation_error = None
@@ -286,7 +286,7 @@ class SignalSetupService:
         try:
             validate_source_binding(snapshot, metadata)
             validate_source_expectations(snapshot, metadata)
-            plan = compile_processing_plan(metadata, value, snapshot["CONFIG.module_revisions"]["acquisition"])
+            plan = compile_processing_plan(descriptor_layout(metadata), value, snapshot["CONFIG.module_revisions"]["acquisition"])
             decoder = binding_for(snapshot, "processing.decoder")
             self._validate_decoder_channels(decoder["selection"] if decoder else None, plan)
         except (ValueError, TypeError) as exc:
@@ -295,8 +295,8 @@ class SignalSetupService:
                    "acquisition_revision": snapshot["CONFIG.module_revisions"]["acquisition"],
                    "processing_revision": snapshot["CONFIG.module_revisions"]["processing"],
                    "engine_revision": snapshot["CONFIG.engine_revision"],
-                   "connection_id": metadata.connection_id,
-                   "source_fingerprint": metadata.fingerprint,
+                   "connection_id": metadata["connection_id"],
+                   "source_fingerprint": source_fingerprint(metadata),
                    "plan_fingerprint": plan.fingerprint,
                    "input_id": uuid4().hex}
         result = self.commands.request(EventType.PrepareSignalProcessing,
@@ -314,7 +314,7 @@ class SignalSetupService:
             if self._preparation_error is not None:
                 raise RuntimeError(self._preparation_error)
             self._receipt, self._plan = receipt, plan
-            self._bound_key, self._source_fingerprint = source_key, metadata.fingerprint
+            self._bound_key, self._source_fingerprint = source_key, source_fingerprint(metadata)
             return deepcopy(receipt)
         except Exception:
             try:

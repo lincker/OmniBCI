@@ -20,7 +20,7 @@ from omnibci.domain.ports.algorithm import (
     Decoder,
     EpochDetector,
     Filter,
-    FilterContext,
+    EpochBoundary,
     Prediction,
 )
 from omnibci.domain.ports.effector import Effector
@@ -74,7 +74,7 @@ class PluginContext:
 
 
 __all__ = [
-    "Color", "Decoder", "Effector", "EpochDetector", "Filter", "FilterContext",
+    "Color", "Decoder", "Effector", "EpochDetector", "Filter", "EpochBoundary",
     "Paradigm", "PluginContext", "PluginParameters", "Prediction", "Rect",
     "Renderer", "SignalChunk", "SignalSource", "SignalInfo", "TextureHandle", "TriggerEmitter",
 ]

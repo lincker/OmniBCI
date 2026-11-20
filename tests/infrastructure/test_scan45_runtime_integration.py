@@ -12,6 +12,7 @@ import pytest
 from omnibci.application.events import CommandRequest, ProcessingInputStart, TrialOutcome
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.services.results_service import ResultsService
+from omnibci.application.source_metadata import source_descriptor, source_fingerprint
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
@@ -32,7 +33,9 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     sample_rate = 500
     generation, revision = "scan45-generation", "scan45-revision"
     reader = Scan45DataReader(parameters={"channel_count": 10, "sample_rate": sample_rate})
-    source = reader.describe_output(source_id=reader.plugin_type, connection_id="scan45-connection")
+    reader._is_connected = True
+    observation = await reader.observe()
+    source = observation.signal_info
     assert [channel.name for channel in source.channels] == [f"CH{index}" for index in range(1, 10)]
     assert source.output_row_count == 10 and source.trigger_row_index == 9
     inputs = ProcessingInput(outputs=tuple(
@@ -62,8 +65,8 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     }
     receipt = {
         "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "engine_revision": "engine",
-        "connection_id": source.connection_id,
-        "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
+        "connection_id": "scan45-connection",
+        "source_fingerprint": source_fingerprint(source_descriptor(observation, source_id=reader.plugin_type, connection_id="scan45-connection")), "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
     bus = EventBus(Queue())
     data = DataManager(Queue())
@@ -138,6 +141,9 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
             reader, Queue(), data, bus, source_id=reader.plugin_type,
             generation=generation, acquisition_revision=revision, engine_revision="engine",
         )
+        acquisition._connected = acquisition._streaming = True
+        acquisition.connection_id = "scan45-connection"
+        acquisition._observation = observation
         await acquisition.fetch()
         assert acquisition._fetch_failure is None
         assert [chunk.sequence_id for chunk in acquired] == [0, 1, 2]

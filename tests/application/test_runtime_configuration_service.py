@@ -23,9 +23,8 @@ from tests.plugin_configuration_helpers import accept_profiles, builtin_selectio
 
 
 def prepared_signal_plan(snapshot, *, sample_rate, signal_channel_count):
-    channels = tuple(ChannelDescriptor(index, f"EEG{index + 1}", signal_type="eeg") for index in range(signal_channel_count))
-    source = SignalInfo(snapshot["ACQUISITION.signal_source"], sample_rate, channels, signal_channel_count,
-                        provenance="file-reported")
+    channels = tuple(ChannelDescriptor(index, f"EEG{index + 1}", signal_type="eeg", channel_id=f"channel-{index}") for index in range(signal_channel_count))
+    source = SignalInfo(sample_rate=sample_rate, channels=channels)
     return compile_processing_plan(source, processing_input(snapshot) or ProcessingInput())
 
 

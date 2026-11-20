@@ -3,6 +3,8 @@
 from queue import Queue
 from types import SimpleNamespace
 
+from tests.processing_helpers import prepared_context
+
 import numpy as np
 import pytest
 
@@ -11,7 +13,6 @@ from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.plugins.algorithms.decoders.classic40_cca.classic_40_cca import Classic40CCA
 from omnibci.infrastructure.plugins.algorithms.decoders.classic40_fbcca.classic_40_fbcca import Classic40FBCCA
 from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
-from omnibci.sdk import PluginContext
 from tests.processing_helpers import make_processor
 from omnibci.shared.events import EventType
 
@@ -24,12 +25,13 @@ from omnibci.shared.events import EventType
     (Classic40FBCCA, 27),
 ])
 def test_forced_window_declines_below_numerical_minimum(decoder_class, usable_samples):
-    decoder = decoder_class(parameters={}, context=PluginContext(sample_rate=500))
+    decoder = decoder_class(parameters={}, context=prepared_context(500))
+    decoder.setup()
     times = np.arange(decoder.OFFSET_LENGTH + usable_samples) / decoder.SAMPLE_RATE
     window = np.sin(2 * np.pi * 8 * times)[None, :]
 
     assert not decoder.should_decode(window)
-    assert decoder.decode(window, window) is None
+    assert decoder.decode(window, latest_raw_segment=window) is None
 
 
 @pytest.mark.parametrize("decoder_class,usable_samples", [
@@ -37,12 +39,13 @@ def test_forced_window_declines_below_numerical_minimum(decoder_class, usable_sa
     (Classic40FBCCA, 28),
 ])
 def test_forced_window_at_numerical_minimum_still_decodes(decoder_class, usable_samples):
-    decoder = decoder_class(parameters={}, context=PluginContext(sample_rate=500))
+    decoder = decoder_class(parameters={}, context=prepared_context(500))
+    decoder.setup()
     times = np.arange(decoder.OFFSET_LENGTH + usable_samples) / decoder.SAMPLE_RATE
     window = np.sin(2 * np.pi * 8 * times)[None, :]
 
     assert not decoder.should_decode(window)
-    assert 1 <= decoder.decode(window, window).target_id <= 40
+    assert 1 <= decoder.decode(window, latest_raw_segment=window).target_id <= 40
 
 
 @pytest.mark.asyncio
@@ -50,7 +53,7 @@ def test_forced_window_at_numerical_minimum_still_decodes(decoder_class, usable_
 @pytest.mark.parametrize("first_chunk_size", [1, 64])
 @pytest.mark.parametrize("second_event", [7, 9])
 async def test_early_marker_keeps_processor_running_for_next_valid_epoch(decoder_class, first_chunk_size, second_event):
-    decoder = decoder_class(parameters={"window_duration": 1.0}, context=PluginContext(sample_rate=500))
+    decoder = decoder_class(parameters={"window_duration": 1.0}, context=prepared_context(500))
     events = []
     processor = make_processor(
         detector=DefaultEpochDetector(), decoder=decoder, command_queue=Queue(),
@@ -76,12 +79,13 @@ async def test_early_marker_keeps_processor_running_for_next_valid_epoch(decoder
 
 @pytest.mark.parametrize("filter_length", [3, 11])
 def test_fbcca_short_window_limit_follows_filter_coefficients(monkeypatch, filter_length):
-    decoder = Classic40FBCCA(parameters={}, context=PluginContext(sample_rate=500))
+    decoder = Classic40FBCCA(parameters={}, context=prepared_context(500))
     coefficients = np.zeros(filter_length)
     coefficients[0] = 1
     monkeypatch.setattr(decoder, "get_filter_bank", lambda: [(coefficients, np.ones(1))])
+    decoder.setup()
     times = np.arange(decoder.OFFSET_LENGTH + 3 * filter_length + 1) / decoder.SAMPLE_RATE
     window = np.sin(2 * np.pi * 12 * times)[None, :]
 
-    assert decoder.decode(window[:, :-1], window[:, :-1]) is None
-    assert 1 <= decoder.decode(window, window).target_id <= 40
+    assert decoder.decode(window[:, :-1], latest_raw_segment=window[:, :-1]) is None
+    assert 1 <= decoder.decode(window, latest_raw_segment=window).target_id <= 40

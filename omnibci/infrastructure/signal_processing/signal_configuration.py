@@ -10,13 +10,8 @@ def signal_context(snapshot, plan):
     source = plan.source
     output = source if plan.is_identity else replace(
         source, channels=plan.output_channels,
-        trigger_row_index=len(plan.output_channels),
     )
-    return PluginContext(
-        sample_rate=source.sample_rate,
-        module_revision=snapshot.get("CONFIG.module_revisions", {}).get("processing"),
-        acquired_signal=source, input_signal=output,
-    )
+    return PluginContext(input_signal=output)
 
 
 def load_signal_pipeline(snapshot, plan):

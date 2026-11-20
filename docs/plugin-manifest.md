@@ -1,12 +1,20 @@
 # Plugin packages and contributions
 
-The catalog reads manifests without importing plugin Python. A package is an
-installation unit; each contribution is an independently selectable capability
-within that package. Loading executes only the selected contribution's entrypoint.
+This guide describes the current API 2 implementation. The proposed API v1 is
+defined separately in [Plugin API v1](plugin-api-v1.md); terminology updates do
+not change the manifest or constructor supported by current code.
+
+Use the [canonical plugin terminology](plugin-marketplace-design.md#31-canonical-plugin-terminology):
+a Plugin Package is the installation unit, a Contribution is a static declaration
+of a selectable capability, and an Instance is its runtime object. The catalog
+reads declarations without importing plugin Python. The owning Module Host loads
+the selected entry point and constructs an Instance.
 
 For required Decoder files, an annotated starter, packaging and testing, see
 [Write a Decoder plugin](decoder-plugin-development.md). The same guide and
-starter files are available offline under **Extensions → Decoder developer guide**.
+starter files are available offline on the plugin management page, currently
+labeled **Extensions**, under **Decoder developer guide**. The agreed target
+page name is **Plugins**.
 
 ## Manifest version 2
 

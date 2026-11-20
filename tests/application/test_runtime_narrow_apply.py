@@ -331,11 +331,11 @@ async def test_module_unknown_attachment_never_recreates_outputs_or_rewinds(narr
 @pytest.mark.asyncio
 @pytest.mark.parametrize("strategy", ["module", "rebuild"])
 @pytest.mark.parametrize("checkpoint_data", [
-    {"supported": False, "checkpoint": None},
-    {"supported": False, "checkpoint": None, "resume_without_checkpoint_safe": "true"},
-    {"supported": True, "checkpoint": None},
-    {"supported": True, "checkpoint": None, "resume_without_checkpoint_safe": True},
-    {"supported": "true", "checkpoint": {}},
+    {"resume_mode": "restart-only", "checkpoint": None},
+    {"resume_mode": "invalid", "checkpoint": None},
+    {"resume_mode": "checkpoint", "checkpoint": None},
+    {"resume_mode": "live-current", "checkpoint": {}},
+    {"checkpoint": {}},
 ])
 async def test_streaming_source_without_confirmed_checkpoint_is_not_automatically_restarted(
     narrow, rebuild_harness, monkeypatch, strategy, checkpoint_data,
@@ -384,7 +384,7 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
                 "engine_revision": h.engine.applied_revisions["engine"],
-                "supported": False, "checkpoint": None, "resume_without_checkpoint_safe": True,
+                "resume_mode": "live-current", "checkpoint": None,
             })
         return request(event_type, payload, **kwargs)
 
@@ -408,9 +408,9 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", [
-    {"resume_without_checkpoint_safe": False}, {"resume_without_checkpoint_safe": None},
+    {"resume_mode": "restart-only"}, {"resume_mode": None},
     {"generation": "another-generation"}, {"acquisition_revision": "another-revision"}, {"engine_revision": "another-engine"},
-    {"supported": True, "checkpoint": None},
+    {"resume_mode": "checkpoint", "checkpoint": None},
 ])
 async def test_same_source_replacement_must_reconfirm_live_resume_before_start(rebuild_harness, monkeypatch, invalid):
     h = rebuild_harness()
@@ -422,7 +422,7 @@ async def test_same_source_replacement_must_reconfirm_live_resume_before_start(r
             revision = h.engine.applied_revisions[h.module]
             inspected.append(revision)
             data = {"generation": h.engine.generation, "acquisition_revision": revision, "engine_revision": h.engine.applied_revisions["engine"],
-                    "supported": False, "checkpoint": None, "resume_without_checkpoint_safe": True}
+                    "resume_mode": "live-current", "checkpoint": None}
             if revision == h.plan.target_revisions[h.module]:
                 data.update(invalid)
             return CommandResult("checkpoint", event_type.name, True, data=data)
@@ -447,8 +447,8 @@ async def test_live_rollback_also_requires_recreated_source_capability(rebuild_h
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
                 "engine_revision": h.engine.applied_revisions["engine"],
-                "supported": False, "checkpoint": None,
-                "resume_without_checkpoint_safe": not h.engine.starts,
+                "checkpoint": None,
+                "resume_mode": "live-current" if not h.engine.starts else "restart-only",
             })
         return request(event_type, payload, **kwargs)
 
@@ -478,8 +478,8 @@ async def test_explicit_different_source_can_start_fresh_after_live_source(rebui
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
                 "engine_revision": h.engine.applied_revisions["engine"],
-                "supported": False, "checkpoint": None,
-                "resume_without_checkpoint_safe": h.engine.applied_revisions[h.module] == h.previous.modules[h.module].revision,
+                "checkpoint": None,
+                "resume_mode": "live-current" if h.engine.applied_revisions[h.module] == h.previous.modules[h.module].revision else "restart-only",
             })
         return request(event_type, payload, **kwargs)
 
@@ -502,7 +502,7 @@ async def test_nonstreaming_source_without_checkpoint_can_update_outputs_without
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
                 "engine_revision": h.engine.applied_revisions["engine"],
-                "supported": False, "checkpoint": None,
+                "resume_mode": "restart-only", "checkpoint": None,
             })
         return request(event_type, payload, **kwargs)
 

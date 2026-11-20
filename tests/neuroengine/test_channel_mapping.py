@@ -13,8 +13,10 @@ from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import (
     ChannelBinding, ProcessingInput, compile_processing_plan,
 )
+from omnibci.application.source_metadata import source_descriptor, source_fingerprint
+from omnibci.domain.ports.acquisition import SourceObservation
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
-from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
+from omnibci.domain.ports.algorithm import Decoder, EpochDetector, EpochBoundary, Filter
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.signal_processing import pipeline_configuration, signal_configuration
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
@@ -27,12 +29,17 @@ from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 
 
 def _plan():
-    source = SignalInfo("test-source", 250, tuple(
-        ChannelDescriptor(i, name, signal_type="eeg", unit="V")
-        for i, name in enumerate(("O1", "O2", "M1"))), 3, connection_id="connection-one")
+    source = SignalInfo(sample_rate=250, channels=tuple(
+        ChannelDescriptor(i, name, signal_type="eeg", unit="V", channel_id=f"channel-{i}")
+        for i, name in enumerate(("O1", "O2", "M1"))))
     return compile_processing_plan(source, ProcessingInput(outputs=(
         ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0"))),
         acquisition_revision="revision-one")
+
+
+def _observation(plan):
+    return SourceObservation(native_text="test source", signal_info=plan.source,
+                             native_event="final-row", provenance="protocol-defined")
 
 
 def _snapshot(plan):
@@ -40,7 +47,7 @@ def _snapshot(plan):
     return {
         "CONFIG.module_revisions": {"acquisition": plan.acquisition_revision, "processing": plan.acquisition_revision, "stimulation": plan.acquisition_revision, "actuation": plan.acquisition_revision}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation-one",
         "ACQUISITION.sample_rate": plan.source.sample_rate,
-        "ACQUISITION.signal_source": plan.source.source_id,
+        "ACQUISITION.signal_source": "test-source",
         "ALGORITHM.baseline_duration": 0.008,
         "PLUGINS.bindings": [ProfileBinding("processing.decoder", "decoder", None,
             PluginSelection("test.decoder", "default", "1"), {},
@@ -51,8 +58,8 @@ def _snapshot(plan):
 def _receipt(plan):
     return {
         "generation": "generation-one", "acquisition_revision": plan.acquisition_revision, "processing_revision": "revision-one", "engine_revision": "engine",
-        "connection_id": plan.source.connection_id,
-        "source_fingerprint": plan.source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
+        "connection_id": "connection-one",
+        "source_fingerprint": source_fingerprint(source_descriptor(_observation(plan), source_id="test-source", connection_id="connection-one")), "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
 
 
@@ -61,12 +68,21 @@ def _request(plan, receipt=None):
 
 
 class _Decoder(Decoder):
+    def setup(self):
+        pass
+
+    def begin_epoch(self):
+        pass
+
+    def teardown(self):
+        pass
+
     def should_decode(self, window):
         return True
 
-    def decode(self, window, latest_samples):
+    def decode(self, window, *, latest_raw_segment):
         self.window = window.copy()
-        self.latest_samples = latest_samples.copy()
+        self.latest_raw_segment = latest_raw_segment.copy()
         return None
 
 
@@ -74,19 +90,15 @@ class _Detector(EpochDetector):
     def __init__(self):
         self.seen = []
 
-    def detect_start(self, chunk):
-        self.seen.append(chunk)
-        indices = np.flatnonzero(chunk.triggers == 1)
-        return (int(indices[0]), 1) if len(indices) else (-1, 0)
-
-    def detect_end(self, chunk):
-        return (-1, 0)
+    def detect(self, raw_data):
+        self.seen.append(raw_data)
+        return tuple(EpochBoundary(offset=int(index), kind="start", event_id=1)
+                     for index in np.flatnonzero(raw_data[-1] == 1))
 
 
 class _Filter(Filter):
-    def apply(self, data, ctx):
-        self.baseline = ctx.baseline.copy()
-        self.sample_rate = ctx.sample_rate
+    def apply(self, data, *, pre_trigger_data):
+        self.baseline = pre_trigger_data.copy()
         return data
 
 
@@ -141,7 +153,7 @@ def test_prepare_binds_observed_rate_and_is_idempotent(monkeypatch):
 @pytest.mark.parametrize("field,value", [
     ("generation", "stale-generation"), ("acquisition_revision", "stale-revision"),
     ("processing_revision", "stale-processing"), ("engine_revision", "stale-engine"),
-    ("connection_id", "stale-connection"), ("plan_fingerprint", "wrong-plan"),
+    ("connection_id", ""), ("connection_id", True), ("plan_fingerprint", "wrong-plan"),
 ])
 def test_stale_preparation_does_not_construct_or_replace_plugins(monkeypatch, field, value):
     plan = _plan()
@@ -175,18 +187,15 @@ def test_preparation_cannot_substitute_an_unaccepted_setup(monkeypatch):
 
 
 
-@pytest.mark.parametrize("mismatch", ["source", "input", "source-fingerprint"])
-def test_native_preparation_rejects_a_different_source_input_or_observation(monkeypatch, mismatch):
+@pytest.mark.parametrize("mismatch", ["input", "source-fingerprint"])
+def test_native_preparation_rejects_unaccepted_input_or_malformed_receipt(monkeypatch, mismatch):
     plan = _plan()
     processor = _processor(plan)
-    if mismatch == "source":
-        plan = compile_processing_plan(replace(plan.source, source_id="different-source"),
-                                       plan.processing_input, plan.acquisition_revision)
-    elif mismatch == "input":
+    if mismatch == "input":
         plan = compile_processing_plan(plan.source, ProcessingInput(outputs=(ChannelBinding("M1", "channel-2"),)), plan.acquisition_revision)
     receipt = _receipt(plan)
     if mismatch == "source-fingerprint":
-        receipt["source_fingerprint"] = "f" * 64
+        receipt["source_fingerprint"] = "invalid"
     load = MagicMock()
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", load)
     processor._prepare_signal(_request(plan, receipt))
@@ -200,8 +209,8 @@ def test_new_connection_cannot_replace_an_active_epoch(monkeypatch):
     processor = _processor(plan)
     _, _, _, load = _prepare(monkeypatch, processor, plan)
     processor.current_epoch = MagicMock()
-    reconnected = replace(plan, source=replace(plan.source, connection_id="connection-two"))
-    processor._prepare_signal(_request(reconnected))
+    receipt = {**_receipt(plan), "connection_id": "connection-two"}
+    processor._prepare_signal(_request(plan, receipt))
     assert not processor.event_bus.put_event.call_args.args[0].data.ok
     assert processor._signal_receipt == _receipt(plan)
     assert load.call_count == 1
@@ -240,7 +249,7 @@ async def test_source_only_standby_drains_raw_data_and_can_prepare_later(monkeyp
     await processor._current_state.run()
     assert processor._last_sequence == 4
     assert len(detector.seen) == 1
-    np.testing.assert_array_equal(detector.seen[0].data, [[32, 33], [12, 13]])
+    np.testing.assert_array_equal(detector.seen[0][:-1], [[32, 33], [12, 13]])
 
 
 @pytest.mark.asyncio
@@ -273,7 +282,7 @@ async def test_matching_physical_channels_reuse_chunk_with_effective_input_conte
     assert observed.sequence_id == 42
     assert processor._last_sequence == 42
     context = signal_configuration.signal_context(_snapshot(plan), plan)
-    assert context.acquired_signal is source
+    assert context.acquired_signal is None
     assert context.input_signal.channels == plan.output_channels
     if mapping in {"renamed", "typed"}:
         assert not plan.is_identity
@@ -314,7 +323,7 @@ async def test_subset_or_reordered_channels_still_copy_selected_rows_and_events(
 
 
 @pytest.mark.asyncio
-async def test_channel_mapping_precedes_detector_pretrigger_window_and_latest_samples(monkeypatch):
+async def test_channel_mapping_precedes_detector_pretrigger_window_and_latest_raw_segment(monkeypatch):
     plan = _plan()
     processor = _processor(plan)
     decoder, detector, signal_filter, _ = _prepare(monkeypatch, processor, plan)
@@ -330,13 +339,10 @@ async def test_channel_mapping_precedes_detector_pretrigger_window_and_latest_sa
     await processor._current_state.run()
     np.testing.assert_array_equal(signal_filter.baseline, [[31, 32], [11, 12]])
     np.testing.assert_array_equal(decoder.window, [[33, 34, 35], [13, 14, 15]])
-    np.testing.assert_array_equal(decoder.latest_samples, [[34, 35], [14, 15]])
-    assert signal_filter.sample_rate == 250
+    np.testing.assert_array_equal(decoder.latest_raw_segment, [[34, 35], [14, 15]])
     for observed, original in zip(detector.seen, chunks, strict=True):
-        np.testing.assert_array_equal(observed.triggers, original.triggers)
-        assert observed.timestamp == original.timestamp
-        assert observed.sequence_id == original.sequence_id
-        assert observed.data.shape[0] == 2
+        np.testing.assert_array_equal(observed[-1], original.triggers)
+        assert observed[:-1].shape[0] == 2
     for original, raw in zip(chunks, originals, strict=True):
         np.testing.assert_array_equal(original.raw_data, raw)
 
@@ -348,22 +354,22 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
     calls = []
 
     class BaselineFilter(Filter):
-        def apply(self, data, ctx):
+        def apply(self, data, *, pre_trigger_data):
             calls.append("baseline")
-            np.testing.assert_array_equal(ctx.baseline, [[31, 32], [11, 12]])
+            np.testing.assert_array_equal(pre_trigger_data, [[31, 32], [11, 12]])
             np.testing.assert_array_equal(data, [[33, 34, 35], [13, 14, 15]])
-            return data - ctx.baseline.mean(axis=1, keepdims=True)
+            return data - pre_trigger_data.mean(axis=1, keepdims=True)
 
     class ScaleFilter(Filter):
-        def apply(self, data, ctx):
+        def apply(self, data, *, pre_trigger_data):
             calls.append("scale")
             np.testing.assert_array_equal(data, [[1.5, 2.5, 3.5], [1.5, 2.5, 3.5]])
             return data * 2
 
     class OrderedDecoder(_Decoder):
-        def decode(self, window, latest_samples):
+        def decode(self, window, *, latest_raw_segment):
             calls.append("decoder")
-            return super().decode(window, latest_samples)
+            return super().decode(window, latest_raw_segment=latest_raw_segment)
 
     decoder, detector = OrderedDecoder(), _Detector()
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", MagicMock(
@@ -385,12 +391,12 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
     np.testing.assert_array_equal(epoch.pre_trigger_data, [[31, 32], [11, 12]])
     np.testing.assert_array_equal(epoch.window, [[33, 34, 35], [13, 14, 15]])
     np.testing.assert_array_equal(decoder.window, [[3, 5, 7], [3, 5, 7]])
-    np.testing.assert_array_equal(decoder.latest_samples, [[34, 35], [14, 15]])
+    np.testing.assert_array_equal(decoder.latest_raw_segment, [[34, 35], [14, 15]])
     assert epoch.event_id == 1
     assert epoch.channel_count == 2
     assert epoch.sample_rate == 250
     for observed, source in zip(detector.seen, chunks, strict=True):
-        np.testing.assert_array_equal(observed.triggers, source.triggers)
+        np.testing.assert_array_equal(observed[-1], source.triggers)
 
 
 @pytest.mark.asyncio
@@ -421,19 +427,15 @@ def test_input_context_preserves_live_channels_and_describes_ordered_aliases(dup
     snapshot = {**_snapshot(plan), "ACQUISITION.channel_labels": ["stale-1", "stale-2", "stale-3", "Trigger"],
                 "ACQUISITION.channel_names": ["legacy-1", "legacy-2", "legacy-3"]}
     context = signal_configuration.signal_context(snapshot, plan)
-    assert tuple(c.name for c in context.acquired_signal.channels) == (
-        "O1", "O1" if duplicate_names else "O2", "M1")
-    assert tuple(c.channel_id for c in context.acquired_signal.channels) == ("channel-0", "channel-1", "channel-2")
     assert tuple(c.name for c in context.input_signal.channels) == ("posterior-right", "posterior-left")
     assert tuple(c.channel_id for c in context.input_signal.channels) == ("channel-1", "channel-0")
     assert tuple(c.index for c in context.input_signal.channels) == (0, 1)
-    assert context.input_signal.source_id == context.acquired_signal.source_id == "test-source"
+    assert not hasattr(context.input_signal, "source_id")
+    assert not hasattr(context.acquired_signal, "connection_id")
     assert context.input_signal.signal_channel_count == 2
     assert context.input_signal.trigger_row_index == 2
-    assert context.acquired_signal.signal_channel_count == 3
-    assert context.acquired_signal.trigger_row_index == 3
-    assert context.acquired_signal is source
-    assert context.sample_rate == 250
+    assert context.acquired_signal is None
+    assert context.sample_rate is None
 
 
 
@@ -458,8 +460,8 @@ def test_trial_pipeline_replacement_receives_current_transformed_context(monkeyp
     monkeypatch.setattr(pipeline_configuration, "load_configured_plugin", load)
     pipeline_configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.008, signal_plan=plan)
     context = load.call_args.kwargs["context"]
-    assert context.module_revision == "revision-two"
-    assert context.acquired_signal == plan.source
+    assert context.module_revision is None
+    assert context.acquired_signal is None
     assert context.input_signal.channels == plan.output_channels
 
 

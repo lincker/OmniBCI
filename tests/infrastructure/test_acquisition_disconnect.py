@@ -1,5 +1,6 @@
 """Transport loss invalidates the source identity without erasing continuity loss."""
 import asyncio
+import errno
 import queue
 
 import pytest
@@ -13,6 +14,8 @@ from omnibci.shared.events import EventType
 
 
 class Source:
+    trigger_mode = "events"
+    resume_mode = "restart-only"
     def __init__(self):
         self.is_connected = True
         self.is_streaming = False
@@ -58,17 +61,16 @@ def runtime(source=None, *, projected=True):
         source_id="test-source",
         generation="generation", acquisition_revision="revision", engine_revision="engine",
     )
-    acquisition._raw_metadata = "metadata from the previous connection"
-    acquisition._descriptor = object()
-    acquisition._descriptor_error = "previous description warning"
+    acquisition._connected = True
+    acquisition._streaming = (source or acquisition.data_source).is_streaming
+    acquisition.connection_id = "connection"
+    acquisition._observation = object()
     return acquisition
 
 
 def assert_disconnected(acquisition):
     assert acquisition.connection_id is None
-    assert acquisition._raw_metadata is None
-    assert acquisition._descriptor is None
-    assert acquisition._descriptor_error is None
+    assert acquisition._observation is None
     if acquisition.event_bus:
         states = [e.data for e in acquisition.event_bus.events if e.type is EventType.AcquisitionState]
         assert states
@@ -78,21 +80,23 @@ def assert_disconnected(acquisition):
 
 
 @pytest.mark.parametrize("projected", [False, True])
-def test_fetch_transport_loss_invalidates_identity_and_metadata(projected):
+@pytest.mark.parametrize("error", [asyncio.IncompleteReadError(b"partial", 20),
+                                 OSError(errno.EBADF, "closed socket"), OSError(errno.ENOTCONN, "not connected")])
+def test_fetch_transport_loss_invalidates_identity_and_metadata(projected, error):
     async def scenario():
         source = Source()
         source.is_streaming = True
 
         async def read_chunk():
             source.is_connected = source.is_streaming = False
-            raise asyncio.IncompleteReadError(b"partial", 20)
+            raise error
 
         source.read_chunk = read_chunk
         acquisition = runtime(source, projected=projected)
         await acquisition.fetch()
 
         assert_disconnected(acquisition)
-        assert "IncompleteReadError" in acquisition._fetch_failure
+        assert type(error).__name__ in acquisition._fetch_failure
 
     asyncio.run(scenario())
 
@@ -112,10 +116,10 @@ def test_command_transport_failure_publishes_disconnection_before_failure(comman
             source.is_connected = source.is_streaming = False
             raise ConnectionResetError("peer closed during command")
 
-        setattr(source, command.name, lose_connection)
+        setattr(source, "observe" if command is AcquisitionCommand.get_metadata else command.name, lose_connection)
         acquisition = runtime(source)
         # Force the metadata command to use the source, including without a request.
-        acquisition._raw_metadata = None
+        acquisition._observation = None
         payload = CommandRequest("failed-command", {"refresh": True}) if correlated else None
         item = (command, payload)
         if correlated:
@@ -140,7 +144,7 @@ def test_metadata_timeout_keeps_connection_and_is_not_continuity_loss():
         async def timeout():
             raise TimeoutError("metadata reply delayed")
 
-        source.get_metadata = timeout
+        source.observe = timeout
         acquisition = runtime(source)
         connection_id = acquisition.connection_id
         await acquisition.execute((AcquisitionCommand.get_metadata, CommandRequest("metadata", {"refresh": True})))
@@ -156,6 +160,8 @@ def test_metadata_timeout_keeps_connection_and_is_not_continuity_loss():
 
 
 class DelayedTeardownSource(Source):
+    trigger_mode = 'events'
+    resume_mode = "restart-only"
     def __init__(self):
         super().__init__()
         self.is_streaming = True
@@ -196,7 +202,7 @@ def test_connect_waits_for_old_teardown_without_losing_failure_or_stopping_new_c
 
         assert old_task.done() and not old_task.cancelled()
         assert acquisition.fetch_task is None
-        assert source.calls == ["stop_stream_started", "stop_stream_finished", "connect"]
+        assert source.calls == ["stop_stream_started", "stop_stream_finished", "disconnect", "connect"]
         assert source.is_connected
         assert acquisition.connection_id and acquisition.connection_id != previous_id
         assert acquisition._fetch_failure == "ConnectionResetError: original peer failure"
@@ -257,7 +263,7 @@ def test_cancelled_connect_does_not_cancel_old_teardown():
     asyncio.run(scenario())
 
 
-def test_stop_write_failure_latches_loss_before_cancelling_pending_reader():
+def test_stop_write_failure_latches_loss_after_joining_pending_reader():
     async def scenario():
         source = Source()
         source.is_streaming = True

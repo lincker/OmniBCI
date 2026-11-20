@@ -27,11 +27,9 @@ async def test_eof_boundary_separates_reads_without_waiting_for_processing(recon
         return raw[:, start:end] if start < raw.shape[1] else None
 
     async def connect():
-        source._is_connected = True
+        source.reader_adapter = SimpleNamespace(read_chunk=read_chunk, close=AsyncMock())
 
     monkeypatch.setattr(source, "connect", connect)
-    source.reader_adapter = SimpleNamespace(read_chunk=read_chunk, close=AsyncMock())
-    source._is_connected = True
     gate = ThreadEvent()
     gate.set()
     data = DataManager(Queue(), gate)
@@ -45,6 +43,7 @@ async def test_eof_boundary_separates_reads_without_waiting_for_processing(recon
     processor = _processor(decoder=decoder, bus=bus, data=data)
     processor._signal_receipt = acquisition._processing_receipt = {"input_id": "input-one"}
     try:
+        await acquisition._on_connect()
         await acquisition._on_start_stream()
         await acquisition.fetch_task
         await processor._current_state.run()

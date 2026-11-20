@@ -21,11 +21,11 @@ from omnibci.sdk import PluginContext
 
 
 def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
-    source = SignalInfo("source", 250, (
-        ChannelDescriptor(0, "O1", signal_type=signal_type, unit="uV"),
-        ChannelDescriptor(1, "Oz", signal_type="eeg", unit="uV"),
-        ChannelDescriptor(2, "M1", signal_type="eeg", unit="uV"),
-    ), 3)
+    source = SignalInfo(sample_rate=250, channels=(
+        ChannelDescriptor(0, "O1", signal_type=signal_type, unit="uV", channel_id="channel-0"),
+        ChannelDescriptor(1, "Oz", signal_type="eeg", unit="uV", channel_id="channel-1"),
+        ChannelDescriptor(2, "M1", signal_type="eeg", unit="uV", channel_id="channel-2"),
+    ))
     ids = {channel.name: channel.channel_id for channel in source.channels}
     inputs = ProcessingInput(outputs=tuple(ChannelBinding(name, ids[name]) for name in outputs))
     selection = PluginSelection("test.decoder", "default", "1")
@@ -85,10 +85,13 @@ def test_plugin_without_channel_requirements_accepts_prepared_context():
 @pytest.mark.asyncio
 async def test_curry_unknown_types_require_processing_declaration_before_builtin_cca():
     reader = Curry8DataReader(parameters={}, context=PluginContext())
-    reader._is_connected = reader._is_streaming = True
+    reader._is_connected = True
     reader._metadata = Curry8Metadata(803, 3, 500, 4, False, False, ("C3", "C4", "Trigger"))
-    raw_metadata = await reader.get_metadata()
-    source = reader.describe_output(source_id=reader.plugin_type, connection_id="curry-connection")
+    from unittest.mock import AsyncMock
+    reader._load_metadata = AsyncMock(side_effect=lambda: setattr(reader, "_metadata", Curry8Metadata(803, 3, 500, 4, False, False, ("C3", "C4", "Trigger"))))
+    observation = await reader.observe()
+    raw_metadata = observation.native_text
+    source = observation.signal_info
     assert "channel_types" not in raw_metadata
     assert all(channel.signal_type == "unknown" for channel in source.channels)
     catalog = PluginCatalog()
@@ -108,6 +111,8 @@ async def test_curry_unknown_types_require_processing_declaration_before_builtin
     plan = compile_processing_plan(source, declared)
     decoder = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
                                      catalog=catalog, context=signal_context(snapshot, plan))
+    decoder.setup()
+    decoder.begin_epoch()
     times = np.arange(501) / source.sample_rate
     signal = np.sin(2 * np.pi * 8 * times)
     chunk = SignalChunk(123, 1, np.vstack((np.zeros(501), signal, np.zeros(501))))
@@ -115,6 +120,7 @@ async def test_curry_unknown_types_require_processing_declaration_before_builtin
     np.testing.assert_array_equal(mapped.data[0], signal)
     np.testing.assert_array_equal(mapped.triggers, chunk.triggers)
     assert decoder.should_decode(mapped.data)
-    assert decoder.decode(mapped.data, mapped.data[:, -1:]).target_id == 1
+    assert decoder.decode(mapped.data, latest_raw_segment=mapped.data[:, -1:]).target_id == 1
+    decoder.teardown()
     assert all(channel.signal_type == "unknown" for channel in source.channels)
     assert "channel_types" not in raw_metadata

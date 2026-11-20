@@ -32,7 +32,7 @@ def test_file_reader_uses_explicit_path_and_chunk_size(tmp_path):
     assert reader.file_path == str(path)
     assert reader._chunk_size == 37
     assert reader.file_pointer == 0
-    assert not reader.is_connected
+    assert reader.reader_adapter is None
 
 
 @pytest.mark.parametrize("kwargs", [{"parameters": {}}, {"parameters": {}, "context": PluginContext()}])
@@ -54,7 +54,7 @@ def test_network_reader_explicit_parameters_and_defaults(source, default_port):
     context_only_reader = source(parameters={}, context=PluginContext())
 
     assert (reader.data_provider_ip, reader.data_provider_port) == ("192.0.2.8", 9001)
-    assert not reader.is_connected
+    assert reader.reader is None and reader.writer is None
     for default in (default_reader, context_only_reader):
         assert (default.data_provider_ip, default.data_provider_port) == (
             "127.0.0.1", default_port,

@@ -20,7 +20,7 @@ from omnibci.application.events import (
 )
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.command_result_service import CommandResultBroker
-from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Prediction
+from omnibci.domain.ports.algorithm import Decoder, EpochDetector, EpochBoundary, Prediction
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
@@ -38,6 +38,8 @@ class _Bus:
 
 
 class _Source:
+    trigger_mode = "events"
+    resume_mode = "restart-only"
     is_connected = True
     is_streaming = True
 
@@ -49,15 +51,21 @@ class _Source:
 
 
 class _Detector(EpochDetector):
-    def detect_start(self, chunk):
-        starts = np.flatnonzero(chunk.triggers == 1)
-        return (int(starts[0]), 1) if len(starts) else (-1, 0)
-
-    def detect_end(self, chunk):
-        return -1, 0
+    def detect(self, raw_data):
+        return tuple(EpochBoundary(offset=int(index), kind="start", event_id=1)
+                     for index in np.flatnonzero(raw_data[-1] == 1))
 
 
 class _Decoder(Decoder):
+    def setup(self):
+        pass
+
+    def begin_epoch(self):
+        pass
+
+    def teardown(self):
+        pass
+
     def __init__(self, samples=4, delay=0, decline=False, fail=False):
         self.samples = samples
         self.delay = delay
@@ -68,7 +76,7 @@ class _Decoder(Decoder):
     def should_decode(self, window):
         return window.shape[1] >= self.samples
 
-    def decode(self, window, latest_samples):
+    def decode(self, window, *, latest_raw_segment):
         self.calls += 1
         if self.delay:
             time.sleep(self.delay)
@@ -106,6 +114,7 @@ async def test_acquisition_joins_producer_before_in_band_marker_and_defers_succe
         source_id="test-source",
         generation="generation-1", acquisition_revision="revision-1", engine_revision="engine",
     )
+    acquisition._connected = acquisition._streaming = True
     started = asyncio.Event()
 
     async def producer():
@@ -147,6 +156,7 @@ async def test_stop_failure_joins_fetch_and_emits_failure_without_barrier():
         Source(), queue.Queue(), data, bus,
         source_id="test-source",
     )
+    acquisition._connected = acquisition._streaming = True
     acquisition.fetch_task = asyncio.create_task(asyncio.Event().wait())
     task = acquisition.fetch_task
 
@@ -175,6 +185,7 @@ async def test_acquisition_shutdown_cancellation_emits_failure_not_success():
         Source(), queue.Queue(), data, bus,
         source_id="test-source",
     )
+    acquisition._connected = acquisition._streaming = True
     task = asyncio.create_task(acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("cancelled"))))
     await entered.wait()
     task.cancel()
@@ -290,7 +301,7 @@ async def test_incomplete_epoch_and_pretrigger_are_discarded_with_diagnostic_rec
 
 
 @pytest.mark.asyncio
-async def test_barrier_does_not_feed_an_incremental_decoder_the_same_latest_samples_twice():
+async def test_barrier_does_not_feed_an_incremental_decoder_the_same_latest_raw_segment_twice():
     decoder = _Decoder(samples=4, decline=True)
     processor = _processor(decoder=decoder)
     for item in (_chunk(0, start=True), _chunk(1), _barrier(1)):
@@ -357,6 +368,8 @@ async def test_decoder_error_at_barrier_returns_execution_failure():
 @pytest.mark.asyncio
 async def test_acquisition_sequence_remains_monotonic_across_stream_restarts():
     class Source(_Source):
+        trigger_mode = 'events'
+        resume_mode = "restart-only"
         pending = None
 
         async def read_chunk(self):
@@ -369,6 +382,7 @@ async def test_acquisition_sequence_remains_monotonic_across_stream_restarts():
         source, queue.Queue(), data,
         source_id="test-source",
     )
+    acquisition._connected = acquisition._streaming = True
     for _ in range(2):
         source.pending = np.zeros((2, 2))
         await acquisition.fetch()
@@ -412,6 +426,7 @@ async def test_stop_waits_for_slow_backlog_and_publishes_trial_before_receipt():
         source_id="test-source",
         generation="generation-1", acquisition_revision="revision-1", engine_revision="engine",
     )
+    acquisition._connected = acquisition._streaming = True
     acquisition._last_sequence = 1
     acquisition._last_processing_sequence = 1
     data.put_data(_chunk(0, start=True))

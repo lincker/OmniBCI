@@ -33,15 +33,15 @@ def descriptor(tmp_path):
 
 
 def context(*names):
-    source = SignalInfo("tutorial", 4, tuple(
-        ChannelDescriptor(index, name, signal_type="eeg", unit="uV")
+    source = SignalInfo(sample_rate=4, channels=tuple(
+        ChannelDescriptor(index, name, signal_type="eeg", unit="uV", channel_id=f"channel-{index}")
         for index, name in enumerate(("Oz", "O2", "O1"))
-    ), 3)
+    ))
     mapped = replace(source, channels=tuple(
         replace(next(channel for channel in source.channels if channel.name == name), index=index)
         for index, name in enumerate(names)
-    ), trigger_row_index=len(names))
-    return PluginContext(sample_rate=4, acquired_signal=source, input_signal=mapped)
+    ))
+    return PluginContext(input_signal=mapped)
 
 
 def test_starter_installs_and_decodes_mapped_named_input(descriptor):
@@ -51,21 +51,26 @@ def test_starter_installs_and_decodes_mapped_named_input(descriptor):
     prepared = context("O2", "Oz")
     assert tuple(channel.channel_id for channel in prepared.input_signal.channels) == ("channel-1", "channel-0")
     decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=prepared)
+    decoder.setup()
+    decoder.begin_epoch()
     # Oz was source row 0 and is mapped row 1. The unrelated row has the opposite sign.
     window = np.array([[-100.0] * 4, [2.0] * 4])
     assert decoder.should_decode(window)
-    assert decoder.decode(window, window[:, -1:]).target_id == 1
-    assert decoder.decode(-window, -window[:, -1:]).target_id == 2
-    assert decoder.for_new_epoch() is decoder  # The tutorial has no mutable epoch state.
+    assert decoder.decode(window, latest_raw_segment=window[:, -1:]).target_id == 1
+    assert decoder.decode(-window, latest_raw_segment=-window[:, -1:]).target_id == 2
+    decoder.teardown()
 
 
 def test_starter_declines_forced_short_and_nonfinite_windows(descriptor):
     decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=context("Oz"))
+    decoder.setup()
+    decoder.begin_epoch()
     short = np.ones((1, 3))
     assert not decoder.should_decode(short)
-    assert decoder.decode(short, short) is None
+    assert decoder.decode(short, latest_raw_segment=short) is None
     invalid = np.full((1, 4), np.nan)
-    assert decoder.decode(invalid, invalid) is None
+    assert decoder.decode(invalid, latest_raw_segment=invalid) is None
+    decoder.teardown()
 
 
 def test_starter_rejects_unprepared_or_missing_named_input(descriptor):

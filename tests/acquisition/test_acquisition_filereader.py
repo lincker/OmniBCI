@@ -17,40 +17,40 @@ def test_real_cnt_lifecycle_and_first_chunk():
         reader = FileReader(parameters={"data_file_path": str(_CNT_FIXTURE)})
 
         try:
-            assert await reader.connect() is True
-            assert reader.is_connected is True
+            assert await reader.connect() is None
+            assert reader.reader_adapter is not None
             assert type(reader.reader_adapter).__name__ == "CNTReaderAdapter"
-            metadata = await reader.get_metadata()
-            assert isinstance(metadata, str)
-            assert "sfreq: 1000.0 Hz" in metadata
-            assert "Annotations" in metadata
-            descriptor = reader.describe_output(source_id=reader.plugin_type, connection_id="file-connection")
+            metadata = await reader.observe()
+            assert isinstance(metadata.native_text, str)
+            assert "sfreq: 1000.0 Hz" in metadata.native_text
+            assert "Annotations" in metadata.native_text
+            descriptor = metadata.signal_info
             assert descriptor.signal_channel_count == 9
             assert descriptor.output_row_count == 10
             assert descriptor.sample_rate == 1000
             assert [channel.unit for channel in descriptor.channels] == ["V"] * 9
-            assert descriptor.native_event == "annotations"
-            assert descriptor.provenance == "file-reported"
+            assert metadata.native_event == "annotations"
+            assert metadata.provenance == "file-reported"
             assert reader.file_pointer == 0
 
-            assert await reader.start_stream() is True
-            assert reader.is_streaming is True
+            assert await reader.start_stream() is None
+            assert reader._is_streaming is True
 
             chunk = await reader.read_chunk()
             assert chunk.shape == (10, 100)
             assert np.isfinite(chunk).all()
             assert reader.file_pointer == 100
-            assert await reader.get_metadata() == metadata
-            assert reader.describe_output(source_id=reader.plugin_type, connection_id="file-connection") == descriptor
+            with pytest.raises(RuntimeError, match="Stop"):
+                await reader.observe()
 
-            assert await reader.stop_stream() is True
-            assert reader.is_streaming is False
+            assert await reader.stop_stream() is None
+            assert reader._is_streaming is False
         finally:
-            if reader.is_streaming:
+            if reader._is_streaming:
                 await reader.stop_stream()
-            if reader.is_connected:
+            if reader.reader_adapter is not None:
                 await reader.disconnect()
 
-        assert reader.is_connected is False
+        assert reader.reader_adapter is None
 
     asyncio.run(scenario())

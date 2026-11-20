@@ -3,6 +3,7 @@ from __future__ import annotations
 from tests.plugin_configuration_helpers import builtin_selection
 
 from queue import Queue
+from traceback import format_exception
 from unittest.mock import MagicMock, call, patch
 
 import numpy as np
@@ -87,8 +88,7 @@ class TestAlgorithmLoading:
             bindings.append(ProfileBinding(slot, kind, None, descriptor.selection, parameters,
                                            processing_input=ProcessingInput() if kind == "decoder" else None).to_dict())
         snapshot["PLUGINS.bindings"] = bindings
-        source = SignalInfo("file_reader", 250,
-                                (ChannelDescriptor(0, "O1", signal_type="eeg", unit="V"),), 1)
+        source = SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "O1", signal_type="eeg", unit="V", channel_id="channel-0"),))
         plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision=snapshot["CONFIG.module_revisions"]["processing"])
         with patch.object(
             PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
@@ -127,25 +127,33 @@ class TestProcessorWiring:
         reporter = MagicMock(spec=StartupReporter)
 
         class InvalidTargetDecoder(Decoder):
+            def setup(self):
+                pass
+
+            def begin_epoch(self):
+                pass
+
+            def teardown(self):
+                pass
+
             def should_decode(self, window):
                 return False
 
-            def decode(self, window, latest_samples):
+            def decode(self, window, *, latest_raw_segment):
                 reporter.ready.assert_called_once_with()
                 return Prediction(1.9)
 
-        source = SignalInfo("test-source", 250, (ChannelDescriptor(0, "O1"),), 1,
-                            connection_id="test-connection")
+        source = SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "O1", channel_id="channel-0"),))
         inputs = ProcessingInput()
         plan = compile_processing_plan(source, inputs, acquisition_revision="test-revision")
         receipt = {
             "generation": "test-run", "acquisition_revision": "test-revision", "processing_revision": "test-revision", "engine_revision": "engine",
-            "connection_id": source.connection_id,
-            "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
+            "connection_id": "test-connection",
+            "source_fingerprint": "f" * 64, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
         }
         snapshot = {
             "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "test-run",
-            "ACQUISITION.signal_source": source.source_id,
+            "ACQUISITION.signal_source": "test-source",
             "PLUGINS.bindings": [ProfileBinding(
                 "processing.decoder", "decoder", None,
                 PluginSelection("test.decoder", "default", "1"), {}, processing_input=inputs,
@@ -167,7 +175,7 @@ class TestProcessorWiring:
                 if event.data.command_id == "prepare":
                     data_manager.put_data(ProcessingInputStart("attach", receipt, 0))
                 elif event.data.command_id == "attach":
-                    data_manager.put_data(SignalChunk(1.0, 1, np.array([[1., 2., 3.], [7., 0., 9.]])))
+                    data_manager.put_data(SignalChunk(1, 1, np.array([[1., 2., 3.], [7., 0., 9.]])))
 
         worker.event_bus.put_event.side_effect = feed_after_preparation
         next_data = data_manager.get_data
@@ -184,7 +192,7 @@ class TestProcessorWiring:
         with pytest.raises(TypeError) as raised:
             worker.run()
 
-        message = str(raised.value)
+        message = "".join(format_exception(raised.value))
         assert "InvalidTargetDecoder" in message
         assert "event_id=7" in message
         assert "test-revision" in message

@@ -1,6 +1,9 @@
 """
 Tests for /api/v1/acquisition endpoints.
 """
+from copy import deepcopy
+from omnibci.application.source_metadata import source_descriptor
+from omnibci.domain.ports.acquisition import SourceObservation
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -229,14 +232,11 @@ class TestAcquisitionStatus:
         ).to_dict()
         saved_binding = deepcopy(binding)
         acquisition_service.set_metadata_binding(lambda: binding)
-        descriptor = SignalInfo(
-            "test", 250, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
-            connection_id="previous", provenance="device-reported",
-        )
+        descriptor = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "C3", unit="uV", channel_id="channel-0"),)), native_event="final-row", provenance="device-reported"), source_id="test", connection_id="previous")
         metadata_result = CommandResult("read", "GetSourceMetadata", True, data={
             "source_id": "test", "connection_id": "previous",
             "metadata": "Amplifier metadata from previous connection",
-            "descriptor": descriptor.to_dict(), "descriptor_error": None,
+            "descriptor": deepcopy(descriptor), "descriptor_error": None,
         })
         request = MagicMock(return_value=metadata_result)
         monkeypatch.setattr(command_executor, "request", request)
@@ -272,20 +272,17 @@ class TestAcquisitionStatus:
         request.assert_called_once()
 
         # Only metadata read from the new connection may restore its dimensions.
-        replacement = SignalInfo(
-            "test", 500, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
-            connection_id="reconnected", provenance="device-reported",
-        )
+        replacement = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=500, channels=(ChannelDescriptor(0, "C3", unit="uV", channel_id="channel-0"),)), native_event="final-row", provenance="device-reported"), source_id="test", connection_id="reconnected")
         request.return_value = CommandResult("read-new", "GetSourceMetadata", True, data={
             "source_id": "test", "connection_id": "reconnected",
             "metadata": "Amplifier metadata from new connection",
-            "descriptor": replacement.to_dict(), "descriptor_error": None,
+            "descriptor": deepcopy(replacement), "descriptor_error": None,
         })
         response = api_client.get("/api/v1/acquisition/metadata")
         assert response.status_code == 200
         assert response.json()["data"]["descriptor"]["connection_id"] == "reconnected"
         assert response.json()["data"]["descriptor"]["sample_rate"] == 500
-        assert acquisition_service.cached_descriptor_for(binding) == replacement.to_dict()
+        assert acquisition_service.cached_descriptor_for(binding) == deepcopy(replacement)
         after = api_client.get("/api/v1/acquisition/status").json()["data"]
         assert after["connection_id"] == "reconnected"
         assert after["metadata_available"] is True
@@ -296,12 +293,11 @@ class TestAcquisitionStatus:
 class TestAcquisitionMetadata:
     def test_normalized_descriptor_is_exposed_separately_from_source_text(self, api_client, acquisition_service):
         from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
-        descriptor = SignalInfo("test", 500, (ChannelDescriptor(0, "CH1"),), 1,
-                                           connection_id="current")
+        descriptor = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=500, channels=(ChannelDescriptor(0, "CH1", channel_id="channel-0"),)), native_event="final-row", provenance="protocol-defined"), source_id="test", connection_id="current")
         raw = '  Vendor reference: <unknown /> & value\r\n{"vendor_field": null}\n'
         acquisition_service.get_metadata = MagicMock(return_value={
             "source_id": "test", "connection_id": "current", "metadata": raw,
-            "descriptor": descriptor.to_dict(),
+            "descriptor": deepcopy(descriptor),
             "comparison": {"status": "mismatched", "sample_rate": {"expected": 250, "actual": 500},
                            "channel_count": {"expected": 3, "actual": 2}},
         })

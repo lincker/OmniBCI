@@ -29,8 +29,11 @@ import json
 from pathlib import Path
 import numpy as np
 from omnibci.sdk import SignalSource
+from omnibci.domain.ports.acquisition import SourceObservation, SourceCheckpoint
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 class Replay(SignalSource):
+    trigger_mode = "events"
+    resume_mode = "checkpoint"
     def __init__(self, *, parameters, context):
         super().__init__()
         self.size = parameters['size']
@@ -40,32 +43,26 @@ class Replay(SignalSource):
         self.path = parameters['log']
         self.cursor = 0
         self.restored = None
-    async def connect(self): self._is_connected = True; return True
-    async def disconnect(self): self._is_connected = False; return True
+    async def connect(self): pass
+    async def disconnect(self): pass
     async def start_stream(self):
         self.cursor = self.restored if self.restored is not None else 0
         self.restored = None
-        self._is_streaming = True
-        return True
-    async def stop_stream(self): self._is_streaming = False; return True
+    async def stop_stream(self): pass
     async def read_chunk(self):
         await asyncio.sleep(.01)
         self.cursor += self.size
         return np.zeros((2,self.size))
-    async def get_metadata(self) -> str:
-        return 'Test recording'
-    def describe_output(self, *, source_id, connection_id):
-        return SignalInfo(source_id, self.sample_rate,
-            (ChannelDescriptor(0, 'CH1', 'eeg', 'V'),), 1,
-            connection_id=connection_id, provenance='protocol-defined')
-    @property
-    def supports_checkpoint(self): return True
+    async def observe(self):
+        return SourceObservation(native_text='Test recording', signal_info=SignalInfo(self.sample_rate,
+            (ChannelDescriptor(0, 'CH1', 'eeg', 'V', channel_id='channel-0'),)),
+            native_event='final-row', provenance='protocol-defined')
     def checkpoint(self):
-        return {'source_identity': {'resource_id':'test-recording', 'revision':'immutable'}, 'cursor':self.cursor}
+        return SourceCheckpoint(resource_id='test-recording', resource_revision='immutable', state={'cursor':self.cursor})
     def restore_checkpoint(self, checkpoint):
-        self.restored = checkpoint['cursor']
+        self.restored = checkpoint.state['cursor']
         with Path(self.path).open('a') as output:
-            output.write(json.dumps(checkpoint) + '\\n')
+            output.write(json.dumps(checkpoint.state) + '\\n')
 '''
 
 

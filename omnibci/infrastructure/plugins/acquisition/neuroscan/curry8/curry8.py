@@ -16,8 +16,7 @@ from enum import IntEnum
 
 import numpy as np
 
-from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.domain.signal_info import SignalInfo
+from omnibci.domain.ports.acquisition import SignalSource, SourceObservation
 from omnibci.infrastructure.acquisition.metadata import signal_info
 from omnibci.sdk import PluginContext, PluginParameters
 
@@ -162,6 +161,8 @@ class Curry8DataReader(SignalSource):
     """Receive uncompressed CURRY 8 data with low-byte stimulus codes in the final row."""
 
     plugin_type = "neuroscan_curry8_reader"
+    trigger_mode = "level"
+    resume_mode = "live-current"
 
     DEFAULT_PORT = 4455
     CLOSE_TIMEOUT = 1.0
@@ -179,6 +180,8 @@ class Curry8DataReader(SignalSource):
         context: PluginContext | None = None,
     ) -> None:
         super().__init__()
+        self._is_connected = False
+        self._is_streaming = False
         self.data_provider_ip = host or parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
         self.data_provider_port = int(
             port if port is not None
@@ -193,18 +196,9 @@ class Curry8DataReader(SignalSource):
         self._protocol_version: int | None = None
         self._metadata: Curry8Metadata | None = None
 
-    @property
-    def trigger_is_level(self) -> bool:
-        return True
-
-    @property
-    def resume_without_checkpoint_safe(self) -> bool:
-        """NetStreaming starts live EEG delivery without a replay request."""
-        return True
-
-    async def connect(self) -> bool:
+    async def connect(self) -> None:
         if self._is_connected:
-            return True
+            return
         self._protocol_version = None
         self._metadata = None
         self._pending_header = None
@@ -234,60 +228,50 @@ class Curry8DataReader(SignalSource):
             await self._close_writer()
             raise
         self._is_connected = True
-        return True
 
-    async def disconnect(self) -> bool:
+    async def disconnect(self) -> None:
         try:
             if self._is_streaming:
                 await self.stop_stream()
         finally:
             await self._close_writer()
-        return True
 
-    async def get_metadata(self) -> str:
+    async def observe(self) -> SourceObservation:
         if not self._is_connected:
             raise RuntimeError("Connect to CURRY before requesting metadata")
-        if not self._is_streaming:
-            self._metadata = None
-            await self._load_metadata()
+        if self._is_streaming:
+            raise RuntimeError("Stop the CURRY stream before requesting metadata")
+        self._metadata = None
+        await self._load_metadata()
         metadata = self._metadata
-        if metadata is None:
-            raise RuntimeError("Stop the CURRY stream before requesting new metadata")
-        return json.dumps(asdict(metadata), ensure_ascii=False, indent=2)
+        text = json.dumps(asdict(metadata), ensure_ascii=False, indent=2)
+        try:
+            info = signal_info(signal_channel_count=metadata.channel_count - 1,
+                               sample_rate=metadata.sample_rate, channel_labels=metadata.channel_labels[:-1])
+        except ValueError as exc:
+            return SourceObservation(native_text=text, signal_info=None, native_event="final-row",
+                                     provenance="device-reported", layout_error=str(exc)[:4096])
+        return SourceObservation(native_text=text, signal_info=info,
+                                 native_event="final-row", provenance="device-reported")
 
-    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
-        """Describe the output using the last successful device query."""
-        metadata = self._metadata
-        if not self._is_connected or metadata is None:
-            raise RuntimeError("Get CURRY metadata before describing its output")
-        return signal_info(
-            source_id=source_id, connection_id=connection_id,
-            signal_channel_count=metadata.channel_count - 1,
-            sample_rate=metadata.sample_rate,
-            channel_labels=metadata.channel_labels[:-1],
-            native_event="final-row", provenance="device-reported",
-        )
-
-    async def start_stream(self) -> bool:
+    async def start_stream(self) -> None:
         if not self._is_connected:
             raise RuntimeError("Connect to CURRY before starting its stream")
         if self._is_streaming:
-            return True
+            return
         if self._metadata is None:
             await self._load_metadata()
         await self._send_request(ClientRequest.STREAMING_START)
         self._is_streaming = True
-        return True
 
-    async def stop_stream(self) -> bool:
+    async def stop_stream(self) -> None:
         if not self._is_streaming:
-            return True
+            return
         try:
             if self.writer is not None:
                 await self._send_request(ClientRequest.STREAMING_STOP)
         finally:
             self._is_streaming = False
-        return True
 
     async def read_chunk(self) -> np.ndarray:
         if not self._is_streaming:

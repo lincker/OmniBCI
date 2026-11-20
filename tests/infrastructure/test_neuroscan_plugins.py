@@ -34,7 +34,7 @@ def test_neuroscan_driver_is_discoverable_and_loadable(
     assert str(descriptor.entrypoint) == f"{driver}:{class_name}"
     assert type(instance).__name__ == class_name
     assert instance.plugin_type == plugin_type
-    assert not instance.is_connected
+    assert instance.reader is None and instance.writer is None
 
 
 @pytest.mark.parametrize(

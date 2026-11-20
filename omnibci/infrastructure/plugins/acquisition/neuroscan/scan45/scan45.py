@@ -10,8 +10,7 @@ from enum import IntEnum
 
 import numpy as np
 
-from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
-from omnibci.domain.signal_info import SignalInfo
+from omnibci.domain.ports.acquisition import SignalSource, SourceObservation, TriggerEmitter
 from omnibci.infrastructure.acquisition.metadata import signal_info
 from omnibci.sdk import PluginContext, PluginParameters
 
@@ -117,11 +116,15 @@ scan45_message_manager = Scan45Message()
 
 class Scan45DataReader(SignalSource):
     plugin_type = 'neuroscan_scan45_reader'
+    trigger_mode = 'level'
+    resume_mode = 'live-current'
     def __init__(
         self, *, parameters: PluginParameters,
         context: PluginContext | None = None,
     ) -> None:
         super().__init__()
+        self._is_connected = False
+        self._is_streaming = False
         self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
         self.data_provider_port = parameters.get("DATA_PROVIDER_PORT", 4000)
         self.channel_count = parameters.get("channel_count", 10)
@@ -134,21 +137,11 @@ class Scan45DataReader(SignalSource):
         self._previous_event = 0 # the integer events position
         self._packets_counter = 0
 
-    @property
-    def trigger_is_level(self) -> bool:
-        return True
-
-    @property
-    def resume_without_checkpoint_safe(self) -> bool:
-        """Scan45 starts live network delivery without seeking recorded data."""
-        return True
-
-    async def connect(self) -> bool:
+    async def connect(self) -> None:
         # TODO: if any connections to scan4.5, disconnect it
         if not self._is_connected:
             await self._connect()
         self._is_connected = True
-        return self._is_connected
 
     # TODO: refactor the return values
     async def _connect(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
@@ -158,32 +151,34 @@ class Scan45DataReader(SignalSource):
         print("connected")
         return self.reader, self.writer
 
-    async def disconnect(self):
-        if self._is_connected:
-            stop_message = scan45_message_manager.closingUpConnectionCommand
-            self.writer.write(stop_message)
-            await self.writer.drain()
+    async def disconnect(self) -> None:
+        try:
+            if self._is_connected and self.writer is not None:
+                self.writer.write(scan45_message_manager.closingUpConnectionCommand)
+                await self.writer.drain()
+        finally:
             await self._disconnect()
-            self._is_connected = False
-        return True
 
     async def _disconnect(self):
-        self._pending_header = None
-        self.writer.close()
-        await self.writer.wait_closed()
+        writer = self.writer
+        self.reader = self.writer = self._pending_header = None
+        self._is_connected = self._is_streaming = False
+        if writer is not None:
+            writer.close()
+            await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
 
-    async def get_metadata(self) -> str:
-        """Report unsupported querying without presenting settings as device data."""
-        return "Device metadata retrieval is not implemented for Scan45."
-
-    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
-        """Describe the configured stream until device querying is implemented."""
-        return signal_info(
-            source_id=source_id, connection_id=connection_id,
-            signal_channel_count=self.channel_count - 1,
-            sample_rate=self._sample_rate,
-            native_event="final-row", provenance="user-declared",
-        )
+    async def observe(self) -> SourceObservation:
+        """Keep configured layout distinct from an unsupported device query."""
+        if not self._is_connected or self._is_streaming:
+            raise RuntimeError("Observe Scan45 only while connected and stopped")
+        text = "Device metadata retrieval is not implemented for Scan45."
+        try:
+            info = signal_info(signal_channel_count=self.channel_count - 1, sample_rate=self._sample_rate)
+        except ValueError as exc:
+            return SourceObservation(native_text=text, signal_info=None, native_event="final-row",
+                                     provenance="user-declared", layout_error=str(exc)[:4096])
+        return SourceObservation(native_text=text, signal_info=info,
+                                 native_event="final-row", provenance="user-declared")
 
     async def request_basic_info(self):
         self.writer.write(scan45_message_manager.getEDFHeaderInfoCommand)
@@ -192,17 +187,21 @@ class Scan45DataReader(SignalSource):
         # TODO:
         self.info = str(header)
 
-    async def start_stream(self) -> bool:
+    async def start_stream(self) -> None:
+        if not self._is_connected:
+            raise ConnectionError("Connect to Scan45 before starting its stream")
+        if self._is_streaming:
+            return
         self.writer.write(scan45_message_manager.startSendingDataCommand)
         await self.writer.drain()
         self._is_streaming = True
-        return True
 
-    async def stop_stream(self) -> bool:
+    async def stop_stream(self) -> None:
+        if not self._is_streaming:
+            return
         self.writer.write(scan45_message_manager.stopSendingDataCommand)
         await self.writer.drain()
         self._is_streaming = False
-        return True
 
     async def read_chunk(self):
         # load 1 package data and unpack it

@@ -7,6 +7,12 @@ flow and server contracts, see [web and server contracts](frontend-separation.md
 Screenshots are in `docs/images/ui/`. They show the dark theme at 1440×900 with
 Chinese as the interface language.
 
+The agreed [module and surface names](plugin-marketplace-design.md#32-canonical-module-and-surface-names)
+use **Plugins** for the management area and **Plugin Marketplace** for its
+distribution capability. The current UI still uses **Extensions**; screenshots,
+the `#extensions` route and source identifiers below describe that implementation.
+Renaming those requires the later code change; this document only standardizes terminology.
+
 ## Layout
 
 The console uses a workbench layout:
@@ -14,7 +20,7 @@ The console uses a workbench layout:
 | Region | Purpose |
 | --- | --- |
 | Title bar | Product wordmark and the current area (`控制台 / 配置`). |
-| Activity bar (left) | Switches between Setup, Run, Results, Extensions, and Settings (gear at the bottom). The selected area has an accent stripe and a tinted background. |
+| Activity bar (left) | Switches between Setup, Run, Results, Plugins (currently labeled Extensions), and Settings (gear at the bottom). The selected area has an accent stripe and a tinted background. |
 | Explorer (second column) | Area-specific navigation: modules, plugin slots, and saved profiles. The selected item has a highlighted background and an inset accent stripe. |
 | Editor | The page content. Setup pages keep a footer with save actions pinned to the bottom. |
 | Status bar | Connection and engine state, always visible. |
@@ -114,9 +120,14 @@ and decoded trials arrive in the side panel:
 The page shows the retained decoded trials (up to 200), newest first, with a
 search box and a forced-output filter.
 
-### Extensions
+### Plugins
 
-![Extensions](images/ui/extensions.png)
+The area manages installed Plugin Packages and offers Plugin Marketplace access.
+Contribution selection remains in the owning module's configuration. Runtime
+preparation creates Instances in that module's backend Host; the management page
+itself does not execute plugin code.
+
+![Plugins page with the current Extensions label](images/ui/extensions.png)
 
 ### Settings / General
 

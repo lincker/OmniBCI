@@ -11,12 +11,14 @@ from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
 
 def runtime(chunks, sink=None):
     source = SimpleNamespace(
-        is_connected=True, is_streaming=True,
+        trigger_mode="events", resume_mode="restart-only",
         read_chunk=AsyncMock(side_effect=[*chunks, None]),
         stop_stream=AsyncMock(),
     )
-    return AcquisitionRuntime(source, Queue(), sink or SimpleNamespace(put_data=lambda _: None),
+    acquisition = AcquisitionRuntime(source, Queue(), sink or SimpleNamespace(put_data=lambda _: None),
                               source_id="test")
+    acquisition._connected = acquisition._streaming = True
+    return acquisition
 
 
 @pytest.mark.asyncio

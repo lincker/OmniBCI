@@ -67,17 +67,20 @@ schema_version = 1
     (plugin / "plugin.py").write_text('''from pathlib import Path
 from omnibci.sdk import Decoder, Prediction
 class ValueDecoder(Decoder):
+    def setup(self):
+        pass
+    def teardown(self):
+        pass
     def __init__(self, *, parameters, context):
         self.target = parameters["target"]
         self.root = Path(context.resource_root)
         (self.root / f"constructed-{self.target}").write_text("ready")
     def should_decode(self, data):
         return False
-    def decode(self, data, latest_samples):
+    def decode(self, data, *, latest_raw_segment):
         return Prediction(self.target)
-    def for_new_epoch(self):
+    def begin_epoch(self):
         (self.root / f"epoch-{self.target}").write_text("ready")
-        return self
 ''')
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path))
     catalog = PluginCatalog()
@@ -108,11 +111,10 @@ class ValueDecoder(Decoder):
         reporter.close()
         wait_for_startup_report(receiver, process, component="Signal Processing", timeout_s=10,
                                 expected_module_revisions={"processing": "old"}, expected_engine_revision="engine", expected_generation="run")
-        source = SignalInfo("test-source", 250, (ChannelDescriptor(0, "O1"),), 1,
-                            connection_id="connection")
+        source = SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "O1", channel_id="channel-0"),))
         plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="old")
         receipt = {"generation": "run", "acquisition_revision": "old", "processing_revision": "old", "engine_revision": "engine", "connection_id": "connection",
-                   "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
+                   "source_fingerprint": "f" * 64, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
         commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
         })))
@@ -121,18 +123,18 @@ class ValueDecoder(Decoder):
         data.put(ProcessingInputStart("attach", receipt, 0))
         attached = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "attach")
         assert attached.ok, attached.message
-        data.put(SignalChunk(1.0, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
+        data.put(SignalChunk(1, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
         _wait_file(plugin / "epoch-1")
         commands.put((SignalProcessorCommand.stage_configuration, CommandRequest("update", {
             "settings_snapshot": replacement, "expected_revision": "old", "generation": "run", "engine_revision": "engine", "boundary": "trial",
         })))
         _wait_file(plugin / "constructed-2")
-        data.put(SignalChunk(2.0, 2, np.array([[1., 1., 1.], [0., 9., 0.]])))
+        data.put(SignalChunk(2, 2, np.array([[1., 1., 1.], [0., 9., 0.]])))
         old_trial = _event(events, EventType.TrialCompleted)
         assert old_trial.processing_revision == "old" and old_trial.classification.target_id == 1
         receipt = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "update")
         assert receipt.ok and receipt.data["applied_revision"] == "new"
-        data.put(SignalChunk(3.0, 3, np.array([[1., 1., 1.], [0., 11., 0.]])))
+        data.put(SignalChunk(3, 3, np.array([[1., 1., 1.], [0., 11., 0.]])))
         new_trial = _event(events, EventType.TrialCompleted)
         assert new_trial.processing_revision == "new" and new_trial.classification.target_id == 2
         assert old_trial.generation == new_trial.generation == "run"

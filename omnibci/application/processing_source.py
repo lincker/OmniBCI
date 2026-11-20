@@ -2,7 +2,7 @@
 from copy import deepcopy
 
 from omnibci.domain.channel_mapping import ProcessingInput
-from omnibci.application.source_expectations import validate_source_expectations
+from omnibci.application.source_metadata import descriptor_layout
 
 
 def materialize_processing_binding(binding):
@@ -46,21 +46,21 @@ def processing_binding_key(snapshot):
 
 
 def validate_source_binding(snapshot, metadata):
-    if metadata.source_id != snapshot.get("ACQUISITION.signal_source"):
+    info = descriptor_layout(metadata)
+    if metadata["source_id"] != snapshot.get("ACQUISITION.signal_source"):
         raise ValueError("Source metadata belongs to a different acquisition source")
-    if metadata.provenance in {"device-reported", "file-reported"}:
+    if metadata["provenance"] in {"device-reported", "file-reported"}:
         return
     expected_rate = snapshot.get("ACQUISITION.sample_rate")
-    if expected_rate is not None and expected_rate != metadata.sample_rate:
-        raise ValueError(f"Configured sample rate {expected_rate} differs from source rate {metadata.sample_rate}")
+    if expected_rate is not None and expected_rate != info.sample_rate:
+        raise ValueError(f"Configured sample rate {expected_rate} differs from source rate {info.sample_rate}")
     expected_rows = snapshot.get("ACQUISITION.channel_count")
-    if expected_rows is not None and expected_rows != metadata.output_row_count:
+    if expected_rows is not None and expected_rows != info.output_row_count:
         raise ValueError("Source channel count differs from the selected acquisition profile")
 
 
 def validate_plan_binding(snapshot, plan):
-    validate_source_binding(snapshot, plan.source)
-    validate_source_expectations(snapshot, plan.source)
+    # Acquisition validates source identity; this owner validates the prepared layout/input.
     value = processing_input(snapshot)
     if value is None or plan.processing_input != value:
         raise ValueError("Signal plan does not match the selected processing input")

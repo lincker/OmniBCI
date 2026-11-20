@@ -16,7 +16,6 @@ class OzPolarityDemo(Decoder):
         if context.input_signal is None:
             raise ValueError("Oz Polarity Demo requires prepared input metadata")
         # These names describe matrix rows after channel selection and ordering.
-        # context.acquired_signal.channels describes the original source instead.
         names = [channel.name for channel in context.input_signal.channels]
         if "Oz" not in names:
             raise ValueError("Oz Polarity Demo requires an Oz input channel")
@@ -25,16 +24,25 @@ class OzPolarityDemo(Decoder):
             2, math.ceil(parameters["window_duration"] * context.input_signal.sample_rate),
         )
 
+    def setup(self) -> None:
+        pass
+
+    def begin_epoch(self) -> None:
+        pass
+
+    def teardown(self) -> None:
+        pass
+
     def should_decode(self, window: NDArray) -> bool:
         # The host checks the accumulated post-trigger window before epoch filters.
         return window.shape[1] >= self.sample_count
 
-    def decode(self, window: NDArray, latest_samples: NDArray) -> Prediction | None:
+    def decode(self, window: NDArray, *, latest_raw_segment: NDArray) -> Prediction | None:
         # window is filtered post-trigger data accumulated so far, not necessarily
         # a complete trial. A closing boundary can bypass the readiness gate.
         if not self.should_decode(window):
             return None
-        # latest_samples is required: the most recent mapped epoch
+        # latest_raw_segment is required: the most recent mapped epoch
         # fragment, without epoch filters, or shape (channels, 0) when absent.
         # It is not all samples since the last decode. This stateless whole-window
         # decoder ignores it and never modifies either input array in place.

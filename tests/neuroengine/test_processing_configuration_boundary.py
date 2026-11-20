@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from tests.processing_helpers import make_processor
+from tests.processing_helpers import marker_boundaries, make_processor
 from omnibci.application.events import CommandFailureKind, CommandRequest
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
 from omnibci.domain.signal import SignalChunk
@@ -19,10 +19,19 @@ from omnibci.shared.events import EventType
 
 
 class ValueDecoder(Decoder):
+    def setup(self):
+        pass
+
+    def begin_epoch(self):
+        pass
+
+    def teardown(self):
+        pass
+
     def should_decode(self, window):
         return True
 
-    def decode(self, window, latest_samples):
+    def decode(self, window, *, latest_raw_segment):
         return Prediction(int(window[0, 0]))
 
 
@@ -30,7 +39,7 @@ class Add(Filter):
     def __init__(self, value):
         self.value = value
 
-    def apply(self, data, ctx):
+    def apply(self, data, *, pre_trigger_data):
         return data + self.value
 
 
@@ -38,23 +47,17 @@ class Multiply(Filter):
     def __init__(self, value):
         self.value = value
 
-    def apply(self, data, ctx):
+    def apply(self, data, *, pre_trigger_data):
         return data * self.value
 
 
 class Markers(EpochDetector):
-    def detect_start(self, chunk):
-        marks = chunk.raw_data[-1]
-        positions = np.flatnonzero((marks > 0) & (marks < 255))
-        return (int(positions[0]), int(marks[positions[0]])) if positions.size else (-1, 0)
-
-    def detect_end(self, chunk):
-        positions = np.flatnonzero(chunk.raw_data[-1] == 255)
-        return (int(positions[0]), 255) if positions.size else (-1, 0)
+    def detect(self, raw_data):
+        return marker_boundaries(raw_data)
 
 
 def _chunk(markers, sequence=1):
-    return SignalChunk(1.0, sequence, np.vstack((np.ones(len(markers)), markers)))
+    return SignalChunk(1, sequence, np.vstack((np.ones(len(markers)), markers)))
 
 
 @pytest.fixture

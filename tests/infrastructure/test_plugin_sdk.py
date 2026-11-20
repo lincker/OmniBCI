@@ -14,7 +14,7 @@ import pytest
 
 @pytest.mark.parametrize(("name", "module"), [
     ("SignalSource", "acquisition"), ("TriggerEmitter", "acquisition"),
-    ("Filter", "algorithm"), ("FilterContext", "algorithm"),
+    ("Filter", "algorithm"), ("EpochBoundary", "algorithm"),
     ("Decoder", "algorithm"), ("Prediction", "algorithm"),
     ("EpochDetector", "algorithm"), ("Paradigm", "paradigm"),
     ("Effector", "effector"), ("Renderer", "renderer"),
@@ -61,11 +61,11 @@ def test_plugin_context_preserves_signal_metadata_through_pickle(tmp_path):
     from omnibci.domain.signal_info import ChannelDescriptor
     from omnibci.sdk import PluginContext, SignalInfo
 
-    channels = [ChannelDescriptor(0, "Oz"), ChannelDescriptor(1, "O1")]
-    signal = SignalInfo("source", 250, channels, trigger_row_index=2)
+    channels = [ChannelDescriptor(0, "Oz", channel_id="channel-0"), ChannelDescriptor(1, "O1", channel_id="channel-1")]
+    signal = SignalInfo(sample_rate=250, channels=channels)
     context = PluginContext(sample_rate=250, acquired_signal=signal, input_signal=signal,
                             module_revision="revision-7", resource_root=str(tmp_path))
-    channels.append(ChannelDescriptor(2, "O2"))
+    channels.append(ChannelDescriptor(2, "O2", channel_id="channel-2"))
 
     assert tuple(channel.name for channel in context.input_signal.channels) == ("Oz", "O1")
     assert context.acquired_signal is signal
@@ -96,18 +96,18 @@ def test_plugin_context_rejects_retired_channel_names():
 def _run_sdk_filter(parameters, context, output):
     import numpy as np
 
-    from omnibci.sdk import Filter, FilterContext, PluginContext, PluginParameters
+    from omnibci.sdk import Filter, PluginContext, PluginParameters
 
     class GainFilter(Filter):
         def __init__(self, *, parameters: PluginParameters, context: PluginContext):
             self.gain = parameters["gain"]
             self.context = context
 
-        def apply(self, data, ctx):
+        def apply(self, data, *, pre_trigger_data):
             return data * self.gain
 
     plugin = GainFilter(parameters=parameters, context=context)
-    data = plugin.apply(np.ones((2, 2)), FilterContext(sample_rate=250))
+    data = plugin.apply(np.ones((2, 2)), pre_trigger_data=None)
     output.send((data.tolist(), plugin.context))
     output.close()
 
@@ -117,8 +117,7 @@ def test_context_and_configuration_are_usable_in_spawned_plugin(tmp_path):
     from omnibci.domain.signal_info import ChannelDescriptor
     from omnibci.sdk import PluginContext, SignalInfo
 
-    signal = SignalInfo("source", 250, (ChannelDescriptor(0, "Oz"), ChannelDescriptor(1, "O1")),
-                        trigger_row_index=2)
+    signal = SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "Oz", channel_id="channel-0"), ChannelDescriptor(1, "O1", channel_id="channel-1")))
     context = PluginContext(sample_rate=250, acquired_signal=signal, input_signal=signal,
                             module_revision="revision-7", resource_root=str(tmp_path))
     spawn = mp.get_context("spawn")

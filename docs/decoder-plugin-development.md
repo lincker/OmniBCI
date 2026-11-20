@@ -1,7 +1,16 @@
 # Write a Decoder plugin
 
-Open **Extensions → Decoder developer guide** in the web console or desktop app
-for an offline overview, commented manifest, and downloadable starter files.
+This guide is a historical API 2 snapshot and is not current developer guidance.
+S1c has changed processing methods; constructor/manifest changes remain scheduled
+for S1f. The developer guide is deferred until the coordinated refactor. Use
+the [canonical plugin terminology](plugin-marketplace-design.md#31-canonical-plugin-terminology):
+install a Plugin Package, configure its decoder Contribution, and let Processing
+Host construct and run the decoder Instance.
+
+Open the plugin management page, currently labeled **Extensions**, then
+**Decoder developer guide** in the web console or desktop app for an offline
+overview, commented manifest, and downloadable starter files. The target page
+name is **Plugins**.
 The executable starter lives in `examples/decoder_plugin/`; the app displays
 those same files rather than maintaining a separate copy of the code.
 
@@ -204,7 +213,7 @@ an installed package/version is immutable. Schema version is separate.
 
 ## Install and validate
 
-1. Open **Extensions → Install ZIP…**, select the archive, then enable that exact
+1. Open **Install ZIP…** on the plugin management page, select the archive, then enable that exact
    package version. Installation checks metadata and schemas without importing
    Python; successful installation alone does not prove the algorithm executes.
 2. In **Setup → Signal Processing → Decoder**, select the contribution and edit its

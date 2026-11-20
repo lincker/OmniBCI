@@ -11,11 +11,11 @@ reference interval; it does not remove time-varying drift.
 
 Contract notes:
   - The pre-trigger segment is *not* part of the main data stream — it arrives
-    via ``FilterContext.baseline`` (channels × n).  This filter reads it from
+    via ``pre_trigger_data`` (channels × n).  This filter reads it from
     there and returns the corrected window only, so downstream stages and the
     decoder keep seeing the window exactly as before, just baseline-corrected.
   - No-op (returns the window unchanged) when no pre-trigger data was captured
-    (``baseline is None`` or zero-width), e.g. when ``baseline_duration == 0`` or
+    (``pre_trigger_data is None`` or zero-width), e.g. when ``baseline_duration == 0`` or
     when the stream has not yet supplied any history. Captured history is
     continuous and may include samples from the previous trial.
   - Pure transform: no per-epoch state, safe to share across epochs.
@@ -23,7 +23,7 @@ Contract notes:
 
 from numpy import typing as npt
 
-from omnibci.domain.ports.algorithm import Filter, FilterContext
+from omnibci.domain.ports.algorithm import Filter
 from omnibci.sdk import PluginContext, PluginParameters
 
 
@@ -36,8 +36,7 @@ class BaselineCorrection(Filter):
     ):
         pass
 
-    def apply(self, data: npt.NDArray, ctx: FilterContext) -> npt.NDArray:
-        pre_trigger_data = ctx.baseline
+    def apply(self, data: npt.NDArray, *, pre_trigger_data: npt.NDArray | None) -> npt.NDArray:
         if pre_trigger_data is None or pre_trigger_data.shape[1] == 0:
             return data
         # Use all supplied reference samples to estimate the per-channel baseline.

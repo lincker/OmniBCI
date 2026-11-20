@@ -1,8 +1,13 @@
 # Current configuration, saved profiles, and history
 
-Each plugin has editable **Current parameters**. A saved Profile is a
-named reusable copy for one exact package, contribution, and version. Applying
-current values never requires saving a Profile first.
+Each configured plugin slot has editable **Current parameters** for its selected
+Contribution. A saved Profile is a named reusable copy for one exact package,
+contribution, and version. Applying
+current values never requires saving a Profile first. Follow the
+[canonical plugin terminology](plugin-marketplace-design.md#31-canonical-plugin-terminology):
+Configuration owns Profiles and accepted bindings; the owning Module Host
+constructs and runs Instances. Saving or loading a Profile does not install a
+Package or create an Instance. The workflows below describe the current implementation.
 
 ## Using the console
 

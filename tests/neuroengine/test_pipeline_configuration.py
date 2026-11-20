@@ -30,10 +30,9 @@ def selected_snapshot(revision="old"):
 
 
 def _build(before, after, boundary="module"):
-    channels = tuple(ChannelDescriptor(index, name, signal_type="eeg", unit="V")
+    channels = tuple(ChannelDescriptor(index, name, signal_type="eeg", unit="V", channel_id=f"channel-{index}")
                      for index, name in enumerate(("O1", "O2")))
-    source = SignalInfo(before["ACQUISITION.signal_source"], before["ACQUISITION.sample_rate"],
-                            channels, len(channels), connection_id="test-connection")
+    source = SignalInfo(sample_rate=before["ACQUISITION.sample_rate"], channels=channels)
     plan = compile_processing_plan(source, ProcessingInput.from_dict(
         before["PLUGINS.bindings"][1]["processing_input"]), acquisition_revision=before["CONFIG.module_revisions"]["acquisition"])
     return configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.2,
@@ -76,10 +75,10 @@ def test_trial_update_uses_prepared_source_rate_instead_of_legacy_flat_mirror(pr
     after = deepcopy(before)
     after["CONFIG.module_revisions"]["processing"] = "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
-    source = SignalInfo("file_reader", 500, (
-        ChannelDescriptor(0, "O1", signal_type="eeg", unit="V"),
-        ChannelDescriptor(1, "O2", signal_type="eeg", unit="V"),
-    ), 2, connection_id="test-connection", provenance=provenance)
+    source = SignalInfo(sample_rate=500, channels=(
+        ChannelDescriptor(0, "O1", signal_type="eeg", unit="V", channel_id="channel-0"),
+        ChannelDescriptor(1, "O2", signal_type="eeg", unit="V", channel_id="channel-1"),
+    ))
     plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="source-revision")
 
     bundle = configuration.build_pipeline_update(

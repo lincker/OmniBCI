@@ -126,7 +126,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         observed_plan = signal._plan.to_dict()
         assert observed_plan["source"]["sample_rate"] == metadata["descriptor"]["sample_rate"]
-        assert observed_plan["source"]["output_row_count"] == metadata["descriptor"]["output_row_count"]
+        assert signal._plan.source.output_row_count == metadata["descriptor"]["output_row_count"]
         await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
         assert profiles.repository.list_profiles("acquisition") == []
 
@@ -159,11 +159,11 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         assert "setup" not in plan
         assert [channel["name"] for channel in plan["output_channels"]] == ["O2", "Pz"]
         assert all(channel.get("reference") is None for channel in plan["output_channels"])
-        assert plan["source"]["connection_id"] == metadata["connection_id"]
+        assert original_receipt["connection_id"] == metadata["connection_id"]
         assert plan["source_indices"] == [8, 0]
         raw = np.arange(30, dtype=float).reshape(10, 3)
         raw[-1] = [0, 1, 255]
-        chunk = SignalChunk(timestamp=1.0, sequence_id=7, raw_data=raw)
+        chunk = SignalChunk(timestamp=1, sequence_id=7, raw_data=raw)
         mapped = ResolvedSignalPlan.from_dict(plan).apply(chunk)
         np.testing.assert_array_equal(mapped.data[0], raw[8])
         np.testing.assert_array_equal(mapped.triggers, chunk.triggers)
@@ -184,7 +184,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         assert signal.read()["readiness"]["receipt"]["connection_id"] == reconnected["connection_id"]
         await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
-        assert plan["source"]["connection_id"] == metadata["connection_id"]
+        assert original_receipt["connection_id"] == metadata["connection_id"]
 
         # Restart reads each decoder's persisted input instead of a shared global setup.
         for decoder, outputs in (

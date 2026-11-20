@@ -1,4 +1,7 @@
 """The processing editor previews channel mappings without changing runtime."""
+from copy import deepcopy
+from omnibci.application.source_metadata import source_descriptor
+from omnibci.domain.ports.acquisition import SourceObservation
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -57,11 +60,11 @@ def connected_descriptor(signal_client, signal_type="unknown"):
     service = signal_client.app.state.container.signal_setup_service
     service.engine.is_engine_ready = True
     service.engine.applied_snapshot = {"ACQUISITION.signal_source": "fixture", "PLUGINS.bindings": [{"slot": "acquisition.source", "kind": "acquisition", "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1"}, "parameters": {}}]}
-    descriptor = SignalInfo("fixture", 500, (
-        ChannelDescriptor(0, "CH1", signal_type=signal_type, unit="uV"),
-        ChannelDescriptor(1, "CH1", unit="uV"),
-    ), 2, connection_id="current-connection")
-    service.acquisition.cached_descriptor_for = lambda binding: descriptor.to_dict()
+    descriptor = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=500, channels=(
+        ChannelDescriptor(0, "CH1", signal_type=signal_type, unit="uV", channel_id="channel-0"),
+        ChannelDescriptor(1, "CH1", unit="uV", channel_id="channel-1"),
+    )), native_event="final-row", provenance="protocol-defined"), source_id="fixture", connection_id="current-connection")
+    service.acquisition.cached_descriptor_for = lambda binding: deepcopy(descriptor)
     return descriptor
 
 
@@ -80,7 +83,7 @@ def test_preview_uses_channel_identity_and_preserves_acquisition_properties(sign
     assert plan["output_channels"] == [{"channel_id": "channel-1", "index": 0, "name": "Oz",
                                         "signal_type": "eeg", "unit": "uV"}]
     assert plan["processing_input"] == channel_input
-    assert plan["source"] == descriptor.to_dict()
+    assert plan["source"] == deepcopy(descriptor)
     assert not {"setup", "coefficients", "warnings"} & plan.keys()
     assert signal_client.get("/config/signal").json()["data"] == before
 

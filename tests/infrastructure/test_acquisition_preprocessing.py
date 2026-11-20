@@ -15,7 +15,7 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import S
 def chunk(triggers, *, sequence=0, dtype=np.int32):
     samples = np.arange(len(triggers))
     raw = np.asarray([samples, samples + 100, triggers], dtype=dtype)
-    return SignalChunk(timestamp=123.5, sequence_id=sequence, raw_data=raw)
+    return SignalChunk(timestamp=123_500_000_000, sequence_id=sequence, raw_data=raw)
 
 
 @pytest.mark.parametrize("triggers,expected", [
@@ -109,7 +109,7 @@ def test_unchanged_input_is_reused():
 def test_sources_declare_level_triggers_separately_from_discrete_file_events(
     source_type, parameters, expected,
 ):
-    assert source_type(parameters=parameters).trigger_is_level is expected
+    assert source_type(parameters=parameters).trigger_mode == ("level" if expected else "events")
 
 
 def test_trigger_logs_explain_suppression_across_packet_boundaries(caplog):

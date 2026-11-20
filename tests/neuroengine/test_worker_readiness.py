@@ -244,18 +244,22 @@ domain = "processing"
         from omnibci.sdk import Decoder
 
         class ReadinessDecoder(Decoder):
+            def setup(self):
+                pass
+            def begin_epoch(self):
+                pass
+            def teardown(self):
+                pass
             def __init__(self, *, parameters, context):
-                if context.sample_rate is None or context.sample_rate <= 0:
-                    raise ValueError("ReadinessDecoder requires context.sample_rate")
                 if context.input_signal is None:
                     raise ValueError("ReadinessDecoder requires prepared input")
-                self.sample_rate = context.sample_rate
+                self.sample_rate = context.input_signal.sample_rate
                 Path(context.resource_root, "constructed").write_text("ready", encoding="utf-8")
 
             def should_decode(self, window):
                 return False
 
-            def decode(self, window, latest_samples):
+            def decode(self, window, *, latest_raw_segment):
                 return None
     '''), encoding="utf-8")
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_dir))
@@ -322,11 +326,10 @@ def test_spawned_configured_worker_reports_real_plugin_initialization(kind, brok
                 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
                 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
                 from omnibci.shared.events import EventType
-                source = SignalInfo("file_reader", 250, (ChannelDescriptor(0, "O1"),), 1,
-                                    connection_id="connection")
+                source = SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "O1", channel_id="channel-0"),))
                 plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="r")
                 receipt = {"generation": "g", "acquisition_revision": "r", "processing_revision": "r", "engine_revision": "engine", "connection_id": "connection",
-                           "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
+                           "source_fingerprint": "f" * 64, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
                 commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
                     "plan": plan.to_dict(), "receipt": receipt,
                 })))

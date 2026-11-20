@@ -1,14 +1,15 @@
 """Compare saved experiment expectations with independently observed source facts."""
-from omnibci.domain.signal_info import SignalInfo
+from omnibci.application.source_metadata import descriptor_layout
 
 
-def compare_source_expectations(binding: dict | None, info: SignalInfo) -> dict:
+def compare_source_expectations(binding: dict | None, metadata: dict) -> dict:
+    info = descriptor_layout(metadata)
     parameters = (binding or {}).get("parameters", {})
     values = {
         "sample_rate": {"expected": parameters.get("sample_rate"), "actual": info.sample_rate},
         "channel_count": {"expected": parameters.get("channel_count"), "actual": info.output_row_count},
     }
-    if info.provenance not in {"device-reported", "file-reported"}:
+    if metadata["provenance"] not in {"device-reported", "file-reported"}:
         status = "unverified"
     elif any(value["expected"] is not None and value["expected"] != value["actual"]
              for value in values.values()):
@@ -20,10 +21,10 @@ def compare_source_expectations(binding: dict | None, info: SignalInfo) -> dict:
     return {"status": status, **values}
 
 
-def validate_source_expectations(snapshot: dict, info: SignalInfo) -> None:
+def validate_source_expectations(snapshot: dict, metadata: dict) -> None:
     binding = next((item for item in snapshot.get("PLUGINS.bindings", ())
                     if item.get("slot") == "acquisition.source"), None)
-    comparison = compare_source_expectations(binding, info)
+    comparison = compare_source_expectations(binding, metadata)
     if comparison["status"] == "mismatched":
         differences = []
         for key, label in (("sample_rate", "sample rate (Hz)"),

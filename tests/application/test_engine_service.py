@@ -545,7 +545,7 @@ async def test_processing_start_does_not_require_source_checkpoint(running_modul
     commands.request.return_value = SimpleNamespace(data={
         "generation": "foundation", "engine_revision": "engine",
         "acquisition_revision": "acquisition", "supported": False,
-        "resume_without_checkpoint_safe": False,
+        "resume_mode": "restart-only",
     })
     async with engine.runtime_transition("processing"):
         await engine.start_module_for_configuration("processing", engine.applied_snapshot)

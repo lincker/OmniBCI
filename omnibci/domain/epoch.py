@@ -24,6 +24,8 @@ from typing import Optional
 
 import numpy as np
 
+from omnibci.domain.signal_info import integer
+
 
 @dataclass(frozen=True)
 class Epoch:
@@ -46,21 +48,25 @@ class Epoch:
     trigger_offset: int = 0
 
     def __post_init__(self) -> None:
+        if not isinstance(self.data, np.ndarray):
+            raise TypeError("Epoch.data must be a NumPy array")
         if self.data.ndim != 2:
             raise ValueError(
                 f"Epoch.data must be 2-D (channels × samples), got shape {self.data.shape}"
             )
+        if self.data.dtype.kind not in "iuf":
+            raise TypeError("Epoch.data must have a real numeric dtype")
         if self.data.shape[1] == 0:
             raise ValueError("Epoch must contain at least one sample.")
-        if self.sample_rate <= 0:
-            raise ValueError(f"sample_rate must be positive, got {self.sample_rate}")
-        if self.channel_count <= 0:
-            raise ValueError(f"channel_count must be positive, got {self.channel_count}")
+        integer(self.event_id, "event_id", 1)
+        integer(self.sample_rate, "sample_rate", 1)
+        integer(self.channel_count, "channel_count", 1)
+        integer(self.trigger_offset, "trigger_offset")
         if self.data.shape[0] != self.channel_count:
             raise ValueError(
                 f"data has {self.data.shape[0]} rows but channel_count={self.channel_count}"
             )
-        if not (0 <= self.trigger_offset < self.data.shape[1]):
+        if self.trigger_offset >= self.data.shape[1]:
             raise ValueError(
                 f"trigger_offset must be in [0, {self.data.shape[1]}) "
                 f"(at least one window sample required), got {self.trigger_offset}"

@@ -16,7 +16,8 @@ def configuration_receipt(command_id, status, *, generation, revision, engine_re
 class ConfigurationTransactions:
     """Own pending updates and replay receipts without installing runtime state."""
 
-    def __init__(self):
+    def __init__(self, release_decoder):
+        self._release_decoder = release_decoder
         self._pending: tuple[str, ConfiguredPipeline] | None = None
         # Receipts live for this worker generation. A cancelled command cannot
         # become a new update if a delayed duplicate arrives later.
@@ -99,13 +100,19 @@ class ConfigurationTransactions:
         self._pending = None
         return self._finish(command_id, ok=True, generation=generation, revision=revision, engine_revision=engine_revision)
 
-    def cancel_pending(self, message, *, generation, revision, engine_revision) -> CommandResult | None:
+    def cancel_pending(self, message, *, generation, revision, engine_revision,
+                       error_code="PROCESSING_CONFIGURATION_CANCELLED") -> CommandResult | None:
         if self._pending is None:
             return None
-        command_id, _ = self._pending
+        command_id, candidate = self._pending
         self._pending = None
+        try:
+            self._release_decoder(candidate.decoder)
+        except Exception as exc:
+            message = f"{message}; decoder cleanup failed: {exc}"
+            error_code = "PROCESSING_CLEANUP_FAILED"
         return self._finish(command_id, ok=False, message=message,
-                            error_code="PROCESSING_CONFIGURATION_CANCELLED",
+                            error_code=error_code,
                             generation=generation, revision=revision, engine_revision=engine_revision)
 
     def cancel(self, request: CommandRequest, *, generation, revision, engine_revision) -> list[CommandResult]:
@@ -135,8 +142,12 @@ class ConfigurationTransactions:
                                   generation=generation, revision=revision, engine_revision=engine_revision)
             results.append(result)
         receipt = result.data or configuration_receipt(target, "cancelled", generation=generation, revision=revision, engine_revision=engine_revision)
+        cleaned = result.error_code != "PROCESSING_CLEANUP_FAILED"
         results.append(CommandResult(
-            request.command_id, EventType.CancelProcessingConfiguration.name, True, data=receipt,
+            request.command_id, EventType.CancelProcessingConfiguration.name, cleaned, data=receipt,
+            message=None if cleaned else result.message,
+            error_code=None if cleaned else result.error_code,
+            failure_kind=None if cleaned else CommandFailureKind.EXECUTION_FAILED,
         ))
         return results
 
@@ -144,7 +155,8 @@ class ConfigurationTransactions:
         result = CommandResult(
             command_id=command_id, command=EventType.StageProcessingConfiguration.name,
             ok=ok, message=message, error_code=error_code,
-            failure_kind=None if ok else CommandFailureKind.REJECTED,
+            failure_kind=(None if ok else CommandFailureKind.EXECUTION_FAILED
+                          if error_code == "PROCESSING_CLEANUP_FAILED" else CommandFailureKind.REJECTED),
             data=configuration_receipt(command_id, "applied" if ok else "cancelled",
                                        generation=generation, revision=revision, engine_revision=engine_revision),
         )

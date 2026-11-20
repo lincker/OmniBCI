@@ -53,9 +53,9 @@ class Classic40FBCCA(Decoder):
                               8.4, 9.4, 10.4, 11.4, 12.4, 13.4, 14.4, 15.4,
                               8.6, 9.6, 10.6, 11.6, 12.6, 13.6, 14.6, 15.6,
                               8.8, 9.8, 10.8, 11.8, 12.8, 13.8, 14.8, 15.8]
-        if context is None or context.sample_rate is None:
-            raise ValueError("Classic40FBCCA requires context.sample_rate")
-        self.SAMPLE_RATE = context.sample_rate
+        if context is None or context.input_signal is None:
+            raise ValueError("Classic40FBCCA requires context.input_signal.sample_rate")
+        self.SAMPLE_RATE = context.input_signal.sample_rate
         window_duration = parameters.get('window_duration', 3.0)
         offset_time = parameters.get('offset_time', 0.14)
         self.SAMPLE_COUNT = int(window_duration * self.SAMPLE_RATE)
@@ -66,14 +66,25 @@ class Classic40FBCCA(Decoder):
         #                                   sample_count=self.SAMPLE_COUNT).generate_template()
         self.num_harmonics = 5
         self.num_bands = 3
+        self.weights = self._filter_bank = None
+
+    def setup(self) -> None:
         # FBCCA weights: w_n = n^(-a) + b, with a=1.25 and b=0.25.
         a = 1.25
         b = 0.25
         # Precompute the filter-bank weights.
         self.weights = np.array([(n + 1) ** (-a) + b for n in range(self.num_bands)])
+        self._filter_bank = self.get_filter_bank()
+
+    def begin_epoch(self) -> None:
+        # Whole-window classification has no accumulated trial state.
+        pass
+
+    def teardown(self) -> None:
+        self.weights = self._filter_bank = None
 
     def get_reference_signals(self, data_len, target_freq):
-        """生成正弦/余弦参考信号"""
+        """Generate sine/cosine reference signals."""
         t = np.arange(data_len) / self.SAMPLE_RATE
         reference_signals = []
         for i in range(1, self.num_harmonics + 1):
@@ -83,8 +94,8 @@ class Classic40FBCCA(Decoder):
 
     def get_filter_bank(self):
         """
-        生成滤波器组系数
-        标准 FBCCA 通常设置通带为:
+        Generate filter-bank coefficients.
+        The filter-bank passbands are:
         Band 1: 8-88 Hz
         Band 2: 16-88 Hz
         Band 3: 24-88 Hz
@@ -93,7 +104,7 @@ class Classic40FBCCA(Decoder):
         nyq = 0.5 * self.SAMPLE_RATE
         filters = []
 
-        # 高频截止通常设为 Nyquist 或一个较高的值(如 88Hz/90Hz)
+        # Keep the high cutoff below Nyquist and at most 88 Hz.
         high_cut = min(88, nyq - 1)
 
         for i in range(self.num_bands):
@@ -101,7 +112,7 @@ class Classic40FBCCA(Decoder):
             if low_cut >= high_cut:
                 break
 
-            # 使用 Chebyshev I 型滤波器 (阶数和纹波可根据需要调整)
+            # Use a fourth-order Chebyshev I filter with 0.5 dB ripple.
             b, a = cheby1(N=4, rp=0.5, Wn=[low_cut / nyq, high_cut / nyq], btype='bandpass')
             filters.append((b, a))
 
@@ -109,26 +120,26 @@ class Classic40FBCCA(Decoder):
 
     def cca_coef(self, X, Y):
         """
-        快速计算 CCA 相关系数 (使用 QR 分解加速)
+        Compute CCA correlation using QR decomposition.
         X: EEG data (Channels, Samples)
         Y: Reference signals (2*Harmonics, Samples)
         """
-        # 转置为 (Samples, Features)
+        # Transpose to (samples, features).
         X = X.T
         Y = Y.T
 
-        # 中心化
+        # Center the data.
         X = X - X.mean(axis=0)
         Y = Y - Y.mean(axis=0)
 
-        # QR 分解
+        # QR decomposition.
         Q_x, R_x = np.linalg.qr(X, mode='reduced')
         Q_y, R_y = np.linalg.qr(Y, mode='reduced')
 
         # SVD of Q_x.T @ Q_y
         U, S, V = np.linalg.svd(Q_x.T @ Q_y)
 
-        # 返回最大的典型相关系数
+        # Return the largest canonical correlation.
         return S[0]
 
     def should_decode(self, window: npt.NDArray) -> bool:
@@ -136,10 +147,10 @@ class Classic40FBCCA(Decoder):
 
     def decode(
         self,
-        window: npt.NDArray,
-        latest: npt.NDArray,
+        filtered_window: npt.NDArray,
+        *, latest_raw_segment: npt.NDArray,
     ) -> Optional[Prediction]:
-        calc_data = window[
+        calc_data = filtered_window[
             :,
             self.OFFSET_LENGTH:int(self.SAMPLE_COUNT + self.OFFSET_LENGTH),
         ]
@@ -152,7 +163,7 @@ class Classic40FBCCA(Decoder):
     def classify(self, eeg_data, freq_list):
         """Return the target, frequency and scores, or None when filtering needs more samples."""
         n_samples = eeg_data.shape[1]
-        filters = self.get_filter_bank()
+        filters = self._filter_bank
 
         # Store the final score for each frequency.
         scores = np.zeros(len(freq_list))

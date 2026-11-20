@@ -105,7 +105,7 @@ def test_disconnect_closes_writer_and_discards_pending_header(protocol):
         await source.disconnect()
         writer.close.assert_called_once_with()
         writer.wait_closed.assert_awaited_once_with()
-        assert not source.is_connected
+        assert not source._is_connected
         assert source._pending_header is None
 
     asyncio.run(scenario())

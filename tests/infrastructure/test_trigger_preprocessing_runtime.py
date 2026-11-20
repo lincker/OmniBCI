@@ -18,7 +18,8 @@ from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 
 
 class LiveSource:
-    trigger_is_level = True
+    trigger_mode = 'level'
+    resume_mode = "restart-only"
 
     def __init__(self):
         self.is_connected = False
@@ -158,8 +159,8 @@ async def test_discrete_file_events_and_cached_views_survive_replay_unchanged():
         return original[:, start:end] if start < original.shape[1] else None
 
     source.reader_adapter = SimpleNamespace(read_chunk=read_chunk)
-    source._is_connected = True
     acquisition, data, frames = runtime(source)
+    await acquisition._on_connect()
     try:
         for _ in range(2):
             await acquisition._on_start_stream()
@@ -176,18 +177,11 @@ async def test_discrete_file_events_and_cached_views_survive_replay_unchanged():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("declaration", [None, False, "true"])
-async def test_sources_without_an_explicit_level_declaration_keep_events(declaration):
+async def test_sources_without_a_valid_trigger_mode_are_rejected(declaration):
     source = LiveSource()
-    source.trigger_is_level = declaration
-    acquisition, data, _ = runtime(source)
-    try:
-        await acquisition._on_connect()
-        await acquisition._on_start_stream()
-        original = samples([7, 7, 8, 8])
-        await source.chunks.put(original)
-        np.testing.assert_array_equal((await receive(data)).raw_data, original)
-    finally:
-        await acquisition.shutdown()
+    source.trigger_mode = declaration
+    with pytest.raises(ValueError, match="trigger_mode"):
+        runtime(source)
 
 
 @pytest.mark.asyncio
@@ -231,7 +225,7 @@ async def test_additional_steps_run_in_order_before_both_consumers_and_reset_on_
 @pytest.mark.parametrize("level_triggers,steps", [(True, "TriggerEdgePreprocessor"), (False, "passthrough")])
 async def test_preprocessing_lifecycle_logs_report_resets_and_passthrough(caplog, level_triggers, steps):
     source = LiveSource()
-    source.trigger_is_level = level_triggers
+    source.trigger_mode = "level" if level_triggers else "events"
     acquisition, _, _ = runtime(source)
     caplog.set_level(logging.INFO, logger="omnibci.infrastructure.acquisition")
     try:

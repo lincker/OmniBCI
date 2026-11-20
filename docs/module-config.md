@@ -1,14 +1,17 @@
 # Module configuration
 
 The server keeps four independent accepted configurations: Acquisition,
-Signal Processing, Stimulation, and Actuation. Each owns its settings, pinned
+Processing, Stimulation, and Actuation. Each owns its settings, pinned
 plugin bindings, content revision, file, lock, and application history.
-Named saved Profiles remain independent for each plugin.
+Named saved Profiles remain independent for each Contribution. These names follow
+the [plugin terminology and module names](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries);
+the current console also labels Processing as **Signal Processing**. A binding
+describes the selected Contribution and parameters, not a live Instance.
 
-## Configuration management package
+## Configuration module
 
-`application/configuration` owns configuration definitions, validation, models,
-the storage port, and one `ConfigurationService`. Server settings, Engine settings,
+The Python package `application/configuration` owns configuration definitions,
+validation, models, the storage port, and one `ConfigurationService`. Server settings, Engine settings,
 module configuration and named plugin Profiles use this same service. Profiles
 remain independent saved parameter sets; they are not a second configuration
 management subsystem.

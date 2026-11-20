@@ -1,5 +1,8 @@
 """Acquisition runtime and worker command contracts."""
 import asyncio
+from dataclasses import asdict
+import errno
+import numpy as np
 import logging
 import time
 from uuid import uuid4
@@ -16,8 +19,8 @@ from omnibci.application.events import (
     StreamBarrier,
     StreamDrainReceipt,
 )
-from omnibci.domain.signal_info import SignalInfo
-from omnibci.domain.ports.acquisition import SignalSource
+from omnibci.application.source_metadata import source_descriptor, source_fingerprint
+from omnibci.domain.ports.acquisition import SignalSource, SourceObservation, SourceCheckpoint
 from omnibci.domain.signal import SignalChunk
 from omnibci.application.acquisition_preview import PreviewSelection
 from omnibci.infrastructure.acquisition.preprocessing import ChunkPreprocessor, TriggerEdgePreprocessor
@@ -107,9 +110,19 @@ class AcquisitionRuntime:
         runtime_counters=None,
     ) -> None:
         self.data_source = data_source
+        trigger_mode, resume_mode = data_source.trigger_mode, data_source.resume_mode
+        if trigger_mode not in ("events", "level"):
+            raise ValueError("Invalid source trigger_mode")
+        if resume_mode not in ("restart-only", "live-current", "checkpoint"):
+            raise ValueError("Invalid source resume_mode")
+        self._resume_mode = resume_mode
         self._preprocessors: tuple[ChunkPreprocessor, ...] = (
-            (TriggerEdgePreprocessor(),) if getattr(data_source, "trigger_is_level", False) is True else ()
+            (TriggerEdgePreprocessor(),) if trigger_mode == "level" else ()
         )
+        self._connected = False
+        self._streaming = False
+        self._finishing_stream = False
+        self._cleanup_pending = False
         self.command_queue = command_queue
         self.fetch_task: Optional[asyncio.Task] = None
         self.data_manager = data_manager
@@ -130,7 +143,7 @@ class AcquisitionRuntime:
         self._fetch_failure: str | None = None
         self.preview = PreviewCapture(preview_queue)
         self._clear_metadata()
-        self.connection_id = uuid4().hex if getattr(data_source, "is_connected", False) else None
+        self.connection_id = None
 
     def run(self) -> None:
         asyncio.run(self.serve())
@@ -145,11 +158,7 @@ class AcquisitionRuntime:
     async def shutdown(self) -> None:
         logger.info('Acquisition shutting down')
         self.preview.finish("engine_stopped")
-        if self.data_source.is_connected or self.data_source.is_streaming:
-            await self._on_disconnect()
-        else:
-            await self._cancel_fetch_task()
-            self._emit_state()
+        await self._on_disconnect()
 
     async def main_loop(self) -> None:
         while not self.should_exit:
@@ -254,6 +263,11 @@ class AcquisitionRuntime:
             )
             return
         except Exception as exc:
+            if self._mark_transport_loss(exc):
+                try:
+                    await self._on_disconnect()
+                except Exception as cleanup:
+                    exc.add_note(f"Source cleanup failed: {cleanup}")
             self._emit_state()
             if request is None:
                 raise
@@ -284,7 +298,7 @@ class AcquisitionRuntime:
                 if (payload.get("expected_revision") != self.acquisition_revision
                         or payload.get("connection_id") != self.connection_id):
                     raise ValueError("Preview belongs to a different source connection or revision")
-                if not self.data_source.is_connected or not self.data_source.is_streaming:
+                if not self._connected or not self._streaming:
                     raise ValueError("Start the signal stream before capturing a preview")
                 self.preview.start(payload.get("capture_id"),
                                    PreviewSelection.from_value(payload.get("selection", {})), self._preview_identity(),
@@ -312,19 +326,22 @@ class AcquisitionRuntime:
                     or payload.get("engine_revision") != self.engine_revision):
                 raise ValueError("Acquisition command belongs to a different runtime generation or revision")
             self._require_healthy_stream()
-            if self.data_source.is_streaming or self.fetch_task is not None:
-                raise ValueError("Stop and join acquisition before accessing a source checkpoint")
+            if not self._connected or self._streaming or self.fetch_task is not None:
+                raise ValueError("Connect, stop and join acquisition before accessing a source checkpoint")
             if command is AcquisitionCommand.get_checkpoint:
-                supported = self.data_source.supports_checkpoint
-                data = {"supported": supported,
-                        "checkpoint": self.data_source.checkpoint() if supported else None,
-                        "resume_without_checkpoint_safe": getattr(
-                            self.data_source, "resume_without_checkpoint_safe", False,
-                        ) is True}
+                checkpoint = self.data_source.checkpoint()
+                if self._resume_mode == "checkpoint":
+                    if not isinstance(checkpoint, SourceCheckpoint):
+                        raise ValueError("Checkpoint source must return a SourceCheckpoint")
+                    checkpoint = SourceCheckpoint(**asdict(checkpoint))
+                elif checkpoint is not None:
+                    raise ValueError("Non-checkpoint source must return None")
+                data = {"resume_mode": self._resume_mode,
+                        "checkpoint": asdict(checkpoint) if checkpoint is not None else None}
             else:
-                if not self.data_source.supports_checkpoint:
+                if self._resume_mode != "checkpoint":
                     raise ValueError("The source does not support replay checkpoints")
-                self.data_source.restore_checkpoint(payload.get("checkpoint"))
+                self.data_source.restore_checkpoint(SourceCheckpoint(**payload["checkpoint"]))
                 data = {"restored": True}
             data.update(generation=self.generation, acquisition_revision=self.acquisition_revision,
                         engine_revision=self.engine_revision)
@@ -335,20 +352,23 @@ class AcquisitionRuntime:
                                       failure_kind=CommandFailureKind.EXECUTION_FAILED)
 
     async def _on_connect(self) -> None:
-        if self.data_source.is_connected:
-            if self.connection_id is None:
-                self.connection_id = uuid4().hex
+        # Join teardown before allowing a replacement to use the transport.
+        if not self._connected or not self._streaming or self.fetch_task is not None and self.fetch_task.cancelling():
+            await self._join_finished_source()
+        self._require_cleanup_complete()
+        if self._connected:
             self._emit_state()
             return
-        # A failed reader may still be stopping its old source. Never let its
-        # teardown run after a replacement connection has been established.
-        await self._join_finished_source()
-        await self.data_source.connect()
-        if not self.data_source.is_connected:
-            raise AcquisitionCommandRejected(
-                "CONNECT_FAILED",
-                "Data source did not enter the connected state",
-            )
+        try:
+            await self.data_source.connect()
+        except BaseException as exc:
+            try:
+                await self.data_source.disconnect()
+            except BaseException as cleanup:
+                self._cleanup_pending = True
+                exc.add_note(f"Partial source connection cleanup failed: {cleanup}")
+            raise
+        self._connected = True
         self.connection_id = uuid4().hex
         self._reset_preprocessors("connect")
         self._clear_metadata()
@@ -356,47 +376,43 @@ class AcquisitionRuntime:
 
     async def _on_disconnect(self) -> None:
         self.preview.finish("disconnected")
-        self.connection_id = None
-        self._clear_metadata()
-        # A successful disconnect means no reader coroutine remains alive.
-        # Some SignalSource implementations (including FileReader) do not
-        # implicitly stop their stream in disconnect(), so enforce the order
-        # here at the worker boundary.
-        if self.data_source.is_streaming:
-            await self._on_stop_stream()
-        else:
-            await self._cancel_fetch_task()
-        self._publish_source_boundary(detach=True)
-        if self.processing_active is not None:
-            self.processing_active.clear()
-        await self.data_source.disconnect()
-        if self.data_source.is_connected:
-            raise AcquisitionCommandRejected(
-                "DISCONNECT_FAILED",
-                "Data source remained connected after disconnect",
-            )
-        self._emit_state()
+        await self._cancel_fetch_task()
+        self._cleanup_pending = True
+        try:
+            if self._streaming:
+                await self._on_stop_stream()
+        finally:
+            # A joined reader permits cleanup even if the device stop command failed.
+            self.connection_id = None
+            self._clear_metadata()
+            self._publish_source_boundary(detach=True)
+            if self.processing_active is not None:
+                self.processing_active.clear()
+            await self.data_source.disconnect()
+            self._connected = self._streaming = False
+            self._cleanup_pending = False
+            self._emit_state()
 
     async def _on_start_stream(self, receipt=None) -> None:
         self._require_healthy_stream()
-        # Publish the source state before rejecting an unconnected start.
-        if not self.data_source.is_connected:
-            logger.warning('start_stream rejected: data source is not connected')
+        if not self._connected:
             self._emit_state()
             raise AcquisitionCommandRejected(
-                "DATA_SOURCE_NOT_CONNECTED",
-                "Cannot start stream before the data source is connected",
+                "DATA_SOURCE_NOT_CONNECTED", "Cannot start stream before the data source is connected",
             )
-        if self.data_source.is_streaming:
+        if self._finishing_stream or self.fetch_task is not None and self.fetch_task.cancelling():
+            await self._join_finished_source()
+            self._require_healthy_stream()
+        if self._streaming:
             self._emit_state()
             return
-        await self.data_source.start_stream()
-        if not self.data_source.is_streaming:
-            self._emit_state()
-            raise AcquisitionCommandRejected(
-                "STREAM_START_FAILED",
-                "Data source did not enter the streaming state",
-            )
+        await self._join_finished_source()
+        try:
+            await self.data_source.start_stream()
+        except BaseException as exc:
+            self._fetch_failure = f"{type(exc).__name__}: {exc}"
+            raise
+        self._streaming = True
         self._reset_preprocessors("stream_start")
         try:
             if self.preview.queue is not None:
@@ -419,26 +435,14 @@ class AcquisitionRuntime:
 
     async def _on_stop_stream(self) -> None:
         self.preview.finish("source_stopped")
-        if not self.data_source.is_streaming:
-            await self._cancel_fetch_task()
-            self._emit_state()
-            return
-        try:
-            await self.data_source.stop_stream()
-        except Exception as exc:
-            if not self.data_source.is_connected and self.fetch_task is not None:
-                # The stop command can detect transport loss before the reader.
-                # Preserve that evidence before cancelling the pending read.
+        await self._cancel_fetch_task()
+        if self._streaming:
+            try:
+                await self.data_source.stop_stream()
+            except BaseException as exc:
                 self._fetch_failure = self._fetch_failure or f"{type(exc).__name__}: {exc}"
-            raise
-        finally:
-            await self._cancel_fetch_task()
-        if self.data_source.is_streaming:
-            self._emit_state()
-            raise AcquisitionCommandRejected(
-                "STREAM_STOP_FAILED",
-                "Data source remained in the streaming state after stop",
-            )
+                raise
+            self._streaming = False
         logger.info('Fetch task stopped')
         self._emit_state()
 
@@ -462,77 +466,68 @@ class AcquisitionRuntime:
                 self.fetch_task = None
 
     async def _cancel_fetch_task(self) -> None:
-        """Cancel and join the reader task before confirming a stop command."""
+        """Cancel once and retain the task until its read and teardown have settled."""
         task = self.fetch_task
-        if task is None:
-            return
-        if not task.done():
+        if task is not None and not task.done() and not task.cancelling() and not self._finishing_stream:
             task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            current = asyncio.current_task()
-            if current is not None and current.cancelling():
-                raise
-        finally:
-            if self.fetch_task is task:
-                self.fetch_task = None
+            await self._join_finished_source()
+        except AcquisitionCommandRejected:
+            self._cleanup_pending = True
+            raise
 
     async def _on_stop_acquisition(self) -> None:
         self.should_exit = True
 
     async def _on_get_metadata(self, request=None):
-        if not self.data_source.is_connected or self.connection_id is None:
+        if not self._connected or self.connection_id is None:
             raise AcquisitionCommandRejected("DATA_SOURCE_NOT_CONNECTED", "Connect the source before reading metadata")
         payload = request.payload if request else None
         refresh = isinstance(payload, dict) and payload.get("refresh") is True
-        if self.data_source.is_streaming or self.fetch_task is not None:
-            if self._raw_metadata is not None and not refresh:
+        if self.fetch_task is not None and self.fetch_task.done():
+            await self._join_finished_source()
+        if self._streaming or self.fetch_task is not None:
+            if self._observation is not None and not refresh:
                 return self._metadata_response()
             raise AcquisitionCommandRejected("METADATA_REQUIRES_STOP", "Stop the stream before reading source metadata")
-        if self._raw_metadata is None or refresh:
+        if self._observation is None or refresh:
             self._clear_metadata()
             try:
-                info = await asyncio.wait_for(self.data_source.get_metadata(), timeout=3.0)
-            except TimeoutError as exc:
-                raise AcquisitionCommandRejected("SOURCE_METADATA_TIMEOUT", "Source metadata request timed out") from exc
-            if not isinstance(info, str):
-                raise ValueError("Source metadata must be a string")
-            self._raw_metadata = info
-            try:
-                descriptor = self.data_source.describe_output(
-                    source_id=self.source_id, connection_id=self.connection_id,
-                )
-                if not isinstance(descriptor, SignalInfo):
-                    raise ValueError("Source output description must be a SignalInfo")
-                if descriptor.source_id != self.source_id or descriptor.connection_id != self.connection_id:
-                    raise ValueError("Acquisition descriptor belongs to a different source connection")
-                self._descriptor = descriptor
-            except Exception as exc:
-                self._descriptor_error = str(exc) or "Source cannot describe acquisition output"
+                try:
+                    observation = await asyncio.wait_for(self.data_source.observe(), timeout=3.0)
+                except TimeoutError as exc:
+                    raise AcquisitionCommandRejected("SOURCE_METADATA_TIMEOUT", "Source metadata request timed out") from exc
+                if not isinstance(observation, SourceObservation):
+                    raise ValueError("Source observation must be a SourceObservation")
+                self._observation = observation
+            finally:
+                if self._processing_receipt is not None:
+                    descriptor = self._metadata_response()["descriptor"] if self._observation is not None else None
+                    if descriptor is None or source_fingerprint(descriptor) != self._processing_receipt.get("source_fingerprint"):
+                        self._fail_processing_input("Source observation changed or failed; prepare processing again")
         return self._metadata_response()
 
     def _clear_metadata(self) -> None:
-        self._descriptor = None
-        self._raw_metadata: str | None = None
-        self._descriptor_error = None
+        self._observation = None
 
     def _metadata_response(self):
+        observation = self._observation
         return {
             "source_id": self.source_id,
             "connection_id": self.connection_id,
-            "metadata": self._raw_metadata,
-            "descriptor": self._descriptor.to_dict() if self._descriptor is not None else None,
-            "descriptor_error": self._descriptor_error,
+            "metadata": observation.native_text,
+            "descriptor": source_descriptor(observation, source_id=self.source_id, connection_id=self.connection_id),
+            "descriptor_error": observation.layout_error,
         }
 
     def _validate_signal_receipt(self, receipt) -> None:
         expected = {
             "generation": self.generation, "acquisition_revision": self.acquisition_revision,
             "engine_revision": self.engine_revision, "connection_id": self.connection_id,
-            "source_fingerprint": self._descriptor.fingerprint if self._descriptor else None,
+            "source_fingerprint": source_fingerprint(self._metadata_response()["descriptor"])
+                if self._observation and self._observation.signal_info else None,
         }
-        if (not isinstance(receipt, dict) or self._descriptor is None
+        if (not isinstance(receipt, dict) or self._observation is None or self._observation.signal_info is None
                 or any(receipt.get(key) != value for key, value in expected.items())
                 or not isinstance(receipt.get("plan_fingerprint"), str)
                 or len(receipt["plan_fingerprint"]) != 64):
@@ -610,9 +605,16 @@ class AcquisitionRuntime:
                     raw_data=raw_data,
                     sequence_id=self._last_sequence + 1,
                 )
+                if raw_data.shape[1] == 0:
+                    raise ValueError("Source read must return a nonempty matrix or None at EOF")
+                info = self._observation.signal_info if self._observation is not None else None
+                if info is not None and raw_data.shape[0] != info.output_row_count:
+                    raise ValueError("Source rows do not match the observed signal layout")
+                events = raw_data[-1]
+                if not np.all(np.isfinite(events) & (events >= 0) & (events == np.floor(events))):
+                    raise ValueError("Source events must be finite nonnegative integers")
                 for preprocessor in self._preprocessors:
                     chunk = preprocessor.process(chunk)
-                # TODO: Consider validating data matrices against the acquisition descriptor in the future.
                 if self._runtime_counters is not None:
                     self._runtime_counters[2] = chunk.sequence_id
                 if not self._processing_failed:
@@ -627,7 +629,7 @@ class AcquisitionRuntime:
                 try:
                     if self.preview.active and read_identity == self._preview_identity():
                         self.preview.offer(chunk, read_identity, descriptor=(
-                            self._descriptor.to_dict() if self._descriptor is not None else None))
+                            self._metadata_response()["descriptor"] if self._observation is not None else None))
                 except Exception:
                     self.preview.finish("preview_error")
                     logger.exception("Acquisition preview failed; the signal stream is unaffected")
@@ -635,10 +637,18 @@ class AcquisitionRuntime:
             logger.info('Fetch task cancelled')
         except Exception as exc:
             self._fetch_failure = f"{type(exc).__name__}: {exc}"
+            self._mark_transport_loss(exc)
             logger.error('Error in fetch task: %s', exc)
             await self._finish_stream()
 
+    def _require_cleanup_complete(self) -> None:
+        if self._cleanup_pending:
+            raise AcquisitionCommandRejected(
+                "ACQUISITION_CLEANUP_PENDING", "Source cleanup is incomplete; disconnect before using it again",
+            )
+
     def _require_healthy_stream(self) -> None:
+        self._require_cleanup_complete()
         if self._fetch_failure is not None:
             raise AcquisitionCommandRejected(
                 "ACQUISITION_STREAM_CONTINUITY_LOST",
@@ -647,17 +657,40 @@ class AcquisitionRuntime:
                 f"The current stream cannot be resumed or checkpointed ({self._fetch_failure})",
             )
 
+    def _mark_transport_loss(self, exc) -> bool:
+        if (isinstance(exc, (ConnectionError, asyncio.IncompleteReadError))
+                or isinstance(exc, OSError) and exc.errno in (errno.EBADF, errno.ENOTCONN)):
+            self._fetch_failure = self._fetch_failure or f"{type(exc).__name__}: {exc}"
+            self._connected = self._streaming = False
+            self.connection_id = None
+            self._clear_metadata()
+            return True
+        return False
+
     async def _finish_stream(self) -> None:
-        """Close the stream from inside fetch() (EOF / fatal error) and
-        publish the resulting state."""
+        """The read has returned; finish EOF or failed delivery before replacement."""
+        self._finishing_stream = True
         self.preview.finish("source_error" if self._fetch_failure is not None else "source_eof")
         try:
             await self.data_source.stop_stream()
+            self._streaming = False
         except Exception as exc:
             self._fetch_failure = self._fetch_failure or f"{type(exc).__name__}: {exc}"
+            self._mark_transport_loss(exc)
             logger.error('stop_stream during fetch teardown failed: %s', exc)
-        self._publish_source_boundary()
-        self._emit_state()
+        finally:
+            try:
+                if not self._connected:
+                    await self.data_source.disconnect()
+                    self._streaming = False
+                    self._cleanup_pending = False
+            except Exception as exc:
+                self._cleanup_pending = True
+                logger.error('disconnect during fetch teardown failed: %s', exc)
+            finally:
+                self._finishing_stream = False
+                self._publish_source_boundary()
+                self._emit_state()
 
     def _publish_source_boundary(self, *, detach=False):
         """End the old stream in FIFO order without waiting for its consumer."""
@@ -687,21 +720,14 @@ class AcquisitionRuntime:
             }))
 
     def _emit_state(self) -> None:
-        """Publish the device's authoritative state to the API-side projection.
-
-        The snapshot reads the SignalSource port properties directly — the
-        single source of truth — rather than tracking booleans by hand.
-        """
-        if not self.data_source.is_connected:
-            self.connection_id = None
-            self._clear_metadata()
+        """Publish lifecycle results owned by this runtime."""
         if self.event_bus is None:
             return
         self.event_bus.put_event(Event(
             EventType.AcquisitionState,
             AcquisitionSnapshot(
-                connected=self.data_source.is_connected,
-                streaming=self.data_source.is_streaming,
+                connected=self._connected,
+                streaming=self._streaming,
                 connection_id=self.connection_id,
             ),
         ))

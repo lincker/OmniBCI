@@ -13,13 +13,15 @@ filtering, and a closing boundary can bypass that check. This example returns
 `None` for short or non-finite input and otherwise returns a `Prediction`, which
 ends collection of the current epoch.
 
-`latest_samples` is required and contains only the most recently appended epoch
+`latest_raw_segment` is a required keyword and contains only the most recently appended epoch
 fragment after mapping, without epoch filters. It is not all
 samples received since the previous decode. Pipeline callers must supply an
 empty `(signal_channels, 0)` matrix when no new fragment exists; omission and
 `None` are rejected. This whole-window example ignores the fragment and does not
-modify either input in place. Stateful implementations must isolate working state
-with `for_new_epoch()` and remember that returning `None` may still update state.
+modify either input in place. Stateful implementations reset working state in
+`begin_epoch()` and remember that returning `None` may still update state.
+The host calls `setup()` once per binding and `teardown()` when it releases that
+binding; this example implements both as no-ops.
 Stream drain retains the readiness gate and checks for pending samples before
 attempting another decode.
 
@@ -46,5 +48,6 @@ The host must support Plugin API `2` and signal input contract `2`. NumPy is
 already a host dependency; package installation never runs pip or installs
 additional dependencies. The decoder uses no external assets or model files.
 
-The full authoring guide is available offline in **Extensions → Decoder developer
-guide**, and in the repository at `docs/decoder-plugin-development.md`.
+The existing authoring guide is deferred until the coordinated API v1 switch.
+This executable example follows the current S1c processing methods while its
+constructor and manifest retain the existing contract until S1f.

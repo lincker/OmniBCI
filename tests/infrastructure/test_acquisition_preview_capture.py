@@ -105,7 +105,9 @@ def test_frames_from_a_read_started_in_another_context_are_ignored(field):
 ])
 def test_invalid_rows_and_unsupported_dtype_only_finish_preview(selection, dtype, reason):
     producer, frames = capture(selection=selection)
-    producer.offer(chunk(dtype=dtype), IDENTITY)
+    # Exercise preview's defensive boundary without constructing an invalid domain value.
+    payload = SimpleNamespace(timestamp=0, sequence_id=0, raw_data=np.zeros((3, 4), dtype=dtype))
+    producer.offer(payload, IDENTITY)
     assert producer.snapshot()["reason"] == reason
     assert frames.empty()
 
@@ -136,6 +138,8 @@ def test_extended_precision_is_rejected_without_silently_narrowing_values():
 
 
 class Source:
+    trigger_mode = 'events'
+    resume_mode = "restart-only"
     is_connected = True
     is_streaming = True
 
@@ -165,6 +169,8 @@ def runtime(source=None, frames=None):
         source_id="source", generation="run", acquisition_revision="revision", engine_revision="engine",
         preview_queue=Queue() if frames is None else frames,
     )
+    acquisition._connected = True
+    acquisition._streaming = acquisition.data_source.is_streaming
     acquisition.connection_id = "connection"
     return acquisition, events, main
 
@@ -238,10 +244,10 @@ async def test_start_rejects_stale_runtime_identity(changes):
 @pytest.mark.asyncio
 async def test_start_requires_streaming_but_completed_capture_is_still_queryable():
     acquisition, events, _ = runtime()
-    acquisition.data_source.is_streaming = False
+    acquisition._streaming = False
     await start(acquisition)
     assert not events[-1].data.ok
-    acquisition.data_source.is_streaming = True
+    acquisition._streaming = True
     await start(acquisition)
     await acquisition._on_stop_stream()
     await acquisition.execute((AcquisitionCommand.get_preview, CommandRequest("get", {"generation": "run"})))

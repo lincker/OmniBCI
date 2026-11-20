@@ -18,11 +18,16 @@ from omnibci.shared.events import EventType
 
 
 class Source:
+    trigger_mode = 'events'
+    resume_mode = "restart-only"
     is_connected = True
     is_streaming = False
 
     def __init__(self):
         self.input = asyncio.Queue()
+
+    async def connect(self):
+        pass
 
     async def start_stream(self):
         self.is_streaming = True
@@ -69,6 +74,7 @@ async def test_real_capture_round_trip_preserves_selected_values_and_main_stream
     await cache.start()
     loop_task = asyncio.create_task(runtime.main_loop())
     try:
+        await runtime._on_connect()
         await runtime._on_start_stream()
         started = await asyncio.to_thread(client.post, "/api/v1/acquisition/preview/start", json={
             "generation": "g", "expected_revision": "a" * 64, "connection_id": runtime.connection_id,
@@ -141,6 +147,7 @@ async def test_automatic_rolling_preview_retains_latest_chunks_without_changing_
     await cache.start()
     loop_task = asyncio.create_task(runtime.main_loop())
     try:
+        await runtime._on_connect()
         await runtime._on_start_stream()
         started = await asyncio.to_thread(client.get, "/api/v1/acquisition/preview", params={"generation": "g"})
         assert started.status_code == 200, started.text

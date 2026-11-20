@@ -6,112 +6,125 @@ Acquisition domain ports.
                    external device.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from collections.abc import Mapping
+from dataclasses import dataclass
+import json
+from math import isfinite
+from typing import Any, Literal
 
 from numpy import typing as npt
 
-from omnibci.domain.signal_info import SignalInfo
+from omnibci.domain.signal_info import SignalInfo, name
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceObservation:
+    native_text: str
+    signal_info: SignalInfo | None
+    native_event: str
+    provenance: Literal["device-reported", "file-reported", "protocol-defined", "user-declared"]
+    layout_error: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.native_text, str):
+            raise ValueError("Source native_text must be a string")
+        name(self.native_event, "native_event")
+        if self.provenance not in ("device-reported", "file-reported", "protocol-defined", "user-declared"):
+            raise ValueError("Invalid acquisition provenance")
+        if self.signal_info is None:
+            name(self.layout_error, "layout_error")
+            if len(self.layout_error) > 4096:
+                raise ValueError("layout_error must not exceed 4096 characters")
+        elif not isinstance(self.signal_info, SignalInfo) or self.layout_error is not None:
+            raise ValueError("A valid SignalInfo requires layout_error=None")
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceCheckpoint:
+    resource_id: str
+    resource_revision: str
+    state: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        name(self.resource_id, "resource_id")
+        name(self.resource_revision, "resource_revision")
+        if not isinstance(self.state, Mapping):
+            raise ValueError("Checkpoint state must be a JSON object")
+        state = dict(self.state)
+        try:
+            _validate_json(state)
+            encoded = json.dumps(state, allow_nan=False, separators=(",", ":"))
+            if len(encoded.encode("utf-8")) > 65536:
+                raise ValueError("Checkpoint state must not exceed 65536 bytes")
+            object.__setattr__(self, "state", json.loads(encoded))
+        except (TypeError, RecursionError, OverflowError) as exc:
+            raise ValueError("Checkpoint state must be bounded JSON") from exc
+
+
+def _validate_json(value):
+    if value is None or type(value) in (str, bool, int):
+        return
+    if type(value) is float and isfinite(value):
+        return
+    if type(value) is list:
+        for item in value:
+            _validate_json(item)
+        return
+    if type(value) is dict and all(type(key) is str for key in value):
+        for item in value.values():
+            _validate_json(item)
+        return
+    raise ValueError("Checkpoint state must contain only JSON values with string keys")
+
 
 class SignalSource(ABC):
-    """
-    Abstract class for signal source.
-
-    This class defines the interface for signal source, which are responsible for
-    reading data from a source and providing it in a standardized format.
-    """
-    def __init__(self):
-        super().__init__()
-        self._is_connected = False
-        self._is_streaming = False
+    """A source owns its transport; the host owns lifecycle state and read ordering."""
 
     @property
-    def is_connected(self) -> bool:
-        return self._is_connected
+    @abstractmethod
+    def trigger_mode(self) -> Literal["events", "level"]:
+        """Fixed normalization mode, available immediately without I/O."""
 
     @property
-    def is_streaming(self) -> bool:
-        return self._is_streaming
+    @abstractmethod
+    def resume_mode(self) -> Literal["restart-only", "live-current", "checkpoint"]:
+        """Fixed resume policy; live-current may lose samples during a pause."""
 
-    @property
-    def trigger_is_level(self) -> bool:
-        """Whether repeated trigger samples represent a held level, not events.
+    @abstractmethod
+    async def connect(self) -> None:
+        """Connect successfully or raise; cleanup must tolerate partial setup."""
 
-        The host compresses held values into one-sample events. Sources must
-        explicitly opt in; discrete events and existing plugins pass through.
+    @abstractmethod
+    async def observe(self) -> SourceObservation:
+        """Inspect a connected, stopped source with no pending read."""
+
+    @abstractmethod
+    async def start_stream(self) -> None:
+        """Start delivery; a prior observation is not required."""
+
+    @abstractmethod
+    async def read_chunk(self) -> npt.NDArray[Any] | None:
+        """Transfer a nonempty real matrix with a final event row, or None at EOF.
+
+        Only one read may be active. Cancellation must settle before stopping,
+        observing, checkpointing or disconnecting. Do not mutate returned data.
         """
-        return False
 
-    @property
-    def supports_checkpoint(self) -> bool:
-        """Whether a stopped source can resume its next undelivered sample."""
-        return False
+    @abstractmethod
+    async def stop_stream(self) -> None:
+        """Stop after the read has settled; tolerate repeated cleanup."""
 
-    @property
-    def resume_without_checkpoint_safe(self) -> bool:
-        """Whether start after stop/reconnect never replays delivered samples.
+    @abstractmethod
+    async def disconnect(self) -> None:
+        """Release resources, including after partial connection or prior cleanup."""
 
-        Live sources may opt in when their protocol starts current acquisition
-        without a seek or replay operation. A pause may still lose live samples;
-        this capability does not promise gap-free acquisition.
-        """
-        return False
+    def checkpoint(self) -> SourceCheckpoint | None:
+        """Checkpoint sources override this to capture the next undelivered sample."""
+        return None
 
-    def checkpoint(self) -> dict[str, Any]:
-        """Capture a stopped source after its acquisition fetch task has joined.
-
-        An optional source_identity envelope has string resource_id and revision
-        fields. It distinguishes a new input from changed content at the same
-        input, while the remaining checkpoint state stays opaque to the host.
-        """
+    def restore_checkpoint(self, checkpoint: SourceCheckpoint) -> None:
+        """Stage the next start while connected and stopped, with no pending read."""
         raise NotImplementedError("This signal source does not support checkpoints")
-
-    def restore_checkpoint(self, checkpoint: dict[str, Any]) -> None:
-        """Stage a checkpoint for the next start; unsupported for live sources."""
-        raise NotImplementedError("This signal source does not support checkpoints")
-
-    @abstractmethod
-    async def get_metadata(self) -> str:
-        """Query source information for display, preserving native text as supplied.
-
-        Binary/file sources render their native fields as readable text. This
-        text is opaque to the host and is never parsed to configure Processing.
-        """
-
-    def describe_output(self, *, source_id: str, connection_id: str) -> SignalInfo:
-        """Describe normalized output from the latest source observation.
-
-        Called after get_metadata(), without another query. Implementations
-        provide signal channels followed by one event row, and identify the
-        provenance of their dimensions. Metadata-only sources may omit this.
-        """
-        raise NotImplementedError("Source does not provide an acquisition descriptor")
-
-    @abstractmethod
-    async def connect(self) -> bool:
-        """setup connection"""
-
-    @abstractmethod
-    async def start_stream(self) -> bool:
-        """start reading data"""
-
-    @abstractmethod
-    async def read_chunk(self) -> Optional[npt.NDArray[Any]]:
-        """Read a fixed sized chunk.
-
-        Returns None to signal a clean end of stream (e.g. file playback
-        reached EOF); live device sources simply never return None.
-        Rows must match describe_output(): signal channels in descriptor order,
-        followed by the final event row. The producer must not mutate an array
-        after returning it.
-        """
-
-    @abstractmethod
-    async def stop_stream(self) -> bool:
-        """stop reading data"""
-
-    @abstractmethod
-    async def disconnect(self) -> bool:
-        """teardown connection"""
 
 
 class TriggerEmitter(ABC):

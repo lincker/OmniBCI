@@ -14,13 +14,14 @@ async def test_metadata_is_unsupported_text_while_output_description_uses_config
     reader = scan45.Scan45DataReader(parameters={"channel_count": 33, "sample_rate": 500})
     reader._load_package = AsyncMock()
 
-    metadata = await reader.get_metadata()
-    assert metadata == "Device metadata retrieval is not implemented for Scan45."
-    descriptor = reader.describe_output(source_id=reader.plugin_type, connection_id="connection")
+    reader._is_connected = True
+    metadata = await reader.observe()
+    assert metadata.native_text == "Device metadata retrieval is not implemented for Scan45."
+    descriptor = metadata.signal_info
     assert descriptor.signal_channel_count == 32
     assert descriptor.output_row_count == 33
     assert descriptor.sample_rate == 500
-    assert descriptor.provenance == "user-declared"
+    assert metadata.provenance == "user-declared"
     reader._load_package.assert_not_awaited()
 
 

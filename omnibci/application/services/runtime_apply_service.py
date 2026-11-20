@@ -1,6 +1,6 @@
 """Own pause/rebuild/restore as one admitted operation with explicit recovery."""
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
 from omnibci.application.commands.stimulation_commands import StartStimulationCommand, StopStimulationCommand
@@ -9,7 +9,8 @@ from omnibci.application.events import StreamDrainReceipt
 from omnibci.application.configuration.models import ActivationSet
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
-from omnibci.application.source_checkpoint import checkpoint_for_restore
+from omnibci.domain.ports.acquisition import SourceCheckpoint
+from omnibci.application.source_checkpoint import checkpoint_for_restore, checkpoint_from_receipt
 from omnibci.application.services.command_result_service import CommandRejectedError, CommandTimeoutError
 from omnibci.application.services.runtime_configuration_service import (
     operation_scopes, read_configuration, validate_external_peers,
@@ -29,7 +30,7 @@ class _RestoreState:
     connected: bool
     streaming: bool
     stimulation: bool
-    checkpoint: dict | None = None
+    checkpoint: SourceCheckpoint | None = None
     actuation: bool = False
     acquisition: bool = True
     processing: bool = True
@@ -429,13 +430,8 @@ class RuntimeApplyCoordinator:
                     or data.get("acquisition_revision") != before["CONFIG.module_revisions"]["acquisition"]
                     or data.get("engine_revision") != before.get("CONFIG.engine_revision")):
                 raise RuntimeError("Source checkpoint belongs to a different configuration")
-            if type(data.get("supported")) is not bool:
-                raise RuntimeError("Source checkpoint support was not acknowledged")
-            if data["supported"]:
-                if not isinstance(data.get("checkpoint"), dict):
-                    raise RuntimeError("Source did not provide a resumable checkpoint")
-                state.checkpoint = data["checkpoint"]
-            elif state.streaming and data.get("resume_without_checkpoint_safe") is not True:
+            state.checkpoint = checkpoint_from_receipt(data)
+            if state.streaming and data["resume_mode"] == "restart-only":
                 # A source must explicitly promise that a normal start does
                 # not rewind. Otherwise retain the paused source and drivers.
                 raise RuntimeApplyFailure(
@@ -478,17 +474,14 @@ class RuntimeApplyCoordinator:
                 self._receipt(current, running)
                 if current.get("acquisition_revision") != running["CONFIG.module_revisions"]["acquisition"]:
                     raise RuntimeError("Source resume receipt belongs to a different configuration")
-                if (type(current.get("supported")) is not bool or
-                        (current["supported"] and not isinstance(current.get("checkpoint"), dict))):
-                    raise RuntimeError("Replacement source returned an invalid checkpoint capability")
-                if require_live_resume and current.get("resume_without_checkpoint_safe") is not True:
+                current_checkpoint = checkpoint_from_receipt(current)
+                if require_live_resume and current["resume_mode"] != "live-current":
                     raise RuntimeError("Replacement source did not confirm safe live resumption")
             if checkpoint is not None:
-                self._receipt(current, running, "supported")
-                selected = checkpoint_for_restore(checkpoint, current.get("checkpoint"))
+                selected = checkpoint_for_restore(checkpoint, current_checkpoint)
                 if selected is not None:
                     data = await self._request(EventType.RestoreSourceCheckpoint,
-                                               {**self._identity(running), "checkpoint": selected})
+                                               {**self._identity(running), "checkpoint": asdict(selected)})
                     self._receipt(data, running, "restored")
                     resumed_checkpoint = True
         return resumed_checkpoint

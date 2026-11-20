@@ -34,38 +34,36 @@ class _BusEngine(EnginePort):
 
 
 class _Source:
+    trigger_mode = 'events'
+    resume_mode = "restart-only"
     def __init__(self) -> None:
         self._is_connected = False
         self._is_streaming = False
 
     @property
-    def is_connected(self) -> bool:
+    def is_connected(self) -> None:
         return self._is_connected
 
     @property
-    def is_streaming(self) -> bool:
+    def is_streaming(self) -> None:
         return self._is_streaming
 
-    async def connect(self) -> bool:
+    async def connect(self) -> None:
         self._is_connected = True
-        return True
 
-    async def disconnect(self) -> bool:
+    async def disconnect(self) -> None:
         self._is_connected = False
-        return True
 
-    async def start_stream(self) -> bool:
+    async def start_stream(self) -> None:
         self._is_streaming = True
-        return True
 
-    async def stop_stream(self) -> bool:
+    async def stop_stream(self) -> None:
         self._is_streaming = False
-        return True
 
     async def read_chunk(self):  # pragma: no cover - connect test never reads
         return None
 
-    async def get_metadata(self):  # pragma: no cover - unused
+    async def observe(self):  # pragma: no cover - unused
         return None
 
 

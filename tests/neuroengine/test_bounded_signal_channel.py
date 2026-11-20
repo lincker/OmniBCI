@@ -87,7 +87,7 @@ async def test_new_attachment_discards_old_backlog_and_recovers_after_full_bound
                 "expected_revision": acquisition.acquisition_revision}
     await acquisition.execute((AcquisitionCommand.detach_processing, CommandRequest("full-detach", identity)))
     assert not events[-1].data.ok
-    assert acquisition.data_source.is_streaming
+    assert acquisition._streaming
     if restart_processor:
         processor = _processor(plan)
         processor.data_manager = data
