@@ -62,6 +62,7 @@ def test_entrypoint_report_preserves_snapshot_identity(peer, monkeypatch, outcom
 def test_manager_requires_exact_snapshot_ack(peer, monkeypatch, revision, generation):
     kind, component, module, snapshot = peer
     process = MagicMock()
+    process.exitcode = 0
     process.is_alive.return_value = True
     process.join.side_effect = lambda **kwargs: setattr(process.is_alive, "return_value", False)
     receiver, sender = MagicMock(), MagicMock()

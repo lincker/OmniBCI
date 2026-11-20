@@ -71,6 +71,41 @@ class TestNoSpawnMode:
 
 
 class TestSpawnMode:
+    @pytest.mark.parametrize("exitcode", [1, -15, None])
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_unclean_exit_keeps_failure_and_blocks_replacement(self, process_factory, exitcode):
+        process, state = _mock_process()
+        process_factory.return_value = process
+        manager = ActuationProcessManager()
+        manager.start(settings_snapshot=_effector_snapshot())
+        state["alive"] = False
+        process.exitcode = exitcode
+
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.stop()
+        assert manager.state is ChildProcessState.FAILED
+        assert not manager.is_alive
+        process.close.assert_called_once()
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.start(settings_snapshot=_effector_snapshot("replacement"))
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.stop()
+        assert process_factory.call_count == 1
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_forced_exit_cannot_claim_cleanup_even_with_zero_exitcode(self, process_factory):
+        process, _ = _mock_process(exits_after_join=2)
+        process_factory.return_value = process
+        manager = ActuationProcessManager()
+        manager.start(settings_snapshot=_effector_snapshot())
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.stop()
+        process.terminate.assert_called_once()
+        assert manager.state is ChildProcessState.FAILED
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.start(settings_snapshot=_effector_snapshot("replacement"))
+        assert process_factory.call_count == 1
+
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
     def test_start_spawns_with_effector_and_stop_event(
@@ -168,7 +203,7 @@ class TestSpawnMode:
 
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
-    def test_stop_escalates_to_terminate_then_clears_state(
+    def test_stop_escalates_to_terminate_and_retains_failed_ownership(
         self, mock_proc_cls, mock_event_cls
     ):
         proc, _ = _mock_process(exits_after_join=2)
@@ -178,7 +213,8 @@ class TestSpawnMode:
         m = ActuationProcessManager()
         m.start(settings_snapshot=_effector_snapshot())
 
-        m.stop()
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            m.stop()
 
         assert [call.kwargs["timeout"] for call in proc.join.call_args_list] == [
             m._GRACEFUL_TIMEOUT_S,
@@ -187,7 +223,7 @@ class TestSpawnMode:
         proc.terminate.assert_called_once_with()
         proc.kill.assert_not_called()
         assert m._process is None and m._stop_event is None
-        assert m.state is ChildProcessState.STOPPED
+        assert m.state is ChildProcessState.FAILED
 
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
@@ -200,7 +236,8 @@ class TestSpawnMode:
         m = ActuationProcessManager()
         m.start(settings_snapshot=_effector_snapshot())
 
-        m.stop()
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            m.stop()
 
         proc.terminate.assert_called_once_with()
         proc.kill.assert_called_once_with()

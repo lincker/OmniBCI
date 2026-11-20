@@ -2,7 +2,7 @@
 
 Status: deferred to a dedicated follow-up branch. No S1d implementation changes remain on `refactor/module-interface`. The first batch is preserved in Git history at `e2299db`; the second batch was analyzed but not implemented. See the [handoff](#8-follow-up-branch-handoff).
 
-Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The current branch retains S1a–S1c from `e81f825`; the APIs and lifecycle below are future Stimulation work.
+Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; the APIs and lifecycle below remain future Stimulation work.
 
 Stimulation needs complete plugin contracts and one owner for renderer, paradigm and trigger resources. Keep the existing rendering adapters and stimulus state machine; complete their boundaries and failure handling without adding a rendering framework or compatibility layer.
 
@@ -199,6 +199,8 @@ Headless fakes can verify ordering, ownership and error handling. Display/GPU/dr
 ## 8. Follow-up branch handoff
 
 The user deferred all Stimulation/Paradigm implementation on 2026-11-20 to keep `refactor/module-interface` focused. Keep this design as a proposal; do not implement the remaining batches or restore the withdrawn first batch on this branch. No follow-up branch has been created by this scope decision.
+
+The later combined S1d/S1e instruction still excludes Stimulation, Paradigm and Renderer changes. TriggerEmitter lifecycle requires Stimulator setup/cleanup and its `_NoTrigger` implementation, so it cannot be completed independently under that exclusion. Keep the trigger capability, driver lifecycle and related SDK changes with this handoff. Only the independent S1e portion proceeds; add no unused lifecycle methods or compatibility layer to split the trigger change.
 
 ### 8.1 Withdrawn first batch
 

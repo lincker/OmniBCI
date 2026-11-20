@@ -47,6 +47,7 @@ def test_desktop_output_retains_live_child_without_termination(monkeypatch, modu
     assert process_factory.call_count == 1
 
     process.is_alive.return_value = False
+    process.exitcode = 0
     manager.stop()
     assert manager._process is None
     process.close.assert_called_once()

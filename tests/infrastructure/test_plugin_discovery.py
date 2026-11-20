@@ -254,7 +254,10 @@ def test_selected_entrypoint_supports_relative_imports_without_sys_path_pollutio
                 def setup(self):
                     pass
 
-                def play(self, command):
+                def execute(self, command):
+                    pass
+
+                def quiesce(self):
                     pass
 
                 def teardown(self):
@@ -296,7 +299,8 @@ def test_selected_entrypoint_executes_validated_source_path(tmp_path):
                 plugin_type = "exact_source"
                 origin = "validated-python-source"
                 def setup(self): pass
-                def play(self, command): pass
+                def execute(self, command): pass
+                def quiesce(self): pass
                 def teardown(self): pass
             """
         ),
@@ -339,7 +343,8 @@ def test_nested_entrypoint_supports_parent_relative_import(tmp_path):
                 plugin_type = "nested"
                 def __init__(self, *, parameters, context): self.origin = ORIGIN
                 def setup(self): pass
-                def play(self, command): pass
+                def execute(self, command): pass
+                def quiesce(self): pass
                 def teardown(self): pass
             """
         ),
@@ -409,7 +414,8 @@ def test_removed_registration_api_is_rejected(tmp_path):
                 def __init__(self, *, parameters, context): pass
                 plugin_type = "decorated_override"
                 def setup(self): pass
-                def play(self, command): pass
+                def execute(self, command): pass
+                def quiesce(self): pass
                 def teardown(self): pass
             """
         ),
@@ -458,7 +464,8 @@ def test_constructor_failure_cleans_new_synthetic_modules(tmp_path):
                 plugin_type = "constructor"
                 def __init__(self, *, parameters, context): raise RuntimeError("constructor failed")
                 def setup(self): pass
-                def play(self, command): pass
+                def execute(self, command): pass
+                def quiesce(self): pass
                 def teardown(self): pass
             """
         ),

@@ -1,5 +1,5 @@
 """
-Actuation application loop: command → play + Ack; play failure → Fault and
+Actuation application loop: command → execute + Ack; execution failure → Fault and
 the loop survives; heartbeat publishes ActuationState; failed setup exits
 with a Fault as its last word.
 """
@@ -69,6 +69,9 @@ class _FakeActuator:
     def teardown(self):
         self.torn_down = True
 
+    def quiesce(self):
+        pass
+
 
 def _app(fail_on=frozenset()) -> Actuation:
     app = Actuation.__new__(Actuation)          # skip __init__: no settings/socket
@@ -79,6 +82,13 @@ def _app(fail_on=frozenset()) -> Actuation:
     app._max_command_age = 0.0        # age gate disabled by default (as in prod)
     app.should_stop = False
     app._stop_event = None
+    app._paused = False
+    app._settlement_tasks = set()
+    app._settlement_lock = asyncio.Lock()
+    app._device_executor = None
+    app._device_ready = False
+    app._outputs_settled = False
+    app._settlement_error = None
     return app
 
 
@@ -209,7 +219,7 @@ class TestBacklogDrainsToLatest:
 
         assert _typed(app.event_bus, EventType.ActuationAck) == []
         _run(app.execute_command())
-        assert app.actuator.executed == [{"target_id": 1, "seq": 1}]
+        assert app.actuator.executed == [{"target_id": 1}]
         assert _typed(app.event_bus, EventType.ActuationFault)[0].data["seq"] == 2
 
     def test_payload_is_snapshotted_when_it_enters_mailbox(self):
@@ -357,8 +367,10 @@ class TestSetupFailure:
         monkeypatch.setattr(app, "start", _bad_start)
         monkeypatch.setattr(app, "stop", _stop)
 
+        sleep = asyncio.sleep
+
         async def fast_sleep(_):
-            return None
+            await sleep(0)
         monkeypatch.setattr(asyncio, "sleep", fast_sleep)
 
         with pytest.raises(RuntimeError, match="no effector configured"):
@@ -427,8 +439,10 @@ class TestSetupFailure:
         app.start = AsyncMock()
         app.stop = AsyncMock()
 
+        sleep = asyncio.sleep
+
         async def fast_sleep(_):
-            return None
+            await sleep(0)
 
         monkeypatch.setattr(asyncio, "sleep", fast_sleep)
 

@@ -48,7 +48,8 @@ class Driver(Effector):
     marker = {version!r}
     def setup(self): pass
     def teardown(self): pass
-    def play(self, command): pass
+    def execute(self, command): pass
+    def quiesce(self): pass
 """
         package = store.install_archive(package_archive(tmp_path, version, code=code)).package
         store.set_enabled(package.package_id, version, True)

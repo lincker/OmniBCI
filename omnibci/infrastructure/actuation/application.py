@@ -9,9 +9,8 @@ loaded Effector plugin. Differences from stimulation:
     retains only the newest pending command (last-write-wins) and immediately
     acks each replaced command with status="superseded" — a backlog must never
     make the device replay stale intents in order;
-  - play() runs off the event loop (asyncio.to_thread), so a slow device
-    action cannot starve the heartbeat and trip the engine watchdog into a
-    false LINK_LOST; commands stay serial (one thread at a time);
+  - setup, execute, quiesce and teardown share one device thread, so a slow
+    call cannot starve the event loop or overlap another device operation;
   - a heartbeat task publishes ActuationState every watchdog_timeout_s / 2 —
     the engine's link watchdog treats inbound silence past the timeout as
     LINK_LOST, so a dialled-in peer must keep talking;
@@ -22,6 +21,7 @@ loaded Effector plugin. Differences from stimulation:
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from copy import deepcopy
 import multiprocessing as mp
@@ -96,6 +96,10 @@ class Actuation:
         self._execution_task = None
         self._settlement_tasks = set()
         self._settlement_lock = asyncio.Lock()
+        self._device_executor = None
+        self._device_ready = False
+        self._outputs_settled = False
+        self._settlement_error = None
 
     def run(self):
         logger.info('---ActuationMain run---')
@@ -159,38 +163,85 @@ class Actuation:
                     logger.exception("Could not publish Actuation setup fault")
             raise
         finally:
+            await self._await_owned(asyncio.create_task(self._shutdown()))
+
+    @staticmethod
+    async def _await_owned(future):
+        """Repeated cancellation cannot release a resource still used by its owner."""
+        cancellation = None
+        while True:
             try:
-                heartbeat = getattr(self, "_heartbeat_task", None)
-                if heartbeat is not None:
-                    heartbeat.cancel()
-                    try:
-                        await heartbeat
-                    except asyncio.CancelledError:
-                        pass
-            finally:
-                try:
-                    pending = tuple(getattr(self, "_settlement_tasks", ()))
-                    if pending:
-                        await asyncio.gather(*pending, return_exceptions=True)
-                    if getattr(self, "_reconnect_requested", False):
-                        # A completed play() does not confirm settled outputs.
-                        # Refetch only after the driver verifies a safe state.
-                        quiescence = asyncio.create_task(
-                            asyncio.to_thread(self.actuator.quiesce),
-                        )
-                        try:
-                            await asyncio.shield(quiescence)
-                        except asyncio.CancelledError:
-                            # Cancellation cannot stop physical work in a thread.
-                            await quiescence
-                            raise
-                finally:
-                    try:
-                        self.actuator.teardown()
-                    finally:
-                        # Plugin teardown and heartbeat failures must not skip
-                        # the IPC ownership boundary.
-                        await self.stop()
+                result = await asyncio.shield(future)
+                break
+            except asyncio.CancelledError as exc:
+                if (future.cancelled()
+                        or future.done() and isinstance(future.exception(), asyncio.CancelledError)):
+                    raise
+                cancellation = cancellation or exc
+            except BaseException as exc:
+                if cancellation is not None:
+                    raise cancellation from exc
+                raise
+        if cancellation is not None:
+            raise cancellation
+        return result
+
+    async def _call_device(self, function, *args):
+        if self._device_executor is None:
+            self._device_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="actuation-device")
+        future = asyncio.get_running_loop().run_in_executor(self._device_executor, function, *args)
+        return await self._await_owned(future)
+
+    def _setup_device(self):
+        self.actuator.setup()
+        # Record acquisition on the owner even when the awaiting task is cancelled.
+        self._device_ready = True
+
+    async def _shutdown(self):
+        """Settle owned calls, confirm outputs, release the device, then close IPC."""
+        self._paused = True
+        self.should_stop = True
+        errors = []
+        pending = tuple(self._settlement_tasks)
+        if pending:
+            results = await asyncio.gather(*pending, return_exceptions=True)
+            errors.extend(result for result in results if isinstance(result, BaseException))
+        try:
+            self._cancel_pending()
+        except BaseException as exc:
+            errors.append(exc)
+        if self._device_ready and not self._outputs_settled:
+            try:
+                await self._call_device(self.actuator.quiesce)
+                self._outputs_settled = True
+                self._settlement_error = None
+            except BaseException as exc:
+                errors.append(exc)
+        try:
+            await self._call_device(self.actuator.teardown)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            if self._device_executor is not None:
+                self._device_executor.shutdown(wait=True)
+                self._device_executor = None
+        heartbeat = getattr(self, "_heartbeat_task", None)
+        if heartbeat is not None:
+            heartbeat.cancel()
+            try:
+                await heartbeat
+            except asyncio.CancelledError:
+                pass
+            except BaseException as exc:
+                errors.append(exc)
+        try:
+            await self.stop()
+        except BaseException as exc:
+            errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("Actuation cleanup failed", errors)
 
     async def start(self):
         logger.info('---ActuationMain start---')
@@ -207,11 +258,11 @@ class Actuation:
         await self.event_bus.start()
         if getattr(self, "_external_node", False):
             # The engine must not recognize this node until its device is ready.
-            self.actuator.setup()
+            await self._call_device(self._setup_device)
             await self.peer_channel.start()
         else:
             await self.peer_channel.start()
-            self.actuator.setup()
+            await self._call_device(self._setup_device)
 
     async def _await_managed_connection(self) -> None:
         """Wait for the verified connection before commands can run."""
@@ -246,7 +297,7 @@ class Actuation:
         target = command.target_id
         seq = command.seq
         # Age gate: an accounting outcome (like superseded), not a device
-        # fault. Commands without issued_at (older senders) are never gated.
+        # fault. Commands without the optional issued_at are never gated.
         issued_at = command.issued_at
         if (self._max_command_age > 0 and issued_at is not None
                 and time.time() - issued_at > self._max_command_age):
@@ -258,20 +309,11 @@ class Actuation:
             ))
             return
         try:
-            # Off the event loop: play() may legitimately block for the whole
-            # device action (serial writes, motion completion) and the
-            # heartbeat must keep beating meanwhile. asyncio.to_thread keeps
-            # commands serial — one execution at a time.
+            self._outputs_settled = False
             self._execution_task = asyncio.create_task(
-                asyncio.to_thread(self.actuator.execute, payload),
+                self._call_device(self.actuator.execute, payload),
             )
-            try:
-                await asyncio.shield(self._execution_task)
-            except asyncio.CancelledError:
-                # Cancelling an await cannot cancel physical work in a thread.
-                # Join before teardown can touch the same device.
-                await self._execution_task
-                raise
+            await self._await_owned(self._execution_task)
             reply = Event(EventType.ActuationAck,
                           make_actuation_ack(target_id=target, seq=seq))
         except Exception as exc:
@@ -348,25 +390,28 @@ class Actuation:
             EventType.ActuationAck,
             make_actuation_ack(
                 target_id=command.target_id, status="cancelled", seq=command.seq,
-                message="Actuation paused for configuration; command was not executed",
+                message="Actuation paused or stopping; command was not executed",
             ),
         ))
 
     def _request_settlement(self, event: Event) -> None:
         """Leave the EventBus free to forward heartbeats while a driver finishes."""
-        if CommandRequest.from_value(event.data) is None:
+        request = CommandRequest.from_value(event.data)
+        if request is None:
+            return
+        if self._stop_requested():
+            self.event_bus.put_event(Event(EventType.CommandResult, CommandResult(
+                request.command_id, EventType.SettleActuation.name, ok=False,
+                error_code="ACTUATION_STOPPING", message="Actuation is shutting down",
+                failure_kind=CommandFailureKind.REJECTED,
+            )))
             return
         self._paused = True
         task = asyncio.create_task(self._settle_actuation(event))
         self._settlement_tasks.add(task)
         task.add_done_callback(self._settlement_tasks.discard)
 
-    async def _settle_actuation(self, event: Event) -> None:
-        """Cancel queued intents, join active execution, then verify device quiescence."""
-        request = CommandRequest.from_value(event.data)
-        if request is None:
-            return
-        self._paused = True
+    def _cancel_pending(self) -> int:
         cancelled = 0
         while True:
             try:
@@ -375,15 +420,31 @@ class Actuation:
                 break
             self._publish_cancelled(pending)
             cancelled += 1
+        return cancelled
+
+    async def _settle_actuation(self, event: Event) -> None:
+        """Cancel queued intents, join active execution, then verify device quiescence."""
+        request = CommandRequest.from_value(event.data)
+        if request is None:
+            return
+        self._paused = True
+        cancelled = self._cancel_pending()
+        self._settlement_error = RuntimeError("Output settlement did not complete")
         try:
             async with self._settlement_lock:
                 self._paused = True
                 execution = getattr(self, "_execution_task", None)
                 if execution is not None:
-                    await asyncio.shield(execution)
-                # A driver must explicitly confirm safe device state; play()
+                    try:
+                        await self._await_owned(execution)
+                    except Exception:
+                        # execute_command reports the failure. Still verify physical stop.
+                        pass
+                # A driver must explicitly confirm safe device state; execute()
                 # returning or process exit is insufficient evidence.
-                await asyncio.to_thread(self.actuator.quiesce)
+                await self._call_device(self.actuator.quiesce)
+                self._outputs_settled = True
+                self._settlement_error = None
             snapshot = getattr(self, "_runtime_snapshot", {})
             result = CommandResult(
                 request.command_id, EventType.SettleActuation.name, ok=True,
@@ -396,6 +457,7 @@ class Actuation:
                 },
             )
         except Exception as exc:
+            self._settlement_error = exc
             result = CommandResult(
                 request.command_id, EventType.SettleActuation.name, ok=False,
                 error_code="ACTUATION_SETTLE_FAILED", message=str(exc),
@@ -419,6 +481,12 @@ class Actuation:
                 result = CommandResult(
                     request.command_id, EventType.ResumeActuation.name, ok=False,
                     error_code="ACTUATION_STOPPING", message="Actuation is shutting down",
+                    failure_kind=CommandFailureKind.REJECTED,
+                )
+            elif self._settlement_error is not None:
+                result = CommandResult(
+                    request.command_id, EventType.ResumeActuation.name, ok=False,
+                    error_code="ACTUATION_UNSETTLED", message=str(self._settlement_error),
                     failure_kind=CommandFailureKind.REJECTED,
                 )
             else:

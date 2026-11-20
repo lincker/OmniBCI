@@ -10,41 +10,42 @@ Effector, receives them over the actuation peer
 channel and drives the concrete device through this interface.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from typing import Mapping
 
 
 class Effector(ABC):
     """Pluggable output-device driver (see module docstring)."""
 
+    @abstractmethod
     def quiesce(self) -> None:
         """Confirm prior outputs finished or were safely cancelled before restart.
 
         Return only when no device action can continue after this call. Drivers
-        unable to establish that state must raise; a returned play() call alone
+        unable to establish that state must raise; a returned execute() call alone
         does not prove physical completion. The host never replays old intents.
         """
-        raise NotImplementedError("This effector cannot confirm output quiescence")
 
     @abstractmethod
-    def setup(self):
+    def setup(self) -> None:
         """Acquire and initialise the device before any command is issued."""
 
     @abstractmethod
-    def teardown(self):
-        """Release the device and its resources."""
+    def teardown(self) -> None:
+        """Release resources, including after partial setup; emit no new output."""
 
     @abstractmethod
-    def play(self, command: Mapping[str, Any]) -> None:
+    def execute(self, command: Mapping[str, object]) -> None:
         """Carry out one actuation command.
 
-        *command* is the ActuationCommand payload emitted by the engine\'s
-        translator: ``{"target_id": int, "event_id": int|None,
+        *command* is the device payload, without host correlation/freshness:
+        ``{"target_id": int, "event_id": int|None,
         "confidence": float|None}``. The target → concrete device action
         mapping (which joint, which direction, how far) is device-specific
         and lives in the implementation.
 
         May block for the duration of the device action — the actuation
-        subsystem runs it off its event loop (worker thread), so blocking is
-        fine; spawning your own threads is not required. The implementation
-        must tolerate process termination mid-call (the subsystem is stopped
-        by terminating the process)."""
+        subsystem serializes setup, execute, quiesce and teardown on one device
+        thread. Calls must settle within the driver's documented bounds.
+        Cancelling a host wait does not stop physical work; quiesce must confirm
+        that state before replacement. Commands are never automatically replayed.
+        """

@@ -175,7 +175,8 @@ def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch
     from omnibci.infrastructure.plugins import node_client
 
     app, peer, config, lifecycle, queue = make_app(monkeypatch, "actuation")
-    effector = Mock()
+    effector = Mock(setup=Mock(return_value=None), execute=Mock(return_value=None),
+                    quiesce=Mock(return_value=None), teardown=Mock(return_value=None))
     getattr(effector, failure).side_effect = RuntimeError("device still held")
     actuator = Actuator(settings_snapshot={})
     actuator._load_effector = Mock(return_value=effector)

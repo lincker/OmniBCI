@@ -19,8 +19,11 @@ class _FakeEffector(Effector):
     def teardown(self):
         self.calls.append("teardown")
 
-    def play(self, command):
-        self.calls.append(("play", dict(command)))
+    def execute(self, command):
+        self.calls.append(("execute", dict(command)))
+
+    def quiesce(self):
+        self.calls.append("quiesce")
 
 
 class _ExplodingEffector(Effector):
@@ -32,8 +35,11 @@ class _ExplodingEffector(Effector):
     def teardown(self):
         pass
 
-    def play(self, command):
+    def execute(self, command):
         raise RuntimeError("device jam")
+
+    def quiesce(self):
+        pass
 
 
 def _actuator_with(effector) -> Actuator:
@@ -42,18 +48,31 @@ def _actuator_with(effector) -> Actuator:
     return a
 
 
+@pytest.mark.parametrize("operation", ["setup", "execute", "quiesce", "teardown"])
+def test_void_lifecycle_results_do_not_accept_false_as_success(monkeypatch, operation):
+    effector = _FakeEffector()
+    monkeypatch.setattr(effector, operation, lambda *args: False)
+    actuator = Actuator(settings_snapshot={})
+    monkeypatch.setattr(actuator, "_load_effector", lambda: effector)
+    if operation != "setup":
+        actuator.setup()
+    arguments = ({"target_id": 1},) if operation == "execute" else ()
+    with pytest.raises(TypeError, match=operation):
+        getattr(actuator, operation)(*arguments)
+
+
 class TestExecute:
     def test_execute_passes_command_through(self):
         eff = _FakeEffector()
         a = _actuator_with(eff)
         a.execute({"target_id": 3, "event_id": 7, "confidence": 0.9})
-        assert ("play", {"target_id": 3, "event_id": 7, "confidence": 0.9}) in eff.calls
+        assert ("execute", {"target_id": 3, "event_id": 7, "confidence": 0.9}) in eff.calls
 
     def test_execute_before_setup_raises(self):
         with pytest.raises(RuntimeError):
             Actuator(settings_snapshot={}).execute({"target_id": 1})
 
-    def test_play_exception_propagates(self):
+    def test_execute_exception_propagates(self):
         a = _actuator_with(_ExplodingEffector())
         with pytest.raises(RuntimeError, match="device jam"):
             a.execute({"target_id": 1})
@@ -102,8 +121,11 @@ class TestLifecycle:
                     def setup(self):
                         self.calls.append("setup")
 
-                    def play(self, command):
-                        self.calls.append(("play", dict(command)))
+                    def execute(self, command):
+                        self.calls.append(("execute", dict(command)))
+
+                    def quiesce(self):
+                        self.calls.append("quiesce")
 
                     def teardown(self):
                         self.calls.append("teardown")
@@ -123,7 +145,7 @@ class TestLifecycle:
         actuator.teardown()
 
         assert loaded is not None
-        assert loaded.calls == ["setup", ("play", {"target_id": 7}), "teardown"]
+        assert loaded.calls == ["setup", ("execute", {"target_id": 7}), "teardown"]
         assert actuator.effector is None
 
     def test_setup_without_configured_effector_raises(self, monkeypatch):

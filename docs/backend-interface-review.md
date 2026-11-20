@@ -1,6 +1,6 @@
 # Backend Interface Review and Refactoring Recommendations
 
-Status: baseline findings and target recommendations. S1a–S1c implementation progress is recorded in the [implementation plan](plugin-implementation-plan.md). Stimulation findings D07–D09/R03 are deferred to a dedicated branch; the first S1d batch is withdrawn from this branch. See the [handoff](stimulation-interface-design.md#8-follow-up-branch-handoff). Historical findings below describe the inspected baseline unless marked resolved.
+Status: baseline findings and target recommendations. Completed S1a–S1c and S1e implementation is recorded in the [implementation plan](plugin-implementation-plan.md). Stimulation findings D07–D09/R03, including trigger lifecycle integration, remain deferred under the latest scope exclusion; the first S1d batch is withdrawn. See the [handoff](stimulation-interface-design.md#8-follow-up-branch-handoff). Historical findings below describe the inspected baseline unless marked resolved.
 
 Baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`, reviewed on 2026-11-18. This review follows the [plugin and marketplace proposal](plugin-marketplace-design.md): one new Plugin API v1, no historical compatibility paths, a thin SDK facade, and execution owned by backend modules.
 
@@ -13,6 +13,8 @@ The simplified target has 18 public names and no generic plugin context or compa
 Names follow the [canonical plugin terminology and module names](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries). Plugin Management owns Packages, Configuration selects Contributions, and the four Module Hosts own Instances. Marketplace integration supplies release evidence and bytes. Code references below preserve current identifiers, including `PluginMarketRepository`; naming decisions are not claims that implementation or UI renaming has occurred.
 
 The [implementation plan](plugin-implementation-plan.md) turns these findings into ordered work and records simplifications, acceptance gates and deferred portions. This review remains the evidence inventory; it does not require a new class or service for every named boundary.
+
+The 2026-11-20 branch closeout adds [cross-module acceptance requirements](#cross-module-acceptance-addendum-2026-11-20) to the existing findings. The [closeout record](plugin-implementation-plan.md#7-current-branch-closeout-2026-11-20) separates retained S1a–S1c code, historical test evidence and pending work. These additions change no public API or implementation scope.
 
 ## 1. Conclusions and review scope
 
@@ -132,7 +134,7 @@ Specify one active epoch as the supported runtime behavior. Explicit reset is si
 
 ### D06 EpochDetector forces the host to reconstruct a boundary sequence
 
-**P2 — confirmed interface cost, not missing multi-marker support.** [EpochDetector](/Users/lincker/workspace/OmniBCI/omnibci/domain/ports/algorithm.py:126) returns the first start/end through separate `(index, event_id)` tuples and a `(-1, 0)` sentinel. [ProcessingState._boundaries](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/signal_processing/processing_state.py:30) repeatedly slices and rescans a chunk to recover all boundaries. The host already handles multiple markers and checks out-of-range offsets.
+**P2 — confirmed interface cost, not missing multi-marker support.** [EpochDetector](/Users/lincker/workspace/OmniBCI/omnibci/domain/ports/algorithm.py:96) returns the first start/end through separate `(index, event_id)` tuples and a `(-1, 0)` sentinel. [ProcessingState._boundaries](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/signal_processing/processing_state.py:30) repeatedly slices and rescans a chunk to recover all boundaries. The host already handles multiple markers and checks out-of-range offsets.
 
 **Adjustment:** expose `detect(raw_data) -> tuple[EpochBoundary, ...]`, passing the mapped matrix with its event row and no host timestamp/sequence wrapper. Validate bounded offsets, end-before-start tie ordering and no duplicate kind at an offset. A start carries its event ID; an end carries `None`. Preserve start inclusion, closing-sample exclusion and detector reset on input replacement.
 
@@ -173,6 +175,8 @@ Stimulation owns the trigger lifecycle. Keep timing and pulse requirements visib
 **Acceptance:** construction performs no hardware writes; failed setup is cleaned up; rejected trigger output reaches the module result; stop clears output and releases resources; device-specific timing is tested on an appropriate target.
 
 ### D10 Effector does not require the quiescence behavior the host needs
+
+**S1e implemented (2026-11-20):** required execute/quiesce and None-return validation are implemented, with lifecycle calls and caller fixtures updated together. Sequence/freshness stay in the host. The shared manifest payload-schema switch remains S1f; final verification is recorded in the implementation plan.
 
 **P1 — confirmed contract gap.** [Effector.quiesce](/Users/lincker/workspace/OmniBCI/omnibci/domain/ports/effector.py:19) is a concrete method that raises `NotImplementedError`. An implementation can satisfy the abstract class without supporting settlement, although [the runtime](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/actuation/application.py:364) relies on it. The `play` docstring also describes process termination as normal stopping, which is weaker than the explicit quiescence behavior now required by the host.
 
@@ -283,6 +287,8 @@ Combine D07's declared frame/state contract with clear request acknowledgments. 
 **Acceptance:** partial setup and teardown failure both release remaining owned resources; a blocked loop cannot report stopped; a second start cannot overlap an unresolved instance; every GPU operation runs on the designated thread; accepted requests and actual presentation observations remain distinguishable.
 
 ### R04 Actuation needs a declared thread and cancellation model
+
+**S1e implemented (2026-11-20):** a single-worker executor owns all device calls. Repeated cancellation waits for settlement, shutdown preserves cleanup failures, and unclean/forced child exits block replacement. Existing mailbox, correlation and heartbeat behavior are retained. See the implementation plan for verification and target limitations.
 
 **P1 — design risk for external drivers.** [Actuator](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/actuation/actuator.py:47) already cleans up partial setup. The runtime calls setup/teardown on its event-loop thread, while [execute](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/actuation/application.py:260) and [quiesce](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/actuation/application.py:364) use `asyncio.to_thread`. Calls are sequenced, but the interface does not promise one owning thread. A thread-affine native driver cannot infer a supported lifecycle from `Effector` alone.
 
@@ -413,6 +419,39 @@ Move common error mapping to the existing presentation error boundary. Services 
 **Adjustment:** use one writer and a bounded queue per client, with an explicit send deadline and shutdown cleanup. Do not block the engine listener on a browser. For result events, disconnect a client that cannot keep up or expose a documented gap/resync mechanism; do not silently claim lossless delivery after discarding results. Any resync promise must match A05's retained data range.
 
 **Acceptance:** one stalled fake client cannot delay a healthy one; per-client order is stable; queued messages/tasks remain bounded; shutdown joins/cancels writers; disconnected clients release resources; no result replay is invented for data that has not been retained.
+
+### Cross-module acceptance addendum (2026-11-20)
+
+These requirements refine the existing findings and their implementation gates. They do not identify four new broken subsystems or require additional modules, SDK exports or compatibility layers.
+
+**Configuration queries — S2/S4, K02/A02/A04/T03.** Repository access extends beyond PluginPackageService. The repository is already an application-owned port; using it is not inherently an infrastructure dependency violation. The issue is reaching through another service to its broad dependencies without specifying the caller's actual boundary.
+
+| Existing callers | Required boundary |
+| --- | --- |
+| [PluginPackageService](../omnibci/application/services/plugin_package_service.py) | Read saved/accepted package references; keep Profile creation/copying in Configuration. |
+| [Plugin configuration router](../omnibci/presentation/routers/plugin_config.py) | Query catalog metadata, Profiles, module/engine settings and history without reaching through `svc.repository` or `svc.catalog`. |
+| [SignalSetupService](../omnibci/application/services/signal_setup_service.py) and [NodeConfigurationService](../omnibci/application/services/node_configuration_service.py) | Obtain the selected configuration/layout inputs or role-specific snapshot without access to unrelated configuration operations. |
+| [RuntimeConfigurationService](../omnibci/application/services/runtime_configuration_service.py) and [RuntimeApplyCoordinator](../omnibci/application/services/runtime_apply_service.py) | Retain explicit planning, compare-and-swap, compensation and history authority; inventory both reads and writes before narrowing dependencies. |
+
+Use a few methods on the existing service for presentation queries, or inject the required application-owned port explicitly where the caller owns that use case. Do not wrap every repository method or force runtime coordination through a read-only interface. Return only needed values; preserve copying, revisions and the existing shared admission guard. Acceptance must cover these callers, not only the package service.
+
+**Channel semantics — S4 and B1/B2, A03/R01/R02/T04.** [Bounded signal-channel tests](../tests/neuroengine/test_bounded_signal_channel.py) already cover overflow, ordered boundaries and reattachment. Preserve these behaviors and document separate delivery contracts:
+
+| Channel | Owner and acceptance |
+| --- | --- |
+| Signal chunks and input boundaries | Acquisition reports a failed Processing attachment; Processing owns input/epoch reset. A full queue must not acknowledge an undelivered boundary or stop unrelated acquisition/preview. Reattachment rejects old input state. |
+| Commands and terminal results | Application owns scope/correlation/outcome; transport reports delivery. Distinguish definitely unsent, execution unknown and timeout; never automatically replay physical effects. |
+| Preview | Acquisition owns capture/sequence identity. Presentation may miss preview frames; that must not block signal processing or imply a complete recording. |
+| Diagnostics | The existing [log forwarder](../omnibci/infrastructure/acquisition/logging.py) drops records when its bounded queue is unavailable. Diagnostics must not block or fail acquisition. |
+| Result queries and WebSocket events | Results owns the retained range; the broadcaster owns client delivery. B1/B2 must make disconnection/gaps and resynchronization consistent with retained data. |
+
+Retain the existing queues, broker and broadcaster. A universal delivery abstraction would obscure these different requirements. B1/B2 remain separate follow-ups; this addendum does not change retention or delivery behavior.
+
+**Shutdown ownership — S4/S6, A01/A04.** Shutdown admission already exists: [RequestGate](../omnibci/presentation/security.py) rejects new HTTP writes while retaining reads and drains accepted writes; [server lifespan](../omnibci/presentation/main.py) and [desktop control](../omnibci/presentation/server.py) then invoke [ServerShutdownService](../omnibci/application/services/shutdown_service.py). That service waits for owned configuration work and calls the existing Engine stop. [RuntimeAdmission](../omnibci/application/runtime_admission.py) reserves module stop against overlapping operations.
+
+Preserve this responsibility chain when narrowing ports: Presentation controls request admission; Application settles owned operations; Engine and Module Hosts release their resources. Keep failure reporting and retry explicit. Restoring the request gate must not bypass unresolved resource cleanup or recovery checks. Verify accepted writes and pending apply operations finish in order, stop failure cannot report completion, and resume cannot start overlapping owners. Reuse [shutdown tests](../tests/application/test_shutdown_service.py) and [request-gate tests](../tests/presentation/test_desktop_api.py); add only missing cases when changing the affected boundary. No new lifecycle manager is needed. Stimulation implementation remains in its dedicated branch.
+
+**Boundary enforcement — S2–S6.** The eight existing [import contracts](../pyproject.toml) check layers and selected module dependencies. Passing them does not establish complete module ownership. Extend static rules only for concrete import directions established by a change, such as keeping static catalog operations independent of executable loading and configuration persistence independent of runtime services. Use behavioral tests for reference-query isolation, Profile ownership and preparation handoff; import rules alone cannot detect `service.repository` access. Avoid blanket bans on all infrastructure cross-imports or a parallel architectural framework.
 
 ## 7. Target interface ownership
 

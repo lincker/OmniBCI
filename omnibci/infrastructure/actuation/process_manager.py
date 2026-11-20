@@ -103,6 +103,7 @@ class ActuationProcessManager:
         # Effector from the running subprocess's pinned snapshot.
         self._effector: str | None = None
         self._state = ChildProcessState.STOPPED
+        self._cleanup_error: str | None = None
         self._lifecycle_lock = RLock()
 
     # ── Public API ─────────────────────────────────────────────────────────
@@ -116,6 +117,8 @@ class ActuationProcessManager:
             self._start_locked(settings_snapshot)
 
     def _start_locked(self, settings_snapshot: dict) -> None:
+        if self._process is None and self._cleanup_error is not None:
+            raise RuntimeError(self._cleanup_error)
         snapshot = deepcopy(settings_snapshot)
         effector = snapshot.get("ACTUATION.effector")
         auto_spawn = snapshot.get(
@@ -239,9 +242,9 @@ class ActuationProcessManager:
         block and tear the device down.  A child that ignores that request is
         terminated, then killed when the host permits automatic termination.
         Desktop hosts instead report incomplete cleanup for a user decision.
-        State is cleared only after the process is confirmed dead; retaining the
-        handle on failure prevents a later ``start`` from creating a second
-        controller for the same hardware.
+        A live process retains its handle. An unclean or forced exit releases
+        the dead process handle but retains failed ownership and blocks replacement;
+        process death does not establish physical output settlement.
         """
         with self._lifecycle_lock:
             self._stop_locked()
@@ -254,6 +257,8 @@ class ActuationProcessManager:
         process = self._process
         if process is None:
             self._close_startup_receiver()
+            if self._cleanup_error is not None:
+                raise RuntimeError(self._cleanup_error)
             self._state = final_state
             return
 
@@ -274,6 +279,10 @@ class ActuationProcessManager:
             logger.warning(
                 "Actuation subprocess did not stop gracefully; terminating (pid=%s)",
                 pid,
+            )
+            self._cleanup_error = (
+                f"Actuation cleanup was not confirmed after forced termination (pid={pid}); "
+                "replacement is blocked"
             )
             process.terminate()
             process.join(timeout=self._TERMINATE_TIMEOUT_S)
@@ -298,6 +307,11 @@ class ActuationProcessManager:
             raise RuntimeError(message)
 
         exitcode = process.exitcode
+        if exitcode != 0:
+            self._cleanup_error = (
+                f"Actuation cleanup was not confirmed (pid={pid}, exitcode={exitcode}); "
+                "replacement is blocked"
+            )
         logger.info(
             "Actuation subprocess stopped (pid=%s, exitcode=%s)",
             pid,
@@ -316,6 +330,9 @@ class ActuationProcessManager:
         self._process = None
         self._stop_event = None
         self._close_startup_receiver()
+        if self._cleanup_error is not None:
+            self._state = ChildProcessState.FAILED
+            raise RuntimeError(self._cleanup_error)
         self._effector = None
         self._settings_snapshot = None
         self._state = final_state

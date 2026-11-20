@@ -233,7 +233,8 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
         "    def __init__(self, *, parameters, context): pass\n"
         "    def setup(self): pass\n"
         "    def teardown(self): pass\n"
-        "    def play(self, command): self.command = command\n",
+        "    def execute(self, command): self.command = command\n"
+        "    def quiesce(self): pass\n",
         encoding="utf-8",
     )
     descriptor = _catalog(PluginRoot(tmp_path, "user", 0)).resolve_selection(
@@ -241,7 +242,7 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
     )
 
     instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
-    instance.play({"target_id": 2})
+    instance.execute({"target_id": 2})
 
     assert isinstance(instance, Effector)
     assert instance.command == {"target_id": 2}

@@ -11,7 +11,19 @@ from omnibci.infrastructure.actuation.contracts import (
 
 
 class TestValidCommand:
-    def test_minimal_older_sender_shape(self):
+    def test_host_correlation_and_freshness_are_not_passed_to_the_effector(self):
+        command = validate_actuation_command({
+            "target_id": 3, "event_id": 4, "confidence": 0.5,
+            "seq": 7, "issued_at": 1_700_000_000,
+            "device_option": {"axis": "left"},
+        })
+        assert command.seq == 7 and command.issued_at == 1_700_000_000
+        assert command.payload == {
+            "target_id": 3, "event_id": 4, "confidence": 0.5,
+            "device_option": {"axis": "left"},
+        }
+
+    def test_minimal_command_without_optional_metadata(self):
         command = validate_actuation_command({"target_id": 0})
         assert command.target_id == 0
         assert command.seq is None and command.issued_at is None
@@ -29,7 +41,10 @@ class TestValidCommand:
         command = validate_actuation_command(payload)
         assert command.target_id == 3 and command.seq == 0
         assert command.issued_at == 1_700_000_000.0
-        assert command.payload == payload
+        assert command.payload == {
+            "target_id": 3, "event_id": 0, "confidence": 1.0,
+            "device_option": {"axis": "left"},
+        }
         assert command.payload is not payload
 
     def test_nested_device_extensions_are_snapshotted(self):

@@ -21,6 +21,10 @@ def app(actuator):
     instance._execution_task = None
     instance._settlement_tasks = set()
     instance._settlement_lock = asyncio.Lock()
+    instance._device_executor = None
+    instance._device_ready = False
+    instance._outputs_settled = False
+    instance._settlement_error = None
     instance._max_command_age = 0
     instance._runtime_snapshot = {"CONFIG.module_revisions": {"actuation": "revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation"}
     instance.should_stop = False
@@ -85,11 +89,12 @@ def test_settlement_joins_execution_cancels_pending_and_keeps_dispatch_nonblocki
     asyncio.run(scenario())
 
 
-def test_effector_without_quiescence_cannot_claim_physical_completion():
+def test_failed_quiescence_cannot_claim_physical_completion():
     class UnconfirmedEffector(Effector):
         def setup(self): pass
         def teardown(self): pass
-        def play(self, command): pass
+        def execute(self, command): pass
+        def quiesce(self): raise RuntimeError("cannot confirm output quiescence")
 
     async def scenario():
         actuator = Actuator(settings_snapshot={})

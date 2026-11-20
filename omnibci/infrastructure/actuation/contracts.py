@@ -75,8 +75,8 @@ def validate_actuation_command(payload: object) -> ValidatedActuationCommand:
       - ``event_id``: None or a non-negative integer;
       - ``confidence``: None or a finite number in [0, 1].
 
-    Older senders may omit every optional field.  Unknown fields are retained
-    because concrete Effectors may define device-specific command extensions.
+    Correlation and freshness remain in this host record. Unknown fields are
+    retained in the device payload for effector-specific command extensions.
     """
     if not isinstance(payload, dict):
         raise InvalidActuationCommand("payload must be a dict")
@@ -127,7 +127,8 @@ def validate_actuation_command(payload: object) -> ValidatedActuationCommand:
     # JSON objects, so a shallow dict copy would still let callers mutate a
     # command after it had passed validation and entered the mailbox.
     return ValidatedActuationCommand(
-        payload=deepcopy(payload),
+        payload=deepcopy({key: value for key, value in payload.items()
+                          if key not in {"seq", "issued_at"}}),
         target_id=target_id,
         seq=seq,
         issued_at=issued_at,

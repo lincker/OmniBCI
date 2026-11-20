@@ -30,7 +30,8 @@ def descriptor(tmp_path, body="self.parameters = parameters; self.context = cont
                 {body}
             def setup(self): pass
             def teardown(self): pass
-            def play(self, command): pass
+            def execute(self, command): pass
+            def quiesce(self): pass
     '''), encoding="utf-8")
     catalog = PluginCatalog({"effector": lambda: [PluginRoot(tmp_path, "user", 0)]})
     return catalog.resolve_selection("effector", PluginSelection("test.example", "output", "1.0.0"))
