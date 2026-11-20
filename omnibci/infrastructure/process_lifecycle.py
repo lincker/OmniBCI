@@ -19,6 +19,8 @@ import math
 import time
 from typing import Any
 
+from omnibci.application.plugin_execution import PluginExecutionReceipt
+
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL_S = 0.05
@@ -53,11 +55,13 @@ class StartupReport:
     module_revisions: dict[str, str] | None = None
     engine_revision: str | None = None
     generation: str | None = None
+    execution: PluginExecutionReceipt | None = None
 
     @classmethod
     def ready(cls, component: str, *, module_revisions: dict[str, str] | None = None,
               engine_revision: str | None = None,
-              generation: str | None = None) -> "StartupReport":
+              generation: str | None = None,
+              execution: PluginExecutionReceipt | None = None) -> "StartupReport":
         return cls(
             component=component,
             state=ChildProcessState.READY,
@@ -65,6 +69,7 @@ class StartupReport:
             module_revisions=dict(module_revisions) if module_revisions is not None else None,
             engine_revision=engine_revision,
             generation=generation,
+            execution=execution,
         )
 
     @classmethod
@@ -129,10 +134,11 @@ class StartupReporter:
     def reported(self) -> bool:
         return self._reported
 
-    def ready(self) -> bool:
+    def ready(self, *, execution: PluginExecutionReceipt | None = None) -> bool:
         return self._send(StartupReport.ready(
             self._component, module_revisions=self._module_revisions,
             engine_revision=self._engine_revision, generation=self._generation,
+            execution=execution,
         ))
 
     def failed(self, stage: str, error: BaseException) -> bool:
@@ -191,6 +197,7 @@ class StartupChannel:
     process: Any
     receiver: Any
     reporter: StartupReporter
+    expected_execution: PluginExecutionReceipt | None = None
 
 
 def wait_for_startup_report(
@@ -202,6 +209,7 @@ def wait_for_startup_report(
     expected_module_revisions: dict[str, str] | None = None,
     expected_engine_revision: str | None = None,
     expected_generation: str | None = None,
+    expected_execution: PluginExecutionReceipt | None = None,
 ) -> StartupReport:
     """Wait boundedly for one valid READY/FAILED report.
 
@@ -261,6 +269,8 @@ def wait_for_startup_report(
                     f"{component} subprocess sent non-terminal startup state "
                     f"{report.state}"
                 )
+            if report.execution != expected_execution:
+                raise ChildProcessStartupError(f"{component} startup execution evidence mismatch", report=report)
             if not process.is_alive():
                 process.join(timeout=0)
                 raise ChildProcessStartupError(

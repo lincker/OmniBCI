@@ -30,7 +30,8 @@ def _actuation_failsafe():
     return [Event(EventType.ActuationFault, ACTUATION_LINK_LOST)]
 
 
-def stimulation_peer_config(host: str, port: int, *, identity: PeerIdentity | None = None) -> PeerConfig:
+def stimulation_peer_config(host: str, port: int, *, identity: PeerIdentity | None = None,
+                            record_execution=None) -> PeerConfig:
     """
     neuroengine ↔ stimulation channel.
 
@@ -45,7 +46,8 @@ def stimulation_peer_config(host: str, port: int, *, identity: PeerIdentity | No
     return PeerConfig(
         name=STIMULATION,
         transport=ListenTransport(host=host, port=port, identity=identity,
-                                  max_clients=1 if identity is not None else None),
+                                  max_clients=1 if identity is not None else None,
+                                  record_execution=record_execution),
         routes=RouteSpec(
             outbound=frozenset({
                 EventType.TrialCompleted,
@@ -64,7 +66,7 @@ def stimulation_peer_config(host: str, port: int, *, identity: PeerIdentity | No
 
 def actuation_peer_config(host: str, port: int,
                           watchdog_timeout_s: float = 1.0, *,
-                          identity: PeerIdentity | None = None) -> PeerConfig:
+                          identity: PeerIdentity | None = None, record_execution=None) -> PeerConfig:
     """
     neuroengine ↔ actuation channel. The engine *listens*; the actuation
     controller dials in (same topology as stimulation).
@@ -97,6 +99,7 @@ def actuation_peer_config(host: str, port: int,
             max_clients=1,
             idle_timeout=connection_idle_timeout,
             identity=identity,
+            record_execution=record_execution,
         ),
         routes=RouteSpec(
             outbound=frozenset({

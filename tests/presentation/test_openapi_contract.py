@@ -163,7 +163,7 @@ class TestResponseDtos:
         assert set(scopes) == {"acquisition", "processing", "stimulation", "actuation", "engine"}
         node = _schema(spec, "NodeConfigurationResponse")["properties"]
         assert set(node) == {"format_version", "role", "module_revisions", "engine_revision",
-                             "generation", "settings", "bindings"}
+                             "generation", "operation_id", "settings", "bindings"}
         assert node["format_version"]["const"] == 1
 
     def test_host_configuration_has_no_application_profile_contract(self, spec):

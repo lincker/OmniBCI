@@ -34,6 +34,7 @@ from omnibci.application.command_contracts import command_contract
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
+from omnibci.infrastructure.async_lifecycle import await_owned
 from omnibci.infrastructure.plugins.preparation import execution_receipt
 from omnibci.infrastructure.outbound import make_actuation_ack, make_actuation_fault
 from omnibci.infrastructure.ipc.peer_channel import PeerChannel
@@ -133,7 +134,9 @@ class Actuation:
                 return
             reporter = getattr(self, "_startup_reporter", None)
             if reporter is not None:
-                reporter.ready()
+                reporter.ready(execution=execution_receipt(
+                    self._runtime_snapshot, "actuation", self._runtime_snapshot["CONFIG.operation_id"],
+                ))
             startup_complete = True
 
             while not self._stop_requested():
@@ -163,34 +166,13 @@ class Actuation:
                     logger.exception("Could not publish Actuation setup fault")
             raise
         finally:
-            await self._await_owned(asyncio.create_task(self._shutdown()))
-
-    @staticmethod
-    async def _await_owned(future):
-        """Repeated cancellation cannot release a resource still used by its owner."""
-        cancellation = None
-        while True:
-            try:
-                result = await asyncio.shield(future)
-                break
-            except asyncio.CancelledError as exc:
-                if (future.cancelled()
-                        or future.done() and isinstance(future.exception(), asyncio.CancelledError)):
-                    raise
-                cancellation = cancellation or exc
-            except BaseException as exc:
-                if cancellation is not None:
-                    raise cancellation from exc
-                raise
-        if cancellation is not None:
-            raise cancellation
-        return result
+            await await_owned(asyncio.create_task(self._shutdown()))
 
     async def _call_device(self, function, *args):
         if self._device_executor is None:
             self._device_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="actuation-device")
         future = asyncio.get_running_loop().run_in_executor(self._device_executor, function, *args)
-        return await self._await_owned(future)
+        return await await_owned(future)
 
     def _setup_device(self):
         self.actuator.setup()
@@ -313,7 +295,7 @@ class Actuation:
             self._execution_task = asyncio.create_task(
                 self._call_device(self.actuator.execute, payload),
             )
-            await self._await_owned(self._execution_task)
+            await await_owned(self._execution_task)
             reply = Event(EventType.ActuationAck,
                           make_actuation_ack(target_id=target, seq=seq))
         except Exception as exc:
@@ -449,7 +431,7 @@ class Actuation:
                 execution = getattr(self, "_execution_task", None)
                 if execution is not None:
                     try:
-                        await self._await_owned(execution)
+                        await await_owned(execution)
                     except Exception:
                         # execute_command reports the failure. Still verify physical stop.
                         pass

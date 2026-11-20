@@ -6,6 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from omnibci.infrastructure.plugins.preparation import execution_receipt
+from tests.execution_helpers import output_bindings, synthetic_execution_snapshot
+
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError,
     ChildProcessStartupTimeout,
@@ -20,8 +23,8 @@ from omnibci.infrastructure.actuation.process_manager import (
 
 
 def _effector_snapshot(effector="logger"):
-    return {"ACTUATION.effector": effector, "CONFIG.module_revisions": {"actuation": "revision"},
-            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run", "PLUGINS.bindings": []}
+    return synthetic_execution_snapshot({"ACTUATION.effector": effector, "CONFIG.module_revisions": {"actuation": "a" * 64},
+            "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run", "PLUGINS.bindings": [output_bindings()[1]]})
 
 
 def _cooperative_child(stop_event, stopped_flag):
@@ -51,10 +54,12 @@ def _mock_process(*, exits_after_join=None, alive=True, pid=1234):
 @pytest.fixture(autouse=True)
 def startup_pipe(monkeypatch):
     """Every mocked child reports READY unless a test overrides the receiver."""
+    monkeypatch.setattr(process_manager_module, "uuid4", lambda: SimpleNamespace(hex="prepare-1"))
     receiver = MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        "Actuation", module_revisions={"actuation": "revision"}, engine_revision="engine", generation="run")
+        "Actuation", module_revisions={"actuation": "a" * 64}, engine_revision="b" * 64, generation="run",
+        execution=execution_receipt(_effector_snapshot(), "actuation", "prepare-1"))
     sender = MagicMock()
     pipe = MagicMock(return_value=(receiver, sender))
     monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
@@ -313,7 +318,7 @@ class TestSpawnMode:
             "Actuation",
             stage="initialization",
             error=RuntimeError("effector unavailable"),
-            module_revisions={"actuation": "revision"}, engine_revision="engine", generation="run",
+            module_revisions={"actuation": "a" * 64}, engine_revision="b" * 64, generation="run",
         )
         manager = ActuationProcessManager()
 
@@ -493,7 +498,7 @@ class TestEngineLifecycleHook:
         svc = NeuroEngineService(engine_factory=lambda snapshot: engine,
                                  snapshot_provider=lambda: {"PLUGINS.bindings": [],
                                                            "CONFIG.module_revisions": {"actuation": "actuation"},
-                                                           "CONFIG.engine_revision": "engine"},
+                                                           "CONFIG.engine_revision": "b" * 64},
                                  actuation_process_manager=manager)
         asyncio.run(svc.startup())
         asyncio.run(svc.handle_start_engine(StartEngineCommand()))

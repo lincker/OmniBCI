@@ -169,7 +169,7 @@ def module_runtime_settings(snapshot: dict, module: str) -> dict:
         raise ValueError("Unsupported runtime module")
     modules = ("acquisition", "processing") if module == "processing" else (module,)
     prefixes = tuple("ALGORITHM." if name == "processing" else name.upper() + "." for name in modules)
-    shared = {"CONFIG.generation", "CONFIG.engine_revision", "debug"}
+    shared = {"CONFIG.generation", "CONFIG.engine_revision", "CONFIG.operation_id", "debug"}
     result = {key: deepcopy(value) for key, value in snapshot.items()
               if key in shared or key.startswith(prefixes) and key != "ACQUISITION.trigger"}
     if module == "stimulation" and "ACQUISITION.trigger" in snapshot:

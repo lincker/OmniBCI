@@ -21,6 +21,7 @@ from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigur
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from tests.plugin_configuration_helpers import accept_profiles, builtin_selection, install_package_root, prepare_runtime_plugins
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
+from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
 
 
 SOURCE = '''
@@ -133,7 +134,9 @@ def wire_signal_preparation(profiles, engine, container):
 @pytest.mark.parametrize("processing_first", [False, True])
 async def test_current_actions_connect_and_start_processing_with_real_workers(tmp_path, monkeypatch, processing_first):
     profiles, _ = configured_profiles(tmp_path, monkeypatch)
-    engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+    history = PluginExecutionHistory(profiles.repository.root)
+    engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(
+        settings_snapshot=snapshot, record_execution=history.record).build(),
                                 plugin_preparer=prepare_runtime_plugins)
     await engine.startup()
     container = assemble(engine, admission=engine.admission)
@@ -173,10 +176,16 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
             standby = await runtime.execute_current("processing", "start", operation_id=str(uuid4()), configuration=current("processing"))
             assert standby["status"] == "succeeded", standby
             assert engine.is_module_running("processing") and not engine.is_module_running("acquisition")
+            assert not list(history.directory.glob("*.json"))
         connected = await runtime.execute_current("acquisition", "connect", operation_id=str(uuid4()), configuration=source)
         assert connected["status"] == "succeeded", connected
         assert connected["result"]["action"] == "connected"
         assert engine.is_engine_ready and engine.is_module_running("acquisition")
+        records = [json.loads(path.read_text())["receipt"] for path in history.directory.glob("*.json")]
+        assert len(records) == 1
+        assert records[0]["module"] == "acquisition" and records[0]["generation"] == engine.generation
+        assert records[0]["artifacts"]["acquisition.source"]["content_sha256"] == (
+            engine.applied_snapshot["PLUGINS.artifacts"]["acquisition.source"]["content_sha256"])
         assert engine.is_module_running("processing") is processing_first
         assert engine.admission.recovery_status == {"stimulation": "External output stop is unconfirmed"}
         assert not engine.is_peer_connected("stimulation")

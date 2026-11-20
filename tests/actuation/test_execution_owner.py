@@ -37,13 +37,13 @@ def test_completed_device_cancellation_does_not_spin_the_event_loop():
     # Isolate a broken wait loop so a regression cannot hang the whole test run.
     subprocess.run([sys.executable, "-B", "-c", """
 import asyncio
-from omnibci.infrastructure.actuation.application import Actuation
+from omnibci.infrastructure.async_lifecycle import await_owned
 
 async def main():
     result = asyncio.get_running_loop().create_future()
     result.set_exception(asyncio.CancelledError('device cancelled'))
     try:
-        await Actuation._await_owned(result)
+        await await_owned(result)
     except asyncio.CancelledError:
         return
     raise AssertionError('device cancellation was swallowed')

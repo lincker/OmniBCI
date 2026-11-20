@@ -91,3 +91,30 @@ def test_first_handshake_rejects_extra_path_before_readiness():
             await writer.wait_closed()
             await server.stop()
     asyncio.run(scenario())
+
+
+def test_execution_history_failure_prevents_acknowledging_readiness():
+    async def scenario():
+        evidence = receipt()
+        recorded = []
+
+        def record(value):
+            recorded.append(value)
+            raise OSError("history unavailable")
+
+        identity = PeerIdentity("actuation", "a" * 64, "b" * 64, "run-1",
+                                "prepare-1", evidence.bindings_sha256)
+        server = NetworkServer("127.0.0.1", 0, identity=identity, record_execution=record)
+        await server.start()
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.server.sockets[0].getsockname()[1])
+        try:
+            writer.write(encode_event(Event(EventType.PeerHello, evidence.to_dict())))
+            await writer.drain()
+            assert await asyncio.wait_for(reader.read(), 1) == b""
+            assert recorded == [evidence]
+            assert not server.is_connected
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+    asyncio.run(scenario())

@@ -12,6 +12,7 @@ import math
 import time
 
 from omnibci.shared.events import Event, EventType
+from omnibci.infrastructure.async_lifecycle import await_owned
 from omnibci.application.plugin_execution import PluginExecutionReceipt
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.infrastructure.ipc.contracts import (
@@ -136,6 +137,7 @@ class NetworkServer:
         idle_timeout: float | None = None,
         write_timeout: float = DEFAULT_WRITE_TIMEOUT,
         identity: PeerIdentity | None = None,
+        record_execution=None,
     ):
         if max_clients is not None and max_clients < 1:
             raise ValueError("max_clients must be >= 1 or None")
@@ -145,6 +147,7 @@ class NetworkServer:
         self.idle_timeout = _validate_idle_timeout(idle_timeout)
         self.write_timeout = _validate_write_timeout(write_timeout)
         self.identity = identity
+        self._record_execution = record_execution
         self.execution_receipt: PluginExecutionReceipt | None = None
         self.status = "INIT"
         self.server = None
@@ -259,6 +262,8 @@ class NetworkServer:
                 # Pin before acknowledging: a lost acknowledgement must not permit new bytes
                 # to substitute for the same preparation operation on the next connection.
                 self.execution_receipt = receipt
+                if self._record_execution is not None:
+                    await await_owned(asyncio.create_task(asyncio.to_thread(self._record_execution, receipt)))
                 writer.write(encode_event(Event(EventType.PeerAccepted, receipt.to_dict())))
                 await asyncio.wait_for(writer.drain(), timeout=self.write_timeout)
             if self._stopping:

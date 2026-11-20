@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 import threading
 
 import pytest
+
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 from tests.plugin_configuration_helpers import prepared_snapshot
 
 from omnibci.infrastructure.process_lifecycle import (
@@ -24,8 +26,8 @@ from omnibci.application.commands.stimulation_commands import StartStimulationCo
 
 
 def _paradigm_snapshot():
-    return prepared_snapshot({"CONFIG.module_revisions": {"stimulation": "revision"},
-            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
+    return prepared_snapshot({"CONFIG.module_revisions": {"stimulation": "a" * 64},
+            "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run",
             "PLUGINS.bindings": [{
         "slot": "stimulation.paradigm", "kind": "paradigm", "profile_id": None,
         "selection": {"package_id": "OmniBCI.classic40SSVEP",
@@ -52,10 +54,12 @@ def _mock_process(*, exits_after_join=None, alive=True, pid=4321):
 
 @pytest.fixture(autouse=True)
 def startup_pipe(monkeypatch):
+    monkeypatch.setattr(process_manager_module, "uuid4", lambda: SimpleNamespace(hex="prepare-1"))
     receiver = MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        "Stimulation", module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run")
+        "Stimulation", module_revisions={"stimulation": "a" * 64}, engine_revision="b" * 64, generation="run",
+        execution=execution_receipt(_paradigm_snapshot(), "stimulation", "prepare-1"))
     sender = MagicMock()
     pipe = MagicMock(return_value=(receiver, sender))
     monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
@@ -125,8 +129,9 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
     mock_process_cls.return_value = process
     manager = StimulationProcessManager()
     snapshot = _paradigm_snapshot()
-    snapshot.update({"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"})
-    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run")
+    snapshot.update({"CONFIG.module_revisions": {"stimulation": "a" * 64}, "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run"})
+    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "a" * 64}, engine_revision="b" * 64, generation="run",
+        execution=execution_receipt(_paradigm_snapshot(), "stimulation", "prepare-1"))
     if legacy_alias is not None:
         snapshot["STIMULATION.paradigm"] = legacy_alias
     # A dormant processing profile must not participate in stimulation startup.
@@ -141,7 +146,7 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
     paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
     assert manager.current_paradigm == paradigm
     assert mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"] == {
-        **snapshot, "PLUGINS.bindings": [snapshot["PLUGINS.bindings"][0]],
+        **snapshot, "PLUGINS.bindings": [snapshot["PLUGINS.bindings"][0]], "CONFIG.operation_id": "prepare-1",
     }
     status = api_client.get("/api/v1/stimulation/status").json()["data"]
     assert status["active"] is True and status["process_alive"] is True
@@ -265,7 +270,7 @@ def test_failed_startup_report_is_raised_and_child_is_reaped(
         "Stimulation",
         stage="initialization",
         error=RuntimeError("renderer unavailable"),
-        module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run",
+        module_revisions={"stimulation": "a" * 64}, engine_revision="b" * 64, generation="run",
     )
     manager = StimulationProcessManager()
 

@@ -1,5 +1,7 @@
 """Managed peer readiness belongs to its pinned configuration and generation."""
 from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
+from omnibci.infrastructure.plugins.preparation import execution_receipt
+from dataclasses import replace
 
 from importlib import import_module
 from unittest.mock import MagicMock
@@ -20,7 +22,7 @@ def peer(request):
     module = import_module(f"omnibci.infrastructure.{kind}.process_manager")
     alias = "STIMULATION_THUBCI_SSVEP_classic40" if kind == "stimulation" else "logger"
     descriptor = PluginCatalog().resolve_selection(selection, builtin_selection(selection, alias))
-    snapshot = {"CONFIG.module_revisions": {'acquisition': "revision", 'processing': "revision", 'stimulation': "revision", 'actuation': "revision"}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-2",
+    snapshot = {"CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-2",
                 "PLUGINS.bindings": [ProfileBinding(
                     f"{kind}.{selection}", selection, None, descriptor.selection, {},
                 ).to_dict()],
@@ -49,7 +51,7 @@ def test_entrypoint_report_preserves_snapshot_identity(peer, monkeypatch, outcom
     else:
         entrypoint(startup_connection=connection, settings_snapshot=snapshot)
     report = connection.send.call_args.args[0]
-    assert report.module_revisions == {kind: "revision"}
+    assert report.module_revisions == {kind: "a" * 64}
     assert report.engine_revision == "c" * 64
     assert report.generation == "run-2"
     assert report.state is (ChildProcessState.READY if outcome == "ready" else ChildProcessState.FAILED)
@@ -57,7 +59,7 @@ def test_entrypoint_report_preserves_snapshot_identity(peer, monkeypatch, outcom
 
 
 @pytest.mark.parametrize("revision,generation", [
-    ("revision", "run-2"), ("old", "run-2"), ("revision", "run-1"),
+    ("a" * 64, "run-2"), ("old", "run-2"), ("a" * 64, "run-1"),
 ])
 def test_manager_requires_exact_snapshot_ack(peer, monkeypatch, revision, generation):
     kind, component, module, snapshot = peer
@@ -70,11 +72,16 @@ def test_manager_requires_exact_snapshot_ack(peer, monkeypatch, revision, genera
     receiver.recv.return_value = StartupReport.ready(
         component, module_revisions={kind: revision}, engine_revision="c" * 64, generation=generation,
     )
-    monkeypatch.setattr(module.mp, "Process", MagicMock(return_value=process))
+    def spawn(**kwargs):
+        source = kwargs["kwargs"]["settings_snapshot"]
+        receiver.recv.return_value = replace(receiver.recv.return_value,
+            execution=execution_receipt(source, kind, source["CONFIG.operation_id"]))
+        return process
+    monkeypatch.setattr(module.mp, "Process", MagicMock(side_effect=spawn))
     monkeypatch.setattr(module.mp, "Event", MagicMock())
     monkeypatch.setattr(module.mp, "Pipe", MagicMock(return_value=(receiver, sender)))
     manager = getattr(module, f"{component}ProcessManager")()
-    if (revision, generation) == ("revision", "run-2"):
+    if (revision, generation) == ("a" * 64, "run-2"):
         manager.start(settings_snapshot=snapshot)
         assert manager.is_ready
         manager.stop()

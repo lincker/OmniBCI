@@ -76,6 +76,7 @@ class ListenTransport(PeerTransport):
         idle_timeout: float | None = None,
         write_timeout: float | None = None,
         identity: PeerIdentity | None = None,
+        record_execution=None,
     ) -> None:
         timeout_options = {
             name: value
@@ -87,6 +88,8 @@ class ListenTransport(PeerTransport):
         }
         if identity is not None:
             timeout_options["identity"] = identity
+        if record_execution is not None:
+            timeout_options["record_execution"] = record_execution
         self._server = NetworkServer(
             host=host,
             port=port,

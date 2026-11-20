@@ -17,6 +17,7 @@ from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import Event, EventType
+from omnibci.infrastructure.async_lifecycle import await_owned
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
@@ -81,7 +82,9 @@ class NeuroEngine:
         acquisition_logs: AcquisitionLogListener | None = None,
         worker_factory=None,
         processing_active=None,
+        record_execution=None,
     ) -> None:
+        self._record_execution = record_execution
         self.event_bus = event_bus
         self.data_manager = data_manager
         self.preview_cache = preview_cache
@@ -391,8 +394,13 @@ class NeuroEngine:
                     } if self._module_revisions is not None else None),
                     expected_engine_revision=self._engine_revision,
                     expected_generation=self._generation,
+                    expected_execution=channel.expected_execution,
                 ) for channel in channels
             ), return_exceptions=True)
+            for result in results:
+                if (not isinstance(result, BaseException) and result.execution is not None
+                        and self._record_execution is not None):
+                    await await_owned(asyncio.create_task(asyncio.to_thread(self._record_execution, result.execution)))
             for result in results:
                 if isinstance(result, BaseException):
                     raise result
@@ -699,13 +707,14 @@ class NeuroEngine:
             config = stimulation_peer_config(
                 host=snapshot.get("STIMULATION.server_ip", "127.0.0.1"),
                 port=int(snapshot.get("STIMULATION.server_port", 8765)), identity=identity,
+                record_execution=self._record_execution,
             )
         else:
             config = actuation_peer_config(
                 host=snapshot.get("ACTUATION.server_ip", "127.0.0.1"),
                 port=int(snapshot.get("ACTUATION.server_port", 8001)),
                 watchdog_timeout_s=float(snapshot.get("ACTUATION.watchdog_timeout_s", 1.0)),
-                identity=identity,
+                identity=identity, record_execution=self._record_execution,
             )
         if module == "actuation":
             self._set_actuation_active(False)

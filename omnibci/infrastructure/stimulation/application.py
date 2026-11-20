@@ -14,6 +14,7 @@ from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULT
 from omnibci.application.command_contracts import command_contract, stimulation_trial_request
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
+from omnibci.infrastructure.async_lifecycle import await_owned
 from omnibci.infrastructure.plugins.preparation import execution_receipt
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
@@ -131,7 +132,9 @@ class Stimulation:
                     return
                 reporter = getattr(self, "_startup_reporter", None)
                 if reporter is not None:
-                    reporter.ready()
+                    reporter.ready(execution=execution_receipt(
+                        self._runtime_snapshot, "stimulation", self._runtime_snapshot["CONFIG.operation_id"],
+                    ))
                 startup_complete = True
 
                 # IPC command loop — the engine connection lives as long as this
@@ -159,33 +162,13 @@ class Stimulation:
             raise
         finally:
             try:
-                await self._await_owned(asyncio.create_task(self._shutdown(failure)))
+                await await_owned(asyncio.create_task(self._shutdown(failure)))
             except BaseException as cleanup_error:
                 if failure is not None and cleanup_error is not failure:
                     if isinstance(failure, asyncio.CancelledError):
                         raise failure from cleanup_error
                     raise BaseExceptionGroup("Stimulation failed and shutdown also failed", [failure, cleanup_error])
                 raise
-
-    @staticmethod
-    async def _await_owned(task):
-        """Cancellation cannot abandon a render callback or its resource cleanup."""
-        cancellation = None
-        while True:
-            try:
-                result = await asyncio.shield(task)
-                break
-            except asyncio.CancelledError as exc:
-                if task.cancelled():
-                    raise
-                cancellation = cancellation or exc
-            except BaseException as exc:
-                if cancellation is not None:
-                    raise cancellation from exc
-                raise
-        if cancellation is not None:
-            raise cancellation
-        return result
 
     async def _shutdown(self, failure=None):
         self._paused = True

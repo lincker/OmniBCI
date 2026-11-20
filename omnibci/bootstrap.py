@@ -161,6 +161,8 @@ async def build_container(*, host_settings: dict | None = None,
 
 async def _build_container_services(host_settings, allow_process_termination, package_store, repository, package_references_lock):
     from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
+    from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
+    execution_history = PluginExecutionHistory(repository.root)
     artifact_preparer = PluginArtifactPreparer(package_store)
 
     def prepare_plugins(snapshot, modules):
@@ -174,10 +176,10 @@ async def _build_container_services(host_settings, allow_process_termination, pa
         profile_versions=package_store,
     )
     actuation_manager = ActuationProcessManager(
-        allow_process_termination=allow_process_termination,
+        allow_process_termination=allow_process_termination, record_execution=execution_history.record,
     )
     stimulation_manager = StimulationProcessManager(
-        allow_process_termination=allow_process_termination,
+        allow_process_termination=allow_process_termination, record_execution=execution_history.record,
     )
 
     # Processes are single-use, so every restart requires a fresh engine graph.
@@ -193,6 +195,7 @@ async def _build_container_services(host_settings, allow_process_termination, pa
     engine_service = NeuroEngineService(
         engine_factory=lambda snapshot: NeuroEngineBuilder(
             settings_snapshot=snapshot, allow_process_termination=allow_process_termination,
+            record_execution=execution_history.record,
         ).build(),
         snapshot_provider=startup_snapshot,
         actuation_process_manager=actuation_manager,

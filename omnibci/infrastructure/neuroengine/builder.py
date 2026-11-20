@@ -2,6 +2,9 @@
 import multiprocessing as mp
 from copy import deepcopy
 from dataclasses import dataclass
+from uuid import uuid4
+
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 
 from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS, module_runtime_settings
 from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel
@@ -59,9 +62,10 @@ class NeuroEngineBuilder:
 
     def __init__(self, config: NeuroEngineConfig | None = None,
                  *, settings_snapshot: dict | None = None,
-                 allow_process_termination: bool = True) -> None:
+                 allow_process_termination: bool = True, record_execution=None) -> None:
         if settings_snapshot is None:
             raise ValueError("NeuroEngineBuilder requires a pinned settings snapshot")
+        self._record_execution = record_execution
         self._settings_snapshot = deepcopy(settings_snapshot)
         self._config = config or NeuroEngineConfig.from_settings(self._settings_snapshot)
         self._allow_process_termination = allow_process_termination
@@ -98,6 +102,10 @@ class NeuroEngineBuilder:
         # counters keep trial/epoch identities unique across processing restarts.
         def worker_factory(module, runtime_snapshot):
             runtime_snapshot = module_runtime_settings(runtime_snapshot, module)
+            expected_execution = None
+            if module == "acquisition":
+                runtime_snapshot["CONFIG.operation_id"] = uuid4().hex
+                expected_execution = execution_receipt(runtime_snapshot, module, runtime_snapshot["CONFIG.operation_id"])
             receiver, sender = mp.Pipe(duplex=False)
             component = {"acquisition": "Acquisition", "processing": "Signal Processing"}[module]
             reporter = StartupReporter(
@@ -125,7 +133,7 @@ class NeuroEngineBuilder:
                         )),
                         startup_reporter=reporter, runtime_counters=runtime_counters,
                     )
-                return StartupChannel(component, worker, receiver, reporter)
+                return StartupChannel(component, worker, receiver, reporter, expected_execution)
             except BaseException:
                 receiver.close()
                 reporter.close()
@@ -140,6 +148,7 @@ class NeuroEngineBuilder:
         return NeuroEngine(
             event_bus=event_bus,
             data_manager=data_manager,
+            record_execution=self._record_execution,
             acquisition_worker=None,
             acquisition_command_queue=acquisition_command_queue,
             signal_processing_worker=None,

@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.execution_helpers import synthetic_execution_snapshot
+from omnibci.infrastructure.plugins.preparation import execution_receipt
+
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.actuation.application import Actuation
 
@@ -407,6 +410,9 @@ class TestSetupFailure:
 
     def test_managed_start_reports_ready_after_link_connection(self):
         app = _app()
+        app._runtime_snapshot = synthetic_execution_snapshot({
+            "CONFIG.module_revisions": {"actuation": "a" * 64},
+            "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run-1"})
         app._startup_reporter = MagicMock()
         app.peer_channel = MagicMock()
         app.peer_channel.wait_until_connected = AsyncMock()
@@ -426,7 +432,7 @@ class TestSetupFailure:
         _run(app.serve())
 
         app.peer_channel.wait_until_connected.assert_awaited_once()
-        app._startup_reporter.ready.assert_called_once_with()
+        app._startup_reporter.ready.assert_called_once_with(execution=execution_receipt(app._runtime_snapshot, "actuation", "prepare-1"))
         app._startup_reporter.failed.assert_not_called()
 
     def test_managed_connection_failure_reports_failed(self, monkeypatch):

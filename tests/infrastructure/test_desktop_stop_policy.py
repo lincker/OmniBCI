@@ -7,6 +7,7 @@ from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.process_lifecycle import ChildProcessState, StartupReport
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 from omnibci.application.services.engine_service import NeuroEngineService
 from tests.infrastructure.test_child_runtime_snapshot import _snapshot
 
@@ -20,10 +21,14 @@ def test_desktop_output_retains_live_child_without_termination(monkeypatch, modu
     process.is_alive.return_value = True
     receiver, sender = MagicMock(), MagicMock()
     receiver.poll.return_value = True
-    receiver.recv.return_value = StartupReport.ready(
-        component, module_revisions={component.lower(): "revision-1"},
-        engine_revision="engine", generation="graph-1")
-    process_factory = MagicMock(return_value=process)
+    def spawn(**kwargs):
+        source = kwargs["kwargs"]["settings_snapshot"]
+        receiver.recv.return_value = StartupReport.ready(component,
+            module_revisions={component.lower(): source["CONFIG.module_revisions"][component.lower()]},
+            engine_revision=source["CONFIG.engine_revision"], generation=source["CONFIG.generation"],
+            execution=execution_receipt(source, component.lower(), source["CONFIG.operation_id"]))
+        return process
+    process_factory = MagicMock(side_effect=spawn)
     monkeypatch.setattr(module.mp, "Process", process_factory)
     monkeypatch.setattr(module.mp, "Event", MagicMock())
     monkeypatch.setattr(module.mp, "Pipe", MagicMock(return_value=(receiver, sender)))

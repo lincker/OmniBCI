@@ -5,6 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from omnibci.application.configuration.models import ProfileBinding
+from omnibci.application.plugin_identity import PluginSelection
+from tests.execution_helpers import synthetic_execution_snapshot
+
 
 @pytest.mark.parametrize("worker_type", ["acquisition", "processing"])
 def test_worker_configuration_is_detached_and_required(worker_type):
@@ -23,7 +27,13 @@ def test_worker_configuration_is_detached_and_required(worker_type):
 def test_builder_passes_shared_source_context_with_owned_module_revisions():
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 
-    snapshot = {"ACQUISITION.sample_rate": 250, "ACQUISITION.DATA_PROVIDER_PORT": 4455}
+    snapshot = synthetic_execution_snapshot({
+        "ACQUISITION.sample_rate": 250, "ACQUISITION.DATA_PROVIDER_PORT": 4455,
+        "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "b" * 64},
+        "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1",
+        "PLUGINS.bindings": [ProfileBinding("acquisition.source", "acquisition", None,
+            PluginSelection("test.source", "default", "1.0.0"), {}).to_dict()],
+    })
     with patch("omnibci.infrastructure.neuroengine.builder.mp.Queue", return_value=MagicMock()):
         builder = NeuroEngineBuilder(settings_snapshot=snapshot)
         snapshot["ACQUISITION.sample_rate"] = 1000

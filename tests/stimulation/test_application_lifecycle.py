@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.execution_helpers import synthetic_execution_snapshot
+from omnibci.infrastructure.plugins.preparation import execution_receipt
+
 from omnibci.infrastructure.stimulation.application import Stimulation
 from omnibci.application.events import CommandRequest
 from omnibci.shared.events import Event, EventType
@@ -172,6 +175,9 @@ def test_managed_start_reports_ready_after_renderer_and_link() -> None:
                 self.release.set()
 
     app = Stimulation.__new__(Stimulation)
+    app._runtime_snapshot = synthetic_execution_snapshot({
+        "CONFIG.module_revisions": {"stimulation": "a" * 64},
+        "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run-1"})
     app.should_stop = False
     app._stop_event = _StopAfterReady()
     app._startup_reporter = MagicMock()
@@ -186,7 +192,7 @@ def test_managed_start_reports_ready_after_renderer_and_link() -> None:
     asyncio.run(asyncio.wait_for(app.serve(), timeout=0.2))
 
     app.peer_channel.wait_until_connected.assert_awaited_once()
-    app._startup_reporter.ready.assert_called_once_with()
+    app._startup_reporter.ready.assert_called_once_with(execution=execution_receipt(app._runtime_snapshot, "stimulation", "prepare-1"))
     app._startup_reporter.failed.assert_not_called()
     assert app.stimulator.stop_calls == 1
     app.stop.assert_awaited_once()

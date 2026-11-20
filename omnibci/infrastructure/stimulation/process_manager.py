@@ -27,6 +27,9 @@ import multiprocessing
 from copy import deepcopy
 from threading import RLock
 from typing import Any
+from uuid import uuid4
+
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.application.configuration.definitions import module_runtime_settings
@@ -102,9 +105,11 @@ class StimulationProcessManager:
         *,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
         allow_process_termination: bool = True,
+        record_execution=None,
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
+        self._record_execution = record_execution
         self._auto_spawn = True
         self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
@@ -176,6 +181,8 @@ class StimulationProcessManager:
                     )
                 self._stop_locked()
 
+            snapshot["CONFIG.operation_id"] = uuid4().hex
+            expected_execution = execution_receipt(snapshot, "stimulation", snapshot["CONFIG.operation_id"])
             stop_event = mp.Event()
             startup_receiver, startup_sender = mp.Pipe(duplex=False)
             process = mp.Process(
@@ -222,7 +229,7 @@ class StimulationProcessManager:
                 paradigm or "<config>",
             )
             try:
-                wait_for_startup_report(
+                report = wait_for_startup_report(
                     startup_receiver,
                     process,
                     component="Stimulation",
@@ -230,7 +237,10 @@ class StimulationProcessManager:
                     expected_module_revisions={"stimulation": snapshot.get("CONFIG.module_revisions", {}).get("stimulation")},
                     expected_engine_revision=snapshot.get("CONFIG.engine_revision"),
                     expected_generation=snapshot.get("CONFIG.generation"),
+                    expected_execution=expected_execution,
                 )
+                if self._record_execution is not None:
+                    self._record_execution(report.execution)
             except BaseException as startup_exc:
                 self._state = ChildProcessState.FAILED
                 try:

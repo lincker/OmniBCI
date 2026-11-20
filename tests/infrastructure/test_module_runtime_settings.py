@@ -3,6 +3,10 @@ import asyncio
 
 import pytest
 
+from omnibci.application.configuration.models import ProfileBinding
+from omnibci.application.plugin_identity import PluginSelection
+from tests.execution_helpers import synthetic_execution_snapshot
+
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from tests.application.test_signal_setup_service import signal_service
 from tests.infrastructure.test_child_runtime_snapshot import MANAGERS, _mock_spawning, _snapshot
@@ -21,17 +25,18 @@ def assert_scope(value, module):
 @pytest.mark.parametrize("module", ["acquisition", "processing"])
 def test_worker_factory_passes_only_owned_values_and_required_source_context(module):
     snapshot = {
-        "CONFIG.module_revisions": {name: name + "-revision" for name in ("acquisition", "processing", "stimulation", "actuation")},
-        "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation",
+        "CONFIG.module_revisions": {name: "a" * 64 for name in ("acquisition", "processing", "stimulation", "actuation")},
+        "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "generation",
         "ACQUISITION.signal_source": "source", "ACQUISITION.sample_rate": 500,
         "ALGORITHM.baseline_duration": 0.1, "STIMULATION.server_port": 9001,
         "ACTUATION.server_port": 9002, "LOGGING.file_path": "server-private",
         "PLUGINS.user_dir": "store-private", "debug": False,
-        "PLUGINS.bindings": [{"slot": slot, "parameters": {"value": 1}} for slot in
-                             ("acquisition.source", "processing.decoder", "stimulation.paradigm", "actuation.effector")],
-        "PLUGINS.artifacts": {slot: {"location": "private-" + slot} for slot in
-                              ("acquisition.source", "processing.decoder", "stimulation.paradigm", "actuation.effector")},
+        "PLUGINS.bindings": [ProfileBinding(slot, kind, None,
+            PluginSelection("test." + kind, "default", "1.0.0"), {"value": 1}).to_dict()
+            for slot, kind in (("acquisition.source", "acquisition"), ("processing.decoder", "decoder"),
+                               ("stimulation.paradigm", "paradigm"), ("actuation.effector", "effector"))],
     }
+    snapshot = synthetic_execution_snapshot(snapshot)
     engine = NeuroEngineBuilder(settings_snapshot={}).build()
     channel = None
     try:
@@ -39,7 +44,7 @@ def test_worker_factory_passes_only_owned_values_and_required_source_context(mod
         value = channel.process.settings_snapshot
         assert_scope(value, module)
         assert value["CONFIG.generation"] == "generation"
-        assert value["CONFIG.engine_revision"] == "engine"
+        assert value["CONFIG.engine_revision"] == "b" * 64
         assert value["ACQUISITION.sample_rate"] == 500
         value["PLUGINS.bindings"][0]["parameters"]["value"] = 2
         assert snapshot["PLUGINS.bindings"][0]["parameters"]["value"] == 1
