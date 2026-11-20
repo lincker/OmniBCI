@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from omnibci.application.configuration.errors import ConfigProfileValidationError
 from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.configuration.models import ActivationSet
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.application.processing_source import (
     acquisition_binding_key, binding_for, processing_binding_key, processing_input,
@@ -70,9 +69,7 @@ class SignalSetupService:
             self._admission.quarantine(self._preparation_error, "processing")
 
     def read(self):
-        accepted = ActivationSet({module: self.profiles.repository.get_module(module)
-                                  for module in ("acquisition", "processing")},
-                                 self.profiles.repository.get_engine())
+        accepted = self.profiles.selected_configuration(("acquisition", "processing"))
         source_error = self._preparation_error
         try:
             accepted_settings = self.profiles.materialize(accepted) if accepted else {}
@@ -81,7 +78,7 @@ class SignalSetupService:
             accepted_settings = {"PLUGINS.bindings": [binding.to_dict() for binding in accepted.bindings()]}
             source_binding = next((item for item in accepted.bindings() if item.kind == "acquisition"), None)
             if source_binding is not None:
-                accepted_settings["ACQUISITION.signal_source"] = self.profiles.catalog.get(
+                accepted_settings["ACQUISITION.signal_source"] = self.profiles.get_plugin_configuration(
                     "acquisition", source_binding.selection).plugin_type
         active = self.engine.applied_snapshot if self.engine.is_engine_ready else None
         selected = accepted_settings or active or {}
@@ -151,7 +148,7 @@ class SignalSetupService:
     def _profile(self, binding):
         if binding and binding.get("profile_id"):
             try:
-                return self.profiles.repository.get_profile(binding["profile_id"])
+                return self.profiles.get_profile(binding["profile_id"])
             except PluginProfileNotFoundError:
                 pass
         return None
@@ -159,7 +156,7 @@ class SignalSetupService:
     def _validate_decoder_channels(self, selection, plan):
         if selection is None:
             return
-        definition = self.profiles.catalog.get("decoder", PluginSelection.from_dict(selection))
+        definition = self.profiles.get_plugin_configuration("decoder", PluginSelection.from_dict(selection))
         if definition.channel_requirements is not None:
             definition.channel_requirements.validate_channels(plan.output_channels)
 

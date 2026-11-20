@@ -639,7 +639,7 @@ schema_version=1
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, signal_preparer=signal.prepare,
+                                          container.command_results, repository=profiles.repository, signal_preparer=signal.prepare,
                                           signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:

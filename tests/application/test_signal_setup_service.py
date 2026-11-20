@@ -34,11 +34,9 @@ def signal_service(tmp_path):
                         "package_id": "test.detector", "contribution_id": "default", "version": "1"}}]}
     engine = SimpleNamespace(admission=RuntimeAdmission(), is_engine_ready=True, applied_snapshot=snapshot,
                              is_module_running=lambda module: module in ("acquisition", "processing"))
-    profiles = SimpleNamespace(repository=SimpleNamespace(get_activation_set=lambda: ActivationSet({}, None)),
+    profiles = SimpleNamespace(selected_configuration=lambda modules: ActivationSet({}, None),
                                materialize=lambda activation: {},
-                               catalog=SimpleNamespace(get=lambda *args: SimpleNamespace(channel_requirements=None)))
-    profiles.repository.get_module = lambda module: profiles.repository.get_activation_set().modules.get(module)
-    profiles.repository.get_engine = lambda: profiles.repository.get_activation_set().engine
+                               get_plugin_configuration=lambda *args: SimpleNamespace(channel_requirements=None))
     acquisition = SimpleNamespace(lifecycle_lock=RLock(), cached_descriptor=deepcopy(metadata),
                                   handle_get_status=lambda query: SimpleNamespace(streaming=False, connected=True))
     acquisition.cached_descriptor_for = lambda binding: deepcopy(acquisition.cached_descriptor)
@@ -180,8 +178,8 @@ def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service
     binding = ProfileBinding("processing.decoder", "decoder", profile.profile_id, selection,
                              {}, profile_revision=1, processing_input=profile.processing_input)
     accepted = ActivationSet({"processing": ModuleActivation("processing", {}, (binding,))}, None)
-    service.profiles.repository.get_activation_set = lambda: accepted
-    service.profiles.repository.get_profile = lambda profile_id: profile
+    service.profiles.selected_configuration = lambda modules: accepted
+    service.profiles.get_profile = lambda profile_id: profile
     service.profiles.materialize = lambda activation: {        "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.signal_source": "source"}
     service.engine.applied_snapshot["PLUGINS.bindings"] = [binding.to_dict()]
     service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = ProcessingInput(outputs=(ChannelBinding('M1', 'channel-1'),)).to_dict()
@@ -206,7 +204,7 @@ def modern_binding(service, metadata, *, profile_id="source-a", outputs=("O1",))
                     {"slot": "processing.epoch_detector", "selection": {
                         "package_id": "test.detector", "contribution_id": "default", "version": "1"}}]}
     snapshot.pop("SIGNAL.setup", None)
-    service.profiles.repository.get_profile = lambda profile_id: None
+    service.profiles.get_profile = lambda profile_id: None
     service.engine.applied_snapshot = deepcopy(snapshot)
     service.profiles.materialize = lambda activation: deepcopy(snapshot)
     return snapshot
@@ -218,7 +216,7 @@ def test_preview_uses_edited_decoder_requirements_without_changing_selected_inpu
     snapshot = modern_binding(service, metadata)
     before = deepcopy(snapshot)
     edited = {"package_id": "test.edited", "contribution_id": "default", "version": "1"}
-    service.profiles.catalog.get = lambda kind, selection: SimpleNamespace(
+    service.profiles.get_plugin_configuration = lambda kind, selection: SimpleNamespace(
         channel_requirements=DecoderChannelRequirements(
             required_names=("M1",) if selection.package_id == "test.edited" else ("O1",)))
 
@@ -235,7 +233,7 @@ def test_preparation_rejects_missing_algorithm_channel_before_worker_command(sig
     from omnibci.domain.decoder_input import DecoderChannelRequirements
     service, metadata, _, calls = signal_service
     modern_binding(service, metadata)
-    service.profiles.catalog.get = lambda *args: SimpleNamespace(
+    service.profiles.get_plugin_configuration = lambda *args: SimpleNamespace(
         channel_requirements=DecoderChannelRequirements(required_names=("M1",)))
     with pytest.raises(ConfigProfileValidationError, match="M1"):
         service.prepare()
@@ -352,7 +350,7 @@ def test_saved_profile_metadata_cannot_supply_disconnected_source_facts(signal_s
     service, metadata, _, _ = signal_service
     snapshot = modern_binding(service, metadata)
     service.acquisition.cached_descriptor = None
-    service.profiles.repository.get_profile = lambda profile_id: SimpleNamespace(
+    service.profiles.get_profile = lambda profile_id: SimpleNamespace(
         name="Conflicting source",
         parameters=snapshot["PLUGINS.bindings"][0]["parameters"],
         selection=SimpleNamespace(to_dict=lambda: snapshot["PLUGINS.bindings"][0]["selection"]),

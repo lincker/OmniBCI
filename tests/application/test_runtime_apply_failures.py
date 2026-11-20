@@ -204,7 +204,7 @@ def harness(tmp_path, monkeypatch):
         engine.acquisition = acquisition
         commands = Commands(engine, acquisition, log)
         engine.actuation_process_alive = actuation
-        executor = RuntimeApplyCoordinator(engine, profiles, acquisition, Stimulation(), commands)
+        executor = RuntimeApplyCoordinator(engine, profiles, acquisition, Stimulation(), commands, repository=profiles.repository)
         runtime = RuntimeConfigurationService(profiles, engine, executor=executor)
         source = profiles.repository.get_profile(bindings[0]["profile_id"])
         profiles.update(source.profile_id, name=source.name,

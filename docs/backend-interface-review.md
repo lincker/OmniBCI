@@ -222,6 +222,8 @@ Keep persistence/IPC/API dictionaries and plugin-defined JSON behind their valid
 
 **S4b implementation (2026-11-20):** preparation/input identity now uses one immutable application-owned `SignalPreparationReceipt` and one strict codec in SignalSetup, Acquisition and Processing. FIFO markers retain that value; invalid identity cannot open the input gate. Public JSON fields remain unchanged. Snapshot scoping and the remaining Configuration boundaries are still part of S4.
 
+**S4d implementation (2026-11-21):** selected/module/profile/plugin-metadata queries now belong to Configuration. Setup, node, startup/status and planning consumers no longer traverse its repository/catalog. RuntimeApplyCoordinator explicitly receives the existing application repository for CAS, compensation and history. Review and resolved-candidate returns are copied; module factory snapshot scoping remains a separate S4 batch.
+
 ### A03 Command ownership is inferred from transport numbers
 
 **P1 — confirmed hidden coupling.** [Event](/Users/lincker/workspace/OmniBCI/omnibci/shared/events.py:56) carries an optional event type and `Any` payload. [CommandRequest/CommandResult](/Users/lincker/workspace/OmniBCI/omnibci/application/events.py:110) add useful correlation, but do not declare each command's payload/result relationship. [command_scopes](/Users/lincker/workspace/OmniBCI/omnibci/application/services/command_result_service.py:36) infers module ownership from numeric event ranges with exceptions.
@@ -247,6 +249,8 @@ The current plan/apply split, compare-and-swap revisions, operation IDs, scope r
 Keep pure persistence/configuration services independent of runtime services. Specify which operations can be compensated and which completed physical effects cannot be reversed. Keep history writes idempotent by operation ID and expose partial persistence outcomes; do not promise a transaction spanning files, processes and hardware.
 
 **Acceptance:** stale plans fail before mutation; failed preparation leaves accepted state unchanged or reports recovery required; a history failure does not falsely report that runtime application failed; replaying one operation ID does not add duplicate history or execute physical output again.
+
+**S4d implementation (2026-11-21):** plan creation validates a closed `ApplyStrategy`, preserving wire strings and existing host `x-apply` enforcement. Existing explicit apply/history/rollback/recovery fields are retained without another result wrapper. History failure remains visible after successful application. See the [execution record](plugin-implementation-plan.md#s4d-execution-configuration-queries-and-apply-ownership-2026-11-21).
 
 ### A05 ResultsService has an implicit retention contract
 
@@ -444,8 +448,8 @@ These requirements refine the existing findings and their implementation gates. 
 | --- | --- |
 | [PluginPackageService](../omnibci/application/services/plugin_package_service.py) | S2b implemented: reads saved/accepted package references through a callback; Profile creation/copying belongs to Configuration. |
 | [Plugin configuration router](../omnibci/presentation/routers/plugin_config.py) | S2b implemented: queries catalog metadata, Profiles, module/engine settings and history through declared service methods; no `svc.repository` or `svc.catalog` access. |
-| [SignalSetupService](../omnibci/application/services/signal_setup_service.py) and [NodeConfigurationService](../omnibci/application/services/node_configuration_service.py) | Obtain the selected configuration/layout inputs or role-specific snapshot without access to unrelated configuration operations. |
-| [RuntimeConfigurationService](../omnibci/application/services/runtime_configuration_service.py) and [RuntimeApplyCoordinator](../omnibci/application/services/runtime_apply_service.py) | Retain explicit planning, compare-and-swap, compensation and history authority; inventory both reads and writes before narrowing dependencies. |
+| [SignalSetupService](../omnibci/application/services/signal_setup_service.py) and [NodeConfigurationService](../omnibci/application/services/node_configuration_service.py) | S4d implemented: use selected-module/profile/plugin-metadata queries; no repository/catalog traversal. |
+| [RuntimeConfigurationService](../omnibci/application/services/runtime_configuration_service.py) and [RuntimeApplyCoordinator](../omnibci/application/services/runtime_apply_service.py) | S4d implemented: planning uses declared queries; the apply coordinator receives its persistence port explicitly and retains CAS, compensation and history authority. |
 
 Use a few methods on the existing service for presentation queries, or inject the required application-owned port explicitly where the caller owns that use case. Do not wrap every repository method or force runtime coordination through a read-only interface. Return only needed values; preserve copying, revisions and the existing shared admission guard. Acceptance must cover these callers, not only the package service.
 

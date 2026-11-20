@@ -5,6 +5,7 @@ import pytest
 
 from omnibci import bootstrap
 from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, SERVER_STARTUP_DEFAULTS
+from omnibci.application.configuration.models import ActivationSet
 from omnibci.application.configuration.errors import ConfigKeyNotAllowedError, ConfigProfileValidationError
 from omnibci.bootstrap import _RuntimeSettings, build_container
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
@@ -76,8 +77,7 @@ async def test_fresh_installation_does_not_select_plugins():
 def test_status_reads_applied_values_while_engine_running():
     engine = Mock(is_engine_ready=True, applied_snapshot={"ACQUISITION.sample_rate": 250})
     profiles = Mock()
-    profiles.repository.get_module.return_value = None
-    profiles.repository.get_engine.return_value = None
+    profiles.selected_configuration.return_value = ActivationSet({}, None)
     profiles.materialize.return_value = {"ACQUISITION.sample_rate": 1000}
     view = _RuntimeSettings(engine, profiles)
     assert view.get("ACQUISITION.sample_rate") == 250

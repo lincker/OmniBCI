@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
+from omnibci.application.configuration.models import ActivationSet
 from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.presentation.errors import register_exception_handlers
@@ -17,7 +18,7 @@ from omnibci.presentation.routers.signal_setup import router
 @pytest.fixture
 def signal_client(tmp_path):
     service = SignalSetupService(
-        SimpleNamespace(repository=SimpleNamespace(get_module=lambda module: None, get_engine=lambda: None), materialize=lambda _: {}),
+        SimpleNamespace(selected_configuration=lambda modules: ActivationSet({}, None), materialize=lambda _: {}),
         SimpleNamespace(admission=None, applied_snapshot=None, is_engine_ready=False,
                         is_module_running=lambda module: False),
         SimpleNamespace(cached_descriptor_for=lambda binding: None), None,

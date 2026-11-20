@@ -55,6 +55,17 @@ class ConfigurationService:
     def list_plugin_configurations(self, kind: str) -> list[PluginConfiguration]:
         return self.catalog.list(kind)
 
+    def get_plugin_configuration(self, kind: str, selection: PluginSelection) -> PluginConfiguration:
+        return self.catalog.get(kind, selection)
+
+    def selected_configuration(self, modules) -> ActivationSet:
+        """Read requested modules and shared Engine settings without touching other modules."""
+        modules = tuple(modules)
+        if set(modules) - set(MODULES):
+            raise PluginSchemaError("Unsupported configuration module")
+        return ActivationSet({module: self.repository.get_module(module) for module in modules},
+                             self.repository.get_engine())
+
     def list_profiles(self, kind: str | None = None) -> list[PluginProfile]:
         return self.repository.list_profiles(kind)
 

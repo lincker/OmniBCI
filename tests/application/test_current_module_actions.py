@@ -9,7 +9,8 @@ from uuid import uuid4
 import pytest
 
 from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.configuration.models import ModuleActivation, ProfileBinding, EngineSettings
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ProfileBinding, EngineSettings
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
@@ -24,10 +25,11 @@ def current_action():
         parameters={}, configuration_version=1,
     ),))
     engine_settings = EngineSettings({})
-    repository = Mock()
-    repository.get_module.side_effect = lambda section: module if section == "acquisition" else None
-    repository.get_engine.return_value = engine_settings
-    profiles = Mock(repository=repository)
+    profiles = Mock(spec=ConfigurationService)
+    profiles.get_module.side_effect = lambda section: module if section == "acquisition" else None
+    profiles.get_engine.return_value = engine_settings
+    profiles.selected_configuration.side_effect = lambda modules: ActivationSet(
+        {section: profiles.get_module(section) for section in modules}, engine_settings)
     profiles.propose.return_value = module
     engine = SimpleNamespace(
         admission=RuntimeAdmission(), is_engine_ready=True, generation="engine",

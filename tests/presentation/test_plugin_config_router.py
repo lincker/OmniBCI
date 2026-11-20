@@ -37,7 +37,7 @@ def client(tmp_path, monkeypatch):
     )
     engine = NeuroEngineService(lambda snapshot: pytest.fail("Applying stopped configuration must not start the engine"))
     executor = RuntimeApplyCoordinator(engine, service, None,
-        SimpleNamespace(is_active=False, process_alive=False), None)
+        SimpleNamespace(is_active=False, process_alive=False), None, repository=service.repository)
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v1")

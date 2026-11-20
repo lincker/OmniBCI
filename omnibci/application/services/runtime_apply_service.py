@@ -7,6 +7,7 @@ from omnibci.application.commands.stimulation_commands import StartStimulationCo
 from omnibci.application.configuration.definitions import merge_module_settings
 from omnibci.application.events import StreamDrainReceipt
 from omnibci.application.configuration.models import ActivationSet
+from omnibci.application.configuration.ports import ConfigurationRepository
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.domain.ports.acquisition import SourceCheckpoint
@@ -37,12 +38,11 @@ class _RestoreState:
 
 
 class RuntimeApplyCoordinator:
-    supported_strategies = {"select_on_start", "no_change", "rebuild", "trial_boundary", "module"}
-
     def __init__(self, engine, profiles, acquisition, stimulation, commands, *,
-                 signal_preparer=None, signal_detacher=None):
+                 repository: ConfigurationRepository, signal_preparer=None, signal_detacher=None):
         self.engine = engine
         self.profiles = profiles
+        self.repository = repository
         self.acquisition = acquisition
         self.stimulation = stimulation
         self.commands = commands
@@ -73,7 +73,7 @@ class RuntimeApplyCoordinator:
     async def execute_current_action(self, stored, action):
         """Finish the user action while its configuration reservation is held."""
         module = stored.plan.module
-        engine_settings = self.profiles.repository.get_engine()
+        engine_settings = self.repository.get_engine()
         if not self.engine.is_engine_ready:
             foundation = self.profiles.materialize(ActivationSet({}, engine_settings))
             async with self.engine.runtime_transition("engine"):
@@ -109,7 +109,7 @@ class RuntimeApplyCoordinator:
     async def execute(self, stored, progress, *, operation_id):
         plan = stored.plan
         async with self.engine.runtime_transition(operation_scopes(stored)):
-            previous = read_configuration(self.profiles.repository, plan.expected_revisions)
+            previous = read_configuration(self.repository, plan.expected_revisions)
             revisions = previous.revisions()
             applied = self.engine.applied_revisions or {}
             if (any(revisions[k] != v for k, v in plan.expected_revisions.items())
@@ -127,8 +127,6 @@ class RuntimeApplyCoordinator:
             for candidate in (combined.modules if plan.module == "engine" else stored.candidates).values():
                 if candidate is not None:
                     self.profiles.validate_module(candidate, active_kinds=self.active_kinds(combined))
-            if plan.strategy not in self.supported_strategies:
-                raise ValueError("The planned update boundary is unavailable")
             if plan.strategy in ("select_on_start", "no_change"):
                 progress("persisting")
                 before = self.engine.applied_snapshot if plan.running else None
@@ -159,7 +157,7 @@ class RuntimeApplyCoordinator:
                 result.update(applied=True, history_saved=True)
                 try:
                     for candidate in stored.candidates.values():
-                        self.profiles.repository.record_module_history(
+                        self.repository.record_module_history(
                             candidate, operation_id, restored_from=stored.restored_from)
                 except Exception as exc:
                     result.update(history_saved=False,
@@ -168,7 +166,7 @@ class RuntimeApplyCoordinator:
 
     def _persist(self, stored, previous):
         written = []
-        repository = self.profiles.repository
+        repository = self.repository
         self._check_selected(previous, stored.plan.expected_revisions)
         try:
             if stored.engine is not None:
@@ -188,7 +186,7 @@ class RuntimeApplyCoordinator:
         return written
 
     def _rollback_saved(self, stored, previous, written):
-        repository = self.profiles.repository
+        repository = self.repository
         for module in reversed(written):
             target_revision = stored.plan.target_revisions[module]
             if module == "engine":
@@ -202,7 +200,7 @@ class RuntimeApplyCoordinator:
                 repository.save_module(previous.modules[module], expected_revision=target_revision)
 
     def _check_selected(self, previous, keys):
-        revisions = read_configuration(self.profiles.repository, keys).revisions()
+        revisions = read_configuration(self.repository, keys).revisions()
         if any(revisions[key] != previous.revisions()[key] for key in keys):
             raise ProfileRevisionConflict("Selected module configuration was changed by another writer")
 

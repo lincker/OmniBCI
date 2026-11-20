@@ -140,7 +140,7 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
     signal = wire_signal_preparation(profiles, engine, container)
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
-                                          container.stimulation_service, container.command_results,
+                                          container.stimulation_service, container.command_results, repository=profiles.repository,
                                           signal_preparer=signal.prepare, signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
 
@@ -213,7 +213,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, signal_preparer=signal.prepare,
+                                          container.command_results, repository=profiles.repository, signal_preparer=signal.prepare,
                                           signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:

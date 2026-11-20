@@ -21,7 +21,6 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
-from omnibci.application.configuration.models import ActivationSet
 from omnibci.infrastructure.server_logging import ServerLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
@@ -184,11 +183,11 @@ async def _build_container_services(host_settings, allow_process_termination, pa
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
         try:
-            engine_settings = configuration.repository.get_engine()
+            engine_settings = repository.get_engine()
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             raise RuntimeError(f"Engine configuration is invalid: {exc}") from exc
         if engine_settings is None:
-            configuration.repository.save_engine(configuration.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
+            repository.save_engine(configuration.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
         return accepted_runtime_settings(profiles=configuration, active_kinds=set())
 
     engine_service = NeuroEngineService(
@@ -226,7 +225,7 @@ async def _build_container_services(host_settings, allow_process_termination, pa
         reference_guard=lambda: package_references_lock,
         executor=RuntimeApplyCoordinator(engine_service, configuration, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results,
+                                          container.command_results, repository=repository,
                                           signal_preparer=container.signal_setup_service.prepare,
                                           signal_detacher=container.signal_setup_service.detach),
     )
@@ -263,8 +262,7 @@ class _RuntimeSettings:
         snapshot = self.engine.applied_snapshot
         if snapshot is None or not self.engine.is_engine_ready:
             try:
-                accepted = ActivationSet({"acquisition": self.profiles.repository.get_module("acquisition")},
-                                         self.profiles.repository.get_engine())
+                accepted = self.profiles.selected_configuration(("acquisition",))
                 snapshot = self.profiles.materialize(accepted)
             except (ValueError, KeyError, RuntimeError, OSError):
                 # Optional status metadata must not block configuration repair.
