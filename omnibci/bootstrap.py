@@ -225,9 +225,7 @@ async def _build_container_services(host_settings, allow_process_termination):
     )
     container.plugin_installation_service = packages
     container.plugin_package_service = packages
-    container.plugin_market_service = configured_market_service(
-        packages.store, admission_guard=lambda: package_references_lock,
-    )
+    container.plugin_market_service = configured_market_service(packages)
     return container
 
 

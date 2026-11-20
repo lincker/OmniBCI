@@ -2,7 +2,7 @@
 import base64
 import json
 import threading
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,8 +11,10 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from omnibci.application.plugin_market import PluginMarketError
+from omnibci.application.plugin_packages import PluginPackageStorageError
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.plugin_market_service import PluginMarketService
+from omnibci.application.services.plugin_installation_service import PluginInstallationService
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
@@ -35,7 +37,7 @@ def configured(tmp_path, monkeypatch):
         "OMNIBCI_MARKET_TRUSTED_KEYS": json.dumps({"test-key": base64.b64encode(key.public_key().public_bytes_raw()).decode()}),
         "OMNIBCI_MARKET_CACHE_DIR": str(tmp_path / "cache"),
     }
-    svc = configured_market_service(store, admission_guard=nullcontext, environ=environment)
+    svc = configured_market_service(PluginInstallationService(store), environ=environment)
     repo = svc.repository.repository
     repo.clock = lambda: _NOW
     archive = package_archive(tmp_path).read_bytes()
@@ -48,7 +50,7 @@ def configured(tmp_path, monkeypatch):
 
 def test_no_configuration_disables_market_without_a_default_endpoint(configured):
     _, store, _, _, _ = configured
-    assert configured_market_service(store, admission_guard=nullcontext, environ={}) is None
+    assert configured_market_service(PluginInstallationService(store), environ={}) is None
 
 
 @pytest.mark.parametrize("change", [
@@ -66,14 +68,37 @@ def test_no_configuration_disables_market_without_a_default_endpoint(configured)
 def test_operator_configuration_fails_closed_without_leaking_values(configured, change):
     _, store, environment, _, _ = configured
     with pytest.raises(PluginMarketError) as error:
-        configured_market_service(store, admission_guard=nullcontext, environ={**environment, **change})
+        configured_market_service(PluginInstallationService(store), environ={**environment, **change})
     assert "secret-looking-value" not in str(error.value)
 
 
 def test_partial_operator_configuration_does_not_silently_enable_a_repository(configured):
     _, store, _, _, _ = configured
     with pytest.raises(PluginMarketError, match="together"):
-        configured_market_service(store, admission_guard=nullcontext, environ={"OMNIBCI_MARKET_URL": _URL})
+        configured_market_service(PluginInstallationService(store), environ={"OMNIBCI_MARKET_URL": _URL})
+
+
+def test_repository_download_limit_respects_the_shared_installation_owner(configured, monkeypatch):
+    original, store, environment, _, _ = configured
+    monkeypatch.setattr(store, "max_archive_bytes", 1)
+    service = configured_market_service(PluginInstallationService(store), environ=environment)
+    repository = service.repository.repository
+    repository._opener = original.repository.repository._opener
+    repository.clock = lambda: _NOW
+    with pytest.raises(PluginMarketError, match="size"):
+        service.install("acme.device", "1.0.0")
+    assert [request[0] for request in repository._opener.requests] == [_URL]
+    assert not store.list_packages()
+
+
+def test_shared_installer_storage_failure_remains_an_application_error(configured, monkeypatch):
+    service, store, _, _, _ = configured
+    def denied(*args, **kwargs):
+        raise OSError("Storage unavailable")
+    monkeypatch.setattr(store.installer, "install", denied)
+    with pytest.raises(PluginPackageStorageError, match="Storage unavailable"):
+        service.install("acme.device", "1.0.0")
+    assert not store.list_packages()
 
 
 def test_download_occurs_outside_exclusive_guard_and_publication_inside(configured, monkeypatch):
@@ -87,7 +112,7 @@ def test_download_occurs_outside_exclusive_guard_and_publication_inside(configur
         finally:
             state["held"] = False
     original_prepare = svc.repository.prepare_install
-    original_install = svc.repository.install_prepared
+    original_install = svc.repository.verify_prepared
     def prepare(*args):
         assert not state["held"]
         return original_prepare(*args)
@@ -95,8 +120,8 @@ def test_download_occurs_outside_exclusive_guard_and_publication_inside(configur
         assert state["held"]
         return original_install(prepared)
     monkeypatch.setattr(svc.repository, "prepare_install", prepare)
-    monkeypatch.setattr(svc.repository, "install_prepared", install)
-    svc.admission_guard = guard
+    monkeypatch.setattr(svc.repository, "verify_prepared", install)
+    svc.installation.admission_guard = guard
     result = svc.install("acme.device", "1.0.0")
     assert not result.package.enabled and result.package.available
     assert store.list_packages() == [result.package]
@@ -108,7 +133,7 @@ def test_busy_runtime_does_not_publish_a_downloaded_package(configured):
     def occupied():
         raise ProfileRevisionConflict("Apply in progress")
         yield
-    svc.admission_guard = occupied
+    svc.installation.admission_guard = occupied
     with pytest.raises(ProfileRevisionConflict):
         svc.install("acme.device", "1.0.0")
     assert not store.list_packages()
@@ -121,7 +146,7 @@ def test_expiry_between_download_and_publication_is_rechecked(configured):
     def delayed():
         svc.repository.repository.clock = lambda: datetime(2026, 9, 25, tzinfo=UTC)
         yield
-    svc.admission_guard = delayed
+    svc.installation.admission_guard = delayed
     with pytest.raises(PluginMarketError, match="expired"):
         svc.install("acme.device", "1.0.0")
     assert not store.list_packages()
@@ -132,7 +157,7 @@ def test_prepared_artifact_cannot_change_signed_metadata(configured):
     prepared = svc.repository.prepare_install("acme.device", "1.0.0")
     altered = replace(prepared, package=replace(prepared.package, version="2.0.0"))
     with pytest.raises(PluginMarketError, match="differs from signed"):
-        svc.repository.install_prepared(altered)
+        svc.repository.verify_prepared(altered)
     assert not store.list_packages()
 
 
@@ -163,9 +188,9 @@ def test_real_signed_http_to_disabled_install_enable_profile_and_runtime_plan(tm
     try:
         store = ManagedPluginPackageStore()
         repo = StaticMarketRepository(f"http://127.0.0.1:{server.server_port}/index.json", {"test-key": key.public_key()},
-                                      store.installer, tmp_path / "cache", expected_repository_id="example.plugins",
+                                      tmp_path / "cache", expected_repository_id="example.plugins",
                                       allow_http=True, clock=lambda: _NOW)
-        market = PluginMarketService(MarketRepositoryAdapter(repo, store), admission_guard=nullcontext)
+        market = PluginMarketService(MarketRepositoryAdapter(repo), PluginInstallationService(store))
         assert len(market.list()) == 1
         installed = market.install("acme.device", "1.0.0").package
         assert not installed.enabled

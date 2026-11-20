@@ -110,9 +110,10 @@ async def test_operator_configured_market_uses_same_installer_and_admission(monk
     try:
         market = container.plugin_market_service
         packages = container.plugin_package_service
-        assert market.repository.store is packages.store
-        assert market.repository.repository.installer is packages.store.installer
-        assert market.admission_guard() is packages.admission_guard()
+        assert market.installation is packages
+        assert market.installation.admission_guard() is packages.admission_guard()
+        assert not hasattr(market.repository, "store")
+        assert not hasattr(market.repository.repository, "installer")
         assert market.repository.repository.expected_repository_id == "example.plugins"
         assert market.repository.repository.cache_dir == tmp_path / "cache"
         assert not (tmp_path / "cache").exists()
@@ -236,7 +237,7 @@ def test_configured_market_is_published_by_real_lifespan_and_installs_disabled(m
         package = installed.json()["data"]["package"]
         assert not package["enabled"] and package["available"]
         assert client.get("/api/v1/plugin-packages").json()["data"] == [package]
-        assert repository.installer is app.state.plugin_package_service.store.installer
+        assert market.installation is app.state.plugin_package_service
         assert not list((tmp_path / "plugins").rglob("__pycache__"))
 
 

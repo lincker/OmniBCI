@@ -62,7 +62,7 @@ def test_invalid_signature_never_becomes_catalog_or_installation(app):
     with TestClient(app) as http:
         assert http.get("/market/catalog").status_code == 422
         assert http.post("/market/install", json={"package_id": "acme.device", "version": "1.0.0"}).status_code == 422
-        assert not app.state.plugin_market_service.repository.store.list_packages()
+        assert not app.state.plugin_market_service.installation.store.list_packages()
 
 
 @pytest.mark.asyncio

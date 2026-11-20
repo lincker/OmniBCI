@@ -1,7 +1,7 @@
 """Package-management values and storage port, independent of installation format."""
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
@@ -62,7 +62,10 @@ class PackageInstallation:
 class PluginPackageStore(Protocol):
     max_archive_bytes: int
 
-    def install_archive(self, archive: Path) -> PackageInstallation: ...
+    def install_archive(self, archive: Path, *, expected_sha256: str | None = None,
+                        expected_package_id: str | None = None, expected_version: str | None = None,
+                        expected_domain: str | None = None,
+                        expected_contributions: Mapping[str, str] | None = None) -> PackageInstallation: ...
     def list_packages(self) -> list[PackageVersion]: ...
     def get_package(self, package_id: str, version: str) -> PackageVersion: ...
     def configuration(self, kind: str, selection: PluginSelection) -> PluginConfiguration: ...

@@ -1,16 +1,22 @@
 """Download before acquiring exclusive runtime mutation admission."""
 from omnibci.application.plugin_market import PluginMarketRepository
+from omnibci.application.services.plugin_installation_service import PluginInstallationService
 
 
 class PluginMarketService:
-    def __init__(self, repository: PluginMarketRepository, *, admission_guard):
+    def __init__(self, repository: PluginMarketRepository, installation: PluginInstallationService):
         self.repository = repository
-        self.admission_guard = admission_guard
+        self.installation = installation
 
     def list(self):
         return self.repository.list_packages()
 
     def install(self, package_id: str, version: str):
         prepared = self.repository.prepare_install(package_id, version)
-        with self.admission_guard():
-            return self.repository.install_prepared(prepared)
+        selected = prepared.package
+        return self.installation.install(
+            prepared.archive, revalidate=lambda: self.repository.verify_prepared(prepared),
+            expected_sha256=selected.sha256, expected_package_id=selected.package_id,
+            expected_version=selected.version, expected_domain=selected.domain,
+            expected_contributions={item.selection.contribution_id: item.kind for item in selected.contributions},
+        )

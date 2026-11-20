@@ -2,7 +2,7 @@
 
 Status: implementation plan and execution record. S0, S1a–S1c and S1e are complete. S1d remains deferred; its first-batch implementation has been withdrawn from this branch. S1f and overall S2–S6 completion remain pending.
 
-The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a and S2b are complete and verified; the remaining S2 work is pending.
+The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a, S2b and S2c are complete and verified; the remaining S2 work is pending.
 
 Updated: 2026-11-20. Original inspection baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`. The retained S1a–S1c implementation is committed in `e81f825`.
 
@@ -50,7 +50,7 @@ These simplify implementation, not the ownership guarantees. Keep exact selectio
 
 The order is **S0 → S1 → S2 → S3 → S4 → S5 → S6**. S1's internal rows are one coordinated API replacement, not separately supported API releases. Work can be split into focused commits and branches under the scope decision above; do not add temporary compatibility code merely to make an incomplete intermediate state deployable. Mark a step complete only when its listed changes and checks are finished.
 
-With S1d deferred, the identity and Configuration ownership changes reviewed as S2a/S2b below can proceed independently of S1f. This exception does not include S2's shared manifest-validator change, which still depends on S1f, or complete the coordinated API switch.
+With S1d deferred, S2's identity, Configuration ownership, installation ownership, catalog scope and origin records can proceed independently of S1f. Execute and commit each verified change separately. The remaining order is S2c installation ownership, S2d catalog/store scope, then S2e origin records. This exception does not include S2's shared manifest-validator change, which still depends on S1f, or complete the coordinated API switch.
 
 ### S0 Establish the baseline and change inventory
 
@@ -224,9 +224,19 @@ Before implementation, **15 boundary cases failed** for the missing query/provid
 
 Final headless verification passed **3765 tests**, with 37 integration cases deselected. Integration verification passed **36 tests**, with one Windows Job Objects skip and two existing WebSocket deprecation warnings. Both final runs used the same frozen source/test tree. GUI, physical hardware and Windows/Linux execution were not exercised locally. OpenAPI checks passed; the generated contract did not change.
 
-The production change is limited to Configuration models/ports/service, PackageService, Bootstrap wiring and the two affected routers. HTTP schemas, OpenAPI, frontend, SDK, constructors, manifests and Stimulation/Paradigm/Renderer/trigger implementation are unchanged. Commands, pre-change fingerprints, logs and JUnit reports are in `/private/tmp/omnibci-s2b-jbbacfyz`. This execution does not create a Git commit.
+The production change is limited to Configuration models/ports/service, PackageService, Bootstrap wiring and the two affected routers. HTTP schemas, OpenAPI, frontend, SDK, constructors, manifests and Stimulation/Paradigm/Renderer/trigger implementation are unchanged. Commands, pre-change fingerprints, logs and JUnit reports are in `/private/tmp/omnibci-s2b-jbbacfyz`. S2b was subsequently committed as `54d87ae`.
 
 **Remaining boundary work:** S2 still needs Marketplace installation ownership, explicit catalog/store/node scope, origin evidence and shared static validation (the latter depends on S1f). S4 owns the remaining setup/node/runtime Configuration consumers above. Neither S2a nor S2b completes the overall API v1 transition.
+
+#### S2c execution (2026-11-20)
+
+The Marketplace repository now exposes only listing, verified download preparation and `verify_prepared`. It and its adapter no longer own an installer/store or provide installation methods. `PluginMarketService` delegates publication to the same `PluginInstallationService` instance that handles local uploads; Bootstrap supplies the existing PackageService instance.
+
+The installation service runs an optional host-owned `revalidate` callback under its existing admission guard, then calls the common store path. Market requests pass the installer's existing expected digest, identity, version, domain and contribution checks through that path. This avoids a second installer, copied validation, a new artifact wrapper or nested mutation guards. The configured repository receives a download-size limit bounded by the installation owner's limit, rather than the owner itself. Repository/signature and storage errors retain their application mappings.
+
+Six new boundary cases failed before implementation. All pass within **296 focused tests**, and all **8 import contracts** pass. Coverage includes proof expiry after download, altered signed identity, changed cached bytes, download outside the guard, verification/publication inside it, both market/local retry directions and content conflicts without changing enablement. Existing signature, HTTP, cache, archive and identity-mismatch checks now exercise their owning boundary; the real HTTP integration still installs through the common service. Final verification passed **3773 headless tests**, **36 integration tests** with one Windows Job Objects skip, and all **8 import contracts**. Both full suites used the same frozen source/test tree. The two existing WebSocket warnings remain; GUI, physical hardware and Windows/Linux execution were not exercised. Evidence is in `/private/tmp/omnibci-s2c-ck0mt889`.
+
+This batch changes host-internal installation contracts and callers. HTTP shapes, SDK, constructors, manifests and Stimulation/Paradigm/Renderer implementation are unchanged. Durable origin evidence remains S2e; node/store scope remains S2d. The repository does not participate in starting already installed plugins.
 
 ### S3 Complete artifact preparation, loading and reference handoff
 

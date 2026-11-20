@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Mapping
 
 from omnibci.application.plugin_packages import (
     PackageContribution, PackageInstallation, PackageVersion, PluginPackageError,
@@ -43,12 +44,21 @@ class DirectoryPluginPackageStore:
             raise PluginPackageError("Installed manifest identity differs from its directory")
         return descriptors
 
-    def install_archive(self, archive: Path) -> PackageInstallation:
+    def install_archive(self, archive: Path, *, expected_sha256: str | None = None,
+                        expected_package_id: str | None = None, expected_version: str | None = None,
+                        expected_domain: str | None = None,
+                        expected_contributions: Mapping[str, str] | None = None) -> PackageInstallation:
         try:
-            installed = self.installer.install(archive)
+            installed = self.installer.install(
+                archive, expected_sha256=expected_sha256, expected_package_id=expected_package_id,
+                expected_version=expected_version, expected_domain=expected_domain,
+                expected_contributions=expected_contributions,
+            )
             return PackageInstallation(self.get_package(installed.package_id, installed.version), installed.already_installed)
         except PackageInstallError as exc:
             raise PluginPackageError(str(exc)) from exc
+        except OSError as exc:
+            raise PluginPackageStorageError(f"Cannot access package storage: {exc}") from exc
 
     def get_package(self, package_id: str, version: str) -> PackageVersion:
         location = self._path(package_id, version)

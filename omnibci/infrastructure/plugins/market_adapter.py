@@ -1,4 +1,4 @@
-"""Bind verified repository downloads to the managed inventory and operator config."""
+"""Bind verified repository downloads to operator config and application errors."""
 import json
 import os
 import re
@@ -8,11 +8,10 @@ from pathlib import Path
 from platformdirs import user_cache_dir
 
 from omnibci.application.plugin_market import PluginMarketError
-from omnibci.application.plugin_packages import PackageInstallation, PluginPackageError, PluginPackageStorageError
+from omnibci.application.plugin_packages import PluginPackageStorageError
+from omnibci.application.services.plugin_installation_service import PluginInstallationService
 from omnibci.application.services.plugin_market_service import PluginMarketService
-from omnibci.infrastructure.plugins.market_repository import MarketRepositoryError, StaticMarketRepository, _object_without_duplicates
-from omnibci.infrastructure.plugins.package_installer import PackageInstallError
-from omnibci.infrastructure.plugins.package_store import DirectoryPluginPackageStore
+from omnibci.infrastructure.plugins.market_repository import MarketLimits, MarketRepositoryError, StaticMarketRepository, _object_without_duplicates
 
 
 @contextmanager
@@ -21,18 +20,13 @@ def _market_errors():
         yield
     except MarketRepositoryError as exc:
         raise PluginMarketError(str(exc)) from exc
-    except PackageInstallError as exc:
-        raise PluginPackageError(str(exc)) from exc
     except OSError as exc:
-        raise PluginPackageStorageError(f"Cannot access market cache or package storage: {exc}") from exc
+        raise PluginPackageStorageError(f"Cannot access market cache: {exc}") from exc
 
 
 class MarketRepositoryAdapter:
-    def __init__(self, repository: StaticMarketRepository, store: DirectoryPluginPackageStore):
-        if repository.installer is not store.installer:
-            raise ValueError("Market and local installs must use the same managed installer")
+    def __init__(self, repository: StaticMarketRepository):
         self.repository = repository
-        self.store = store
 
     def list_packages(self):
         with _market_errors():
@@ -42,13 +36,12 @@ class MarketRepositoryAdapter:
         with _market_errors():
             return self.repository.prepare_install(package_id, version)
 
-    def install_prepared(self, prepared):
+    def verify_prepared(self, prepared):
         with _market_errors():
-            result = self.repository.install_prepared(prepared)
-            return PackageInstallation(self.store.get_package(result.package_id, result.version), result.already_installed)
+            self.repository.verify_prepared(prepared)
 
 
-def configured_market_service(store: DirectoryPluginPackageStore, *, admission_guard, environ=None):
+def configured_market_service(installation: PluginInstallationService, *, environ=None):
     """No configuration means disabled; partial/invalid trust configuration fails closed."""
     environment = os.environ if environ is None else environ
     names = ("OMNIBCI_MARKET_URL", "OMNIBCI_MARKET_REPOSITORY_ID", "OMNIBCI_MARKET_TRUSTED_KEYS")
@@ -72,7 +65,8 @@ def configured_market_service(store: DirectoryPluginPackageStore, *, admission_g
     if cache is not None and (not isinstance(cache, str) or not cache.strip() or "\0" in cache):
         raise PluginMarketError("OMNIBCI_MARKET_CACHE_DIR must name a local cache directory")
     cache_dir = Path(cache).expanduser() if cache is not None else Path(user_cache_dir("OmniBCI", "OmniBCI")) / "plugin-market"
+    limits = MarketLimits(max_download_bytes=min(MarketLimits().max_download_bytes, installation.max_archive_bytes))
     with _market_errors():
-        repository = StaticMarketRepository(url, keys, store.installer, cache_dir,
-                                            expected_repository_id=repository_id)
-    return PluginMarketService(MarketRepositoryAdapter(repository, store), admission_guard=admission_guard)
+        repository = StaticMarketRepository(url, keys, cache_dir,
+                                            expected_repository_id=repository_id, limits=limits)
+    return PluginMarketService(MarketRepositoryAdapter(repository), installation)
