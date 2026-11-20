@@ -6,7 +6,7 @@ Covers:
   - ActuationCommandTranslator: TrialCompleted (TrialOutcome — the real bus
     payload emitted by SignalProcessor) → ActuationCommand on the bus;
     payload carries target_id/event_id/confidence; bare Classification is
-    accepted for back-compat; payloads without target_id emit nothing.
+    rejected; noncanonical trials emit nothing.
   - ActuationFeedbackHandler: ack/state/fault accounting.
   - actuation_peer_config: ListenTransport + correct route white-lists.
   - Builder: actuation wiring is opt-in (off by default; on when enabled).
@@ -14,10 +14,11 @@ Covers:
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+import pytest
 
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
-from omnibci.infrastructure.outbound import TrialOutcome
+from omnibci.application.events import TrialOutcome
 from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
 from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
 from omnibci.infrastructure.neuroengine.gateway.peers import actuation_peer_config, ACTUATION
@@ -46,22 +47,15 @@ class TestActuationCommandTranslator:
         assert len(bus.put) == 1
         cmd = bus.put[0]
         assert cmd.type == EventType.ActuationCommand
-        assert cmd.data["target_id"] == 5
-        assert cmd.data["event_id"] == 2
-        assert cmd.data["confidence"] == 0.9
+        assert cmd.data.parameters["target_id"] == 5
+        assert cmd.data.parameters["event_id"] == 2
+        assert cmd.data.parameters["confidence"] == 0.9
 
-    def test_bare_classification_payload_still_accepted(self):
-        """Back-compat: pre-enrichment bare Classification payload."""
+    def test_bare_classification_payload_is_rejected(self):
         bus = _Bus()
         tr = ActuationCommandTranslator(bus)
-        clf = Classification(target_id=5, event_id=2, confidence=0.9)
-        tr.on_trial_completed(Event(EventType.TrialCompleted, clf))
-        assert len(bus.put) == 1
-        cmd = bus.put[0]
-        assert cmd.type == EventType.ActuationCommand
-        assert cmd.data["target_id"] == 5
-        assert cmd.data["event_id"] == 2
-        assert cmd.data["confidence"] == 0.9
+        tr.on_trial_completed(Event(EventType.TrialCompleted, Classification(5, 2, 0.9)))
+        assert bus.put == []
 
     def test_payload_without_target_id_emits_nothing(self):
         bus = _Bus()
@@ -69,34 +63,32 @@ class TestActuationCommandTranslator:
         tr.on_trial_completed(Event(EventType.TrialCompleted, object()))
         assert bus.put == []
 
-    def test_commands_carry_monotonic_seq_and_issued_at(self):
+    def test_commands_carry_unique_identity_and_issued_at(self):
         import time
         bus = _Bus()
         tr = ActuationCommandTranslator(bus)
         before = time.time()
         for tid in (1, 2, 3):
-            tr.on_trial_completed(Event(
-                EventType.TrialCompleted,
-                Classification(target_id=tid, event_id=1, confidence=0.9)))
+            tr.on_trial_completed(Event(EventType.TrialCompleted,
+                TrialOutcome("run", tid, Classification(tid, 1, 0.9))))
         after = time.time()
-        assert [c.data["seq"] for c in bus.put] == [1, 2, 3]
-        for c in bus.put:
-            assert before <= c.data["issued_at"] <= after
+        assert len({event.data.command_id for event in bus.put}) == 3
+        for event in bus.put:
+            assert before <= event.data.issued_at <= after
 
-    def test_skipped_payload_does_not_consume_seq(self):
+    def test_skipped_payload_does_not_emit_an_intent(self):
         bus = _Bus()
         tr = ActuationCommandTranslator(bus)
-        tr.on_trial_completed(Event(EventType.TrialCompleted, object()))   # no target_id
-        tr.on_trial_completed(Event(
-            EventType.TrialCompleted,
-            Classification(target_id=1, event_id=1)))
-        assert bus.put[0].data["seq"] == 1
+        tr.on_trial_completed(Event(EventType.TrialCompleted, object()))
+        tr.on_trial_completed(Event(EventType.TrialCompleted, TrialOutcome("run", 1, Classification(1, 1))))
+        assert len(bus.put) == 1
+        assert bus.put[0].data.origin["trial_number"] == 1
 
 
 class TestActuationFeedbackHandler:
     def test_ack_state_fault_accounting(self):
         h = ActuationFeedbackHandler()
-        h.on_feedback(Event(EventType.ActuationAck, {"ok": True}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "1"}))
         h.on_feedback(Event(EventType.ActuationState, {"pos": 1.0}))
         h.on_feedback(Event(EventType.ActuationFault, {"code": "ESTOP"}))
         assert h.ack_count == 1
@@ -106,25 +98,30 @@ class TestActuationFeedbackHandler:
 
     def test_acks_bucketed_by_status(self):
         h = ActuationFeedbackHandler()
-        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "seq": 1}))
-        h.on_feedback(Event(EventType.ActuationAck, {"status": "superseded", "seq": 2}))
-        h.on_feedback(Event(EventType.ActuationAck, {"status": "stale", "seq": 3}))
-        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "seq": 4}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "1"}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "superseded", "command_id": "2"}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "stale", "command_id": "3"}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "4"}))
         assert h.ack_count == 4                      # total preserved
         assert (h.ok_count, h.superseded_count, h.stale_count) == (2, 1, 1)
-        assert h.last_acked_seq == 4
+        assert h.last_acked_command_id == "4"
 
-    def test_ack_without_status_counts_as_ok(self):
-        # Back-compat: a bare dict ack (older sender) defaults to ok.
+    def test_ack_without_status_and_identity_is_rejected(self):
         h = ActuationFeedbackHandler()
         h.on_feedback(Event(EventType.ActuationAck, {"ok": True}))
-        assert h.ok_count == 1 and h.last_acked_seq is None
+        assert h.ack_count == 0 and h.last_acked_command_id is None
 
-    def test_seq_gap_is_tolerated(self):
+    @pytest.mark.parametrize("status", [[], {}, None, True])
+    def test_malformed_ack_status_is_ignored(self, status):
+        handler = ActuationFeedbackHandler()
+        handler.on_feedback(Event(EventType.ActuationAck, {"status": status, "command_id": "1"}))
+        assert handler.ack_count == 0
+
+    def test_last_command_identity_is_retained(self):
         h = ActuationFeedbackHandler()
-        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "seq": 1}))
-        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "seq": 5}))
-        assert h.last_acked_seq == 5                 # gap logged, not raised
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "1"}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "5"}))
+        assert h.last_acked_command_id == "5"
 
 
 class TestActuationPeerConfig:

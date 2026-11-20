@@ -8,6 +8,7 @@ from tests.plugin_configuration_helpers import prepared_snapshot
 from omnibci.application.commands.stimulation_commands import StartStimTrialCommand
 from omnibci.infrastructure.actuation.actuator import Actuator
 from omnibci.application.commands.actuation_commands import validate_actuation_command
+from tests.actuation_helpers import actuation_payload
 from omnibci.infrastructure.plugins.manifest import PluginManifestError, parse_manifest
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 from omnibci.presentation.schemas.stimulation import StartTrialRequest
@@ -125,10 +126,10 @@ def test_effector_schema_rejects_bad_payloads_before_execute(command):
 
 
 def test_optional_decoding_values_are_omitted_from_device_payload_when_absent():
-    command = validate_actuation_command({'target_id': 1, 'event_id': None, 'confidence': None,
-                                         'seq': 7, 'issued_at': 3.0})
-    assert command.payload == {'target_id': 1}
-    assert command.seq == 7 and command.issued_at == 3.0
+    command = validate_actuation_command(actuation_payload(
+        {'target_id': 1, 'event_id': None, 'confidence': None}, command_id='command-7', issued_at=3.0))
+    assert command.parameters == {'target_id': 1}
+    assert command.command_id == 'command-7' and command.issued_at == 3.0
 
 
 @pytest.mark.parametrize('factory', [StartStimTrialCommand, StartTrialRequest])

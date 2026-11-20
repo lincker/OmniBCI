@@ -42,7 +42,7 @@ from omnibci.infrastructure.actuation.engine_channel import engine_peer_config
 from omnibci.infrastructure.actuation.actuator import Actuator
 from omnibci.application.commands.actuation_commands import (
     InvalidActuationCommand,
-    ValidatedActuationCommand,
+    ActuationIntent,
     validate_actuation_command,
 )
 from omnibci.infrastructure.process_lifecycle import StartupReporter
@@ -271,23 +271,21 @@ class Actuation:
         if getattr(self, "_paused", False):
             return
         try:
-            command: ValidatedActuationCommand = self.command_queue.get_nowait()
+            command: ActuationIntent = self.command_queue.get_nowait()
         except Empty:
             return
 
-        payload = command.payload
+        payload = command.parameters
         target = command.target_id
-        seq = command.seq
-        # Age gate: an accounting outcome (like superseded), not a device
-        # fault. Commands without the optional issued_at are never gated.
+        # The optional age gate relies on synchronized controller/node clocks.
         issued_at = command.issued_at
-        if (self._max_command_age > 0 and issued_at is not None
+        if (self._max_command_age > 0
                 and time.time() - issued_at > self._max_command_age):
-            logger.warning("Command seq=%s target_id=%s dropped as stale "
-                           "(age > %.3fs)", seq, target, self._max_command_age)
-            self.event_bus.put_event(Event(
+            logger.warning("Command id=%s target_id=%s dropped as stale "
+                           "(age > %.3fs)", command.command_id, target, self._max_command_age)
+            self._publish_command_outcome(Event(
                 EventType.ActuationAck,
-                make_actuation_ack(target_id=target, status="stale", seq=seq),
+                make_actuation_ack(command, status="stale"),
             ))
             return
         try:
@@ -297,17 +295,36 @@ class Actuation:
             )
             await await_owned(self._execution_task)
             reply = Event(EventType.ActuationAck,
-                          make_actuation_ack(target_id=target, seq=seq))
+                          make_actuation_ack(command))
+        except asyncio.CancelledError:
+            # await_owned has joined the device call. Caller cancellation must
+            # not erase its outcome or claim an executed command was cancelled.
+            task = self._execution_task
+            if task.cancelled():
+                reply = Event(EventType.ActuationFault, make_actuation_fault(
+                    "COMMAND_INTERRUPTED", command=command, message="Device execution completion is unconfirmed"))
+            elif (error := task.exception()) is not None:
+                reply = Event(EventType.ActuationFault, make_actuation_fault(
+                    "COMMAND_FAILED", command=command, message=str(error)))
+            else:
+                reply = Event(EventType.ActuationAck, make_actuation_ack(command))
+            self._publish_command_outcome(reply)
+            raise
         except Exception as exc:
             logger.error("Effector command failed (target_id=%s): %s", target, exc)
             reply = Event(EventType.ActuationFault,
-                          make_actuation_fault("COMMAND_FAILED",
-                                               target_id=target,
-                                               message=str(exc), seq=seq))
+                          make_actuation_fault("COMMAND_FAILED", command=command, message=str(exc)))
         finally:
             self._execution_task = None
         # PeerChannel's outbound subscription forwards these to the engine.
-        self.event_bus.put_event(reply)
+        self._publish_command_outcome(reply)
+
+    def _publish_command_outcome(self, event):
+        snapshot = self._runtime_snapshot
+        execution = {"module": "actuation", "generation": snapshot["CONFIG.generation"],
+                     "operation_id": snapshot["CONFIG.operation_id"],
+                     "module_revision": snapshot["CONFIG.module_revisions"]["actuation"]}
+        self.event_bus.put_event(Event(event.type, {**event.data, "execution": execution}))
 
     def _enqueue_command(self, command: Event):
         if command.type != EventType.ActuationCommand:
@@ -317,13 +334,11 @@ class Actuation:
             validated = validate_actuation_command(command.data)
         except InvalidActuationCommand as exc:
             logger.warning("Invalid actuation command dropped: %s", exc)
-            self.event_bus.put_event(Event(
+            self._publish_command_outcome(Event(
                 EventType.ActuationFault,
                 make_actuation_fault(
                     "INVALID_COMMAND",
-                    target_id=exc.target_id,
-                    message=str(exc),
-                    seq=exc.seq,
+                    command=exc, message=str(exc),
                 ),
             ))
             return
@@ -338,7 +353,7 @@ class Actuation:
         # previously validated intent.
         while True:
             try:
-                superseded: ValidatedActuationCommand = self.command_queue.get_nowait()
+                superseded: ActuationIntent = self.command_queue.get_nowait()
             except Empty:
                 break
             self._publish_superseded(superseded)
@@ -357,21 +372,19 @@ class Actuation:
                     continue
                 self._publish_superseded(superseded)
 
-    def _publish_superseded(self, command: ValidatedActuationCommand) -> None:
-        self.event_bus.put_event(Event(
+    def _publish_superseded(self, command: ActuationIntent) -> None:
+        self._publish_command_outcome(Event(
             EventType.ActuationAck,
             make_actuation_ack(
-                target_id=command.target_id,
-                status="superseded",
-                seq=command.seq,
+                command, status="superseded",
             ),
         ))
 
-    def _publish_cancelled(self, command: ValidatedActuationCommand) -> None:
-        self.event_bus.put_event(Event(
+    def _publish_cancelled(self, command: ActuationIntent) -> None:
+        self._publish_command_outcome(Event(
             EventType.ActuationAck,
             make_actuation_ack(
-                target_id=command.target_id, status="cancelled", seq=command.seq,
+                command, status="cancelled",
                 message="Actuation paused or stopping; command was not executed",
             ),
         ))

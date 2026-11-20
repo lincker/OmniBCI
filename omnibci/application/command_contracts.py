@@ -213,8 +213,7 @@ def _output_receipt(value, *, flags, counts=()):
 
 
 def _actuation_request(value):
-    validate_actuation_command(value)
-    return deepcopy(value)
+    return validate_actuation_command(value)
 
 
 @dataclass(frozen=True)
@@ -264,11 +263,9 @@ def command_contract(event_type: EventType) -> CommandContract:
 def command_event(event: Event) -> Event:
     """Detach a validated payload before handing it to a queue or dispatcher."""
     contract = command_contract(event.type)
-    request = CommandRequest.from_value(event.data)
+    request = CommandRequest.from_value(event.data) if contract.parse_result is not None else None
     if request is None:
         data = contract.parse_payload(event.data)
     else:
-        if contract.parse_result is None:
-            raise ValueError("This command uses its own result event")
         data = CommandRequest(request.command_id, contract.parse_payload(request.payload))
     return Event(event.type, data)

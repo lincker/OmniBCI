@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
+from omnibci.application.commands.actuation_commands import ActuationIntent, InvalidActuationCommand
 # Re-export payloads to preserve the established import path.
 from omnibci.application.events import (
     CommandRequest,
@@ -81,30 +82,18 @@ def make_stimulation_ack(command: str, status: str = "ok",
             "trial_params": deepcopy(trial_params), "message": message}
 
 
-def make_actuation_ack(target_id: Optional[int] = None,
-                       status: str = "ok",
-                       message: Optional[str] = None,
-                       seq: Optional[int] = None) -> dict:
-    """
-    Build the JSON-safe payload the actuation process sends back to ack an
-    ActuationCommand. Mirrors make_stimulation_ack. *seq* echoes the
-    command's correlation id (statuses: ok | superseded | stale).
-    """
-    return {"target_id": target_id, "status": status, "message": message,
-            "seq": seq}
+def make_actuation_ack(command: ActuationIntent, status: str = "ok", message: str | None = None) -> dict:
+    """Return the same command identity and trial origin for every outcome."""
+    return {**command.correlation, "status": status, "message": message}
 
 
-def make_actuation_fault(code: str,
-                         target_id: Optional[int] = None,
-                         message: Optional[str] = None,
-                         seq: Optional[int] = None) -> dict:
-    """
-    Build the JSON-safe ActuationFault payload (same {"code", ...} shape as
-    the engine watchdog's ACTUATION_LINK_LOST). *seq* echoes the failing
-    command's correlation id when there is one.
-    """
-    return {"code": code, "source": "actuation_subsystem",
-            "target_id": target_id, "message": message, "seq": seq}
+def make_actuation_fault(code: str, *, command: ActuationIntent | InvalidActuationCommand | None = None,
+                         message: str | None = None) -> dict:
+    """Device-wide faults have no command; rejected commands echo valid identity."""
+    correlation = command.correlation if command is not None else {
+        "command_id": None, "origin": None, "target_id": None,
+    }
+    return {"code": code, "source": "actuation_subsystem", **correlation, "message": message}
 
 
 def payload_to_jsonable(data: Any) -> Any:
@@ -113,6 +102,8 @@ def payload_to_jsonable(data: Any) -> Any:
     envelope (``{"type", "data"}``).  Rich domain payloads are flattened; plain
     scalars pass through unchanged.
     """
+    if isinstance(data, ActuationIntent):
+        return data.to_dict()
     if isinstance(data, TrialOutcome):
         return {"generation": data.generation, "trial_number": data.trial_number,
                 **({"processing_revision": data.processing_revision} if data.processing_revision is not None else {}),

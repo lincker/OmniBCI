@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from tests.actuation_helpers import actuation_payload
 from omnibci.application.events import CommandRequest
 from omnibci.infrastructure.actuation.application import Actuation
 from omnibci.shared.events import Event, EventType
@@ -16,7 +17,8 @@ from omnibci.shared.events import Event, EventType
 
 @pytest.fixture
 def app():
-    instance = Actuation(settings_snapshot={})
+    instance = Actuation(settings_snapshot={"CONFIG.generation": "test-run", "CONFIG.operation_id": "host-operation",
+                                            "CONFIG.module_revisions": {"actuation": "a" * 64}})
     instance.event_bus = Mock(start=AsyncMock(), stop=AsyncMock())
     instance.peer_channel = Mock(start=AsyncMock(), stop=AsyncMock())
     instance._await_managed_connection = AsyncMock()
@@ -67,7 +69,7 @@ async def test_setup_execute_quiesce_and_teardown_share_one_non_loop_thread(app)
         setup=lambda: record("setup"), execute=execute,
         quiesce=lambda: record("quiesce"), teardown=lambda: record("teardown"),
     )
-    app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1}))
+    app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 1})))
     await app.serve()
 
     assert [name for name, _ in operations] == ["setup", "execute", "quiesce", "teardown"]
@@ -103,7 +105,7 @@ async def test_repeated_cancellation_waits_for_execution_before_cleanup(app):
     app.actuator = Mock(execute=execute,
                         quiesce=lambda: operations.append("quiesce"),
                         teardown=lambda: operations.append("teardown"))
-    app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1}))
+    app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 1})))
     serving = asyncio.create_task(app.serve())
     try:
         assert await asyncio.to_thread(started.wait, 1)
@@ -141,7 +143,7 @@ async def test_failed_settlement_cannot_be_bypassed_by_resume(app):
     await app._resume_actuation(Event(EventType.ResumeActuation, CommandRequest("resume")))
     assert not _results(app)[-1].ok
     assert app._paused
-    app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 2}))
+    app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 2})))
     assert app.command_queue.empty()
     app.actuator.execute.assert_not_called()
 
@@ -183,7 +185,7 @@ async def test_settlement_confirms_physical_state_after_execution_failure(app):
         raise RuntimeError("device failed after output began")
 
     app.actuator = Mock(execute=execute)
-    app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1, "seq": 4}))
+    app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 1}, command_id='4')))
     execution = asyncio.create_task(app.execute_command())
     settlement = None
     try:
@@ -201,27 +203,27 @@ async def test_settlement_confirms_physical_state_after_execution_failure(app):
     assert _results(app)[-1].ok
     faults = [call.args[0].data for call in app.event_bus.put_event.call_args_list
               if call.args[0].type == EventType.ActuationFault]
-    assert faults[0]["code"] == "COMMAND_FAILED" and faults[0]["seq"] == 4
+    assert faults[0]["code"] == "COMMAND_FAILED" and faults[0]["command_id"] == '4'
 
 
 @pytest.mark.asyncio
 async def test_shutdown_accounts_for_pending_intent_without_executing_it(app):
     app.actuator = Mock()
-    app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 3, "seq": 8}))
+    app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 3}, command_id='8')))
     app._await_managed_connection.side_effect = lambda: setattr(app, "should_stop", True)
     await app.serve()
     app.actuator.execute.assert_not_called()
     assert app.command_queue.empty()
     acknowledgments = [call.args[0].data for call in app.event_bus.put_event.call_args_list
                        if call.args[0].type == EventType.ActuationAck]
-    assert acknowledgments[0]["seq"] == 8
+    assert acknowledgments[0]["command_id"] == '8'
     assert acknowledgments[0]["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
 async def test_failed_shutdown_receipt_does_not_skip_device_or_ipc_cleanup(app):
     app.actuator = Mock()
-    app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 3, "seq": 8}))
+    app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 3}, command_id='8')))
     app._await_managed_connection.side_effect = lambda: setattr(app, "should_stop", True)
     app.event_bus.put_event.side_effect = RuntimeError("result channel closed")
     with pytest.raises(Exception, match="result channel closed|cleanup"):
@@ -241,7 +243,7 @@ async def test_shutdown_still_quiesces_when_settlement_was_cancelled_while_joini
         assert release.wait(5)
 
     app.actuator = Mock(execute=execute)
-    app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1}))
+    app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 1})))
     serving = asyncio.create_task(app.serve())
     settlement = None
     try:
