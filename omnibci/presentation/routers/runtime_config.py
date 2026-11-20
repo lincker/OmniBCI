@@ -3,8 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Request
 
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.presentation.errors import ApiError
-from omnibci.presentation.routers.plugin_config import _configuration_errors
+from omnibci.presentation.errors import ApiError, configuration_errors
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.plugin_config import ConfigurationModule, RevertModuleRequest
 from omnibci.presentation.schemas.runtime_config import (
@@ -28,26 +27,26 @@ def node_configuration(role: Literal["stimulation", "actuation"], request: Reque
     service = getattr(getattr(request.app.state, "container", None), "node_configuration", None)
     if service is None:
         raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Node configuration is unavailable")
-    with _configuration_errors():
+    with configuration_errors():
         return ApiResponse(data=service.configuration(role))
 
 
 @router.get("/runtime", response_model=ApiResponse[RuntimeConfigurationResponse])
 def runtime_status(service=Depends(get_runtime_configuration)):
-    with _configuration_errors():
+    with configuration_errors():
         return ApiResponse(data=service.status())
 
 
 @router.post("/apply-plan", response_model=ApiResponse[RuntimePlanResponse])
 def plan_configuration(body: RuntimePlanRequest, service=Depends(get_runtime_configuration)):
-    with _configuration_errors():
+    with configuration_errors():
         plan = service.plan(**body.model_dump())
         return ApiResponse(data=plan.to_dict())
 
 
 @router.post("/apply", status_code=202, response_model=ApiResponse[RuntimeOperationResponse])
 async def apply_configuration(body: RuntimeApplyRequest, service=Depends(get_runtime_configuration)):
-    with _configuration_errors():
+    with configuration_errors():
         return ApiResponse(data=service.submit(body.plan_id, body.operation_id))
 
 
@@ -62,7 +61,7 @@ def configuration_operation(operation_id: str, service=Depends(get_runtime_confi
 @router.post("/modules/{module}/revert-plan", response_model=ApiResponse[RuntimePlanResponse])
 def revert_module(module: ConfigurationModule, body: RevertModuleRequest,
                   service=Depends(get_runtime_configuration)):
-    with _configuration_errors():
+    with configuration_errors():
         try:
             return ApiResponse(data=service.revert_plan(module, body.entry_id).to_dict())
         except KeyError as exc:

@@ -75,7 +75,7 @@ class TestOnTrialCompleted:
         assert "TrialOutcome" in caplog.text or "Classification" in caplog.text
 
     def test_trial_outcome_broadcast_carries_engine_generation(self):
-        from omnibci.infrastructure.outbound import TrialOutcome
+        from omnibci.application.events import TrialOutcome
         b = ResultsBroadcaster()
         b.set_loop(asyncio.new_event_loop())
         b._clients.add(MagicMock())

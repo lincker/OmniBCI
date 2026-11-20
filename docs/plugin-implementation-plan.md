@@ -1,10 +1,10 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a–S4j runtime ports, preparation receipts, command contracts, Configuration queries, module-scoped settings, shared IPC ownership, external/managed startup evidence execution history and output causality are implemented and verified. Remaining S4 work and S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a–S4k runtime ports, preparation receipts, command contracts, Configuration queries, module-scoped settings, shared IPC ownership, external/managed startup evidence, execution history, output causality and presentation ownership are implemented and verified. S4 is complete; S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2e are complete and verified (S2e: `cf30c57`).
 
-Updated: 2026-11-20. Original inspection baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`. The retained S1a–S1c implementation is committed in `e81f825`.
+Updated: 2026-11-21. Original inspection baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`. The retained S1a–S1c implementation is committed in `e81f825`.
 
 This document owns implementation order, change boundaries and acceptance gates. The [architecture proposal](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries) owns terminology and module responsibilities; [Plugin API v1](plugin-api-v1.md) owns Python contracts; the [backend review](backend-interface-review.md) owns findings; the [Stimulation design](stimulation-interface-design.md) owns detailed rendering/lifecycle requirements. Do not maintain a second set of public signatures here.
 
@@ -479,6 +479,14 @@ Every command outcome preserves its command/source identity and a short referenc
 The optional age gate still depends on synchronized controller/node clocks. The old sequence counter is replaced by command identity, and acknowledgements without explicit status/identity are no longer counted as successful. Generic command dispatch distinguishes this envelope from `CommandRequest` using the existing closed command contract. SDK and REST/WS shapes do not change.
 
 **Validation:** ten initial origin cases failed before implementation; additional failing checks covered generic dispatch, output-host history correlation, repeated cancellation and malformed acknowledgements. The unchanged 468-file tree passes **1,854 affected tests** and **10 import contracts**. A final malformed-status guard changes only the feedback handler and its tests; both affected feedback/intent files then pass **37 tests**. The frozen and final manifests record that narrow difference. Evidence: `/private/tmp/omnibci-s4j-zfes2f7t`. Physical output remains unclaimed; real device/GPU checks belong to the final target-platform gate. Presentation ownership is the remaining S4 batch.
+
+#### S4k execution: presentation codecs and expected validation (2026-11-21)
+
+`TrialOutcome` owns its pure field projection. The WebSocket adapter owns its event envelope, while peer serialization independently uses the same application value. The infrastructure-to-presentation serializer dependency and old output-value re-export are removed. A concrete import rule now prevents WebSocket adapters from depending on infrastructure. Existing HTTP and WebSocket payloads remain unchanged.
+
+Common configuration error translation belongs to `presentation.errors`. Only declared application validation failures map to 422; unexpected `ValueError` reaches the existing masked 500 handler. Configuration converts invalid selection, target-version and input-mapping values at their narrow construction boundaries. Service execution is outside those catches, so programming faults cannot be mislabeled as bad user input.
+
+**Validation:** six new behavioral cases failed before implementation, with two preservation cases already passing; the new dependency rule also failed on the original WebSocket import. The focused group passes **141 tests**. Final verification on the unchanged 470-file tree passes **4,392 headless tests**, **38 integration tests** with one Windows-only skip, and **11 import contracts**. Existing WebSocket deprecation warnings remain. Evidence: `/private/tmp/omnibci-s4k-4fxuulcu`. This completes S4. S5/S6 and the separately scoped B1/B2 and M1–M3 follow-ups remain; physical-device, GPU and other-OS execution are not claimed.
 
 ### S5 Finish the three plugin entry workflows
 

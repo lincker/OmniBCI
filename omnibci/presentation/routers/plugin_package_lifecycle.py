@@ -6,8 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.presentation.dependencies import get_configuration_service
-from omnibci.presentation.errors import ApiError
-from omnibci.presentation.routers.plugin_config import _configuration_errors
+from omnibci.presentation.errors import ApiError, configuration_errors
 from omnibci.presentation.routers.plugin_packages import package_errors
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.plugin_config import PluginProfileResponse
@@ -30,20 +29,20 @@ def get_plugin_package_service(request: Request) -> PluginPackageService:
 @router.put("/{package_id}/{version}/enabled", response_model=ApiResponse[PackageVersionResponse])
 def set_enabled(package_id: str, version: str, body: SetPackageEnabledRequest,
                 svc: PluginPackageService = Depends(get_plugin_package_service)):
-    with package_errors(), _configuration_errors():
+    with package_errors(), configuration_errors():
         return ApiResponse(data=asdict(svc.set_enabled(package_id, version, body.enabled)))
 
 
 @router.delete("/{package_id}/{version}", response_model=ApiResponse)
 def remove(package_id: str, version: str, svc: PluginPackageService = Depends(get_plugin_package_service)):
-    with package_errors(), _configuration_errors():
+    with package_errors(), configuration_errors():
         svc.remove(package_id, version)
         return ApiResponse(message="Package version removed")
 
 
 @router.post("/profile-version-proposals", response_model=ApiResponse[ProfileVersionProposalResponse])
 def propose_profile(body: ProfileVersionRequest, svc: ConfigurationService = Depends(get_configuration_service)):
-    with package_errors(), _configuration_errors():
+    with package_errors(), configuration_errors():
         proposal = svc.propose_profile(**body.model_dump())
         data = asdict(proposal)
         if proposal.processing_input is not None:
@@ -54,6 +53,6 @@ def propose_profile(body: ProfileVersionRequest, svc: ConfigurationService = Dep
 @router.post("/version-profiles", status_code=201, response_model=ApiResponse[PluginProfileResponse])
 def create_version_profile(body: CreateVersionProfileRequest,
                            svc: ConfigurationService = Depends(get_configuration_service)):
-    with package_errors(), _configuration_errors():
+    with package_errors(), configuration_errors():
         profile = svc.create_version_profile(**body.model_dump())
         return ApiResponse(message="New profile created; select and apply it explicitly", data=profile.to_dict())

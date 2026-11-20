@@ -102,6 +102,10 @@ def _canonical(value) -> str:
 
 def _parse_profile_fields(data: dict) -> dict:
     result = dict(data)
+    try:
+        result["selection"] = plugin_identity.PluginSelection.from_dict(result["selection"])
+    except (ValueError, TypeError) as exc:
+        raise PluginProfileValidationError(f"Invalid selection: {exc}") from exc
     if "processing_input" in result:
         try:
             result["processing_input"] = ProcessingInput.from_dict(result["processing_input"])
@@ -155,8 +159,7 @@ class PluginProfile:
         _fields(data, {"format_version", "profile_id", "name", "kind", "selection",
                        "parameters", "configuration_version", "revision"},
                 {"processing_input"})
-        return cls(**{**_parse_profile_fields(data),
-                      "selection": plugin_identity.PluginSelection.from_dict(data["selection"])})
+        return cls(**_parse_profile_fields(data))
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,8 +218,7 @@ class ProfileBinding:
     def from_dict(cls, data: dict) -> ProfileBinding:
         _fields(data, {"slot", "kind", "selection", "parameters", "configuration_version",
                        "profile_revision"}, {"profile_id", "processing_input"})
-        return cls(**{**_parse_profile_fields(data), "profile_id": data.get("profile_id"),
-                      "selection": plugin_identity.PluginSelection.from_dict(data["selection"])})
+        return cls(**{**_parse_profile_fields(data), "profile_id": data.get("profile_id")})
 
 
 @dataclass(frozen=True, slots=True, init=False)

@@ -15,6 +15,7 @@ code directly.
 """
 
 import logging
+from contextlib import contextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,7 +23,11 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from omnibci.presentation.schemas.common import ErrorCode, ErrorResponse
-from omnibci.application.configuration.errors import ConfigProfileConflictError, ConfigProfileValidationError
+from omnibci.application.configuration.errors import (
+    ConfigProfileConflictError, ConfigProfileValidationError, PluginProfileNotFoundError,
+    PluginProfileValidationError, ProfileRevisionConflict,
+)
+from omnibci.application.plugin_schema import PluginSchemaError
 from omnibci.application.services.command_result_service import (
     CommandDeliveryError,
     CommandExecutionError,
@@ -79,6 +84,20 @@ class ApiError(Exception):
         self.code = code
         self.message = message
         self.detail = detail
+
+
+@contextmanager
+def configuration_errors():
+    try:
+        yield
+    except (PluginSchemaError, PluginProfileValidationError, ConfigProfileValidationError) as exc:
+        raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+    except (ProfileRevisionConflict, ConfigProfileConflictError) as exc:
+        raise ApiError(409, ErrorCode.CONFLICT, str(exc)) from exc
+    except PluginProfileNotFoundError as exc:
+        raise ApiError(404, ErrorCode.CONFIG_PROFILE_NOT_FOUND, f"Profile not found: {exc}") from exc
+    except OSError as exc:
+        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, str(exc)) from exc
 
 
 def command_error_to_api_error(exc: Exception) -> ApiError:
@@ -139,8 +158,6 @@ def _json_error(status_code: int, code: ErrorCode, message: str, detail=None) ->
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Install handlers that render every error as a unified ErrorResponse."""
-    from omnibci.application.configuration.errors import ProfileRevisionConflict
-
     @app.exception_handler(ProfileRevisionConflict)
     async def runtime_conflict_handler(request, exc):
         return _json_error(409, ErrorCode.CONFLICT, str(exc))

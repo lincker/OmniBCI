@@ -8,7 +8,7 @@ from omnibci.application.configuration.definitions import (
     MODULES, MODULE_SETTING_DEFAULTS, SERVER_SETTINGS, server_startup_settings,
     validate_server_settings,
 )
-from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
+from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileValidationError, ProfileRevisionConflict
 from omnibci.application.configuration.ports import ConfigurationRepository, ProfileVersionCatalog
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.configuration.models import (
@@ -160,7 +160,10 @@ class ConfigurationService:
         if self._profile_versions is None:
             raise PluginPackageError("Version profile metadata is unavailable")
         source = self.repository.get_profile(source_profile_id)
-        selection = replace(source.selection, version=target_version)
+        try:
+            selection = replace(source.selection, version=target_version)
+        except (ValueError, TypeError) as exc:
+            raise PluginProfileValidationError(f"Invalid target version: {exc}") from exc
         if selection == source.selection:
             raise PluginPackageError("Choose a different exact package version")
         package = self._profile_versions.get_package(selection.package_id, target_version)
@@ -233,7 +236,10 @@ class ConfigurationService:
             if ({"slot", "selection", "parameters"} <= set(item)
                     and not set(item) - {"slot", "selection", "parameters", "configuration_version", "processing_input"}):
                 kind = plugin_kind_for_slot(item["slot"])
-                selection = PluginSelection.from_dict(item["selection"])
+                try:
+                    selection = PluginSelection.from_dict(item["selection"])
+                except (ValueError, TypeError) as exc:
+                    raise PluginProfileValidationError(f"Invalid selection: {exc}") from exc
                 definition, parameters = self._parameters(
                     kind, selection, item["parameters"], item.get("configuration_version"),
                 )
@@ -243,7 +249,10 @@ class ConfigurationService:
                 if kind == "decoder":
                     if channel_input is None:
                         raise PluginSchemaError("processing.decoder requires explicit processing_input")
-                    channel_input = ProcessingInput.from_dict(channel_input)
+                    try:
+                        channel_input = ProcessingInput.from_dict(channel_input)
+                    except (ValueError, TypeError) as exc:
+                        raise PluginProfileValidationError(f"Invalid processing_input: {exc}") from exc
                 selected.append(ProfileBinding(
                     slot=item["slot"], kind=kind, profile_id=None, selection=selection, parameters=parameters,
                     configuration_version=definition.configuration_version, processing_input=channel_input,

@@ -2,7 +2,8 @@
 
 from omnibci.application.events import TrialOutcome
 from omnibci.domain.classification import Classification
-from omnibci.infrastructure.outbound import event_to_wire, payload_to_jsonable
+from omnibci.presentation.websockets.results import event_to_wire
+from omnibci.infrastructure.outbound import payload_to_jsonable
 from omnibci.presentation.schemas.ws import TrialCompletedMessage
 from omnibci.shared.events import Event, EventType
 

@@ -17,7 +17,7 @@ from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, comp
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.outbound import event_to_wire
+from omnibci.presentation.websockets.results import event_to_wire
 from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import (
     Scan45DataReader, Scan45Message,
 )

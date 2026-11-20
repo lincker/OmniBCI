@@ -7,12 +7,11 @@ from starlette.concurrency import run_in_threadpool
 
 from omnibci.presentation.dependencies import get_acquisition_service, get_engine_service
 from omnibci.presentation.routers.runtime_config import get_runtime_configuration
-from omnibci.presentation.routers.plugin_config import _configuration_errors
 from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
 from omnibci.presentation.errors import (
     ApiError,
     COMMAND_EXECUTION_RESPONSES,
-    command_error_to_api_error,
+    command_error_to_api_error, configuration_errors,
 )
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.acquisition import (
@@ -44,7 +43,7 @@ router = APIRouter(prefix="/acquisition", tags=["Acquisition"])
     summary="Connect data source and wait for execution",
 )
 async def connect(body: ModuleActionRequest, runtime=Depends(get_runtime_configuration)):
-    with _configuration_errors():
+    with configuration_errors():
         result = await runtime.execute_current("acquisition", "connect", **body.model_dump())
         return ApiResponse(data=result)
 

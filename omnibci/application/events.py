@@ -17,6 +17,18 @@ class TrialOutcome:
     processing_revision: str | None = None
     acquisition_revision: str | None = None
 
+    def to_dict(self) -> dict:
+        """Project the common result fields without choosing a transport envelope."""
+        result = {"generation": self.generation, "trial_number": self.trial_number,
+                  "target_id": self.classification.target_id, "event_id": self.classification.event_id,
+                  "confidence": self.classification.confidence, "forced": self.classification.forced,
+                  "produced_at": self.classification.produced_at.isoformat()}
+        if self.processing_revision is not None:
+            result["processing_revision"] = self.processing_revision
+        if self.acquisition_revision is not None:
+            result["acquisition_revision"] = self.acquisition_revision
+        return result
+
 
 @dataclass(frozen=True)
 class EpochProcessed:

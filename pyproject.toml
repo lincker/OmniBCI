@@ -164,3 +164,9 @@ name = "Shared IPC and output hosts must not depend on engine assembly"
 type = "forbidden"
 source_modules = ["omnibci.infrastructure.ipc", "omnibci.infrastructure.stimulation", "omnibci.infrastructure.actuation"]
 forbidden_modules = ["omnibci.infrastructure.neuroengine"]
+
+[[tool.importlinter.contracts]]
+name = "WebSocket presentation must not depend on infrastructure codecs"
+type = "forbidden"
+source_modules = ["omnibci.presentation.websockets"]
+forbidden_modules = ["omnibci.infrastructure"]

@@ -7,12 +7,12 @@ from datetime import datetime, timezone
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
 from omnibci.infrastructure.outbound import (
-    TrialOutcome,
-    event_to_wire,
     payload_to_jsonable,
     make_stimulation_ack,
 )
+from omnibci.presentation.websockets.results import event_to_wire
 from omnibci.application.events import (
+    TrialOutcome,
     CommandFailureKind,
     CommandRequest,
     CommandResult,
