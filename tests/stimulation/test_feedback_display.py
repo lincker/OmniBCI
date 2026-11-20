@@ -25,8 +25,7 @@ from omnibci.sdk import TextureHandle
 @pytest.fixture()
 def renderer():
     r = MagicMock()
-    _id = iter(range(1, 10_000))
-    r.upload_texture.side_effect = lambda _: TextureHandle(id=next(_id))
+    r.upload_texture.side_effect = lambda _: TextureHandle()
     return r
 
 

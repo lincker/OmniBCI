@@ -60,8 +60,7 @@ def trigger():
 @pytest.fixture()
 def renderer():
     r = MagicMock()
-    _id = iter(range(1, 10_000))
-    r.upload_texture.side_effect = lambda _: TextureHandle(id=next(_id))
+    r.upload_texture.side_effect = lambda _: TextureHandle()
     return r
 
 
@@ -143,7 +142,7 @@ class TestSetup:
 
 class TestTeardown:
     def test_partial_upload_retains_every_completed_texture(self, paradigm, renderer, trigger):
-        handles = [TextureHandle(id=i) for i in range(1, 4)]
+        handles = [TextureHandle() for _ in range(3)]
         renderer.upload_texture.side_effect = [*handles, RuntimeError("upload failed")]
         with pytest.raises(RuntimeError, match="upload failed"):
             paradigm.setup(renderer=renderer, trigger=trigger)

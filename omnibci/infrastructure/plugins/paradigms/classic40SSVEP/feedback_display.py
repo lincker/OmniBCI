@@ -90,9 +90,15 @@ class FeedbackDisplay:
             with self._lock:
                 snapshot    = self._content
                 self._dirty = False
-            if self._tex is not None:
-                renderer.release_texture(self._tex)
-            self._tex = renderer.upload_texture(self._render(snapshot))
+            try:
+                replacement = renderer.upload_texture(self._render(snapshot))
+            except BaseException:
+                with self._lock:
+                    self._dirty = True
+                raise
+            previous, self._tex = self._tex, replacement
+            if previous is not None:
+                renderer.release_texture(previous)
         if self._tex is not None:
             renderer.draw_texture(self._tex, self._rect)
 

@@ -1,6 +1,6 @@
 # Plugin API v1 Domain Contracts
 
-Status: target API v1 contract. S1a/S1b, S1c processing methods and S1e Effector methods are implemented and verified. S1d has resumed on this branch: required Paradigm methods and readiness scheduling are restored and verified; narrow capabilities and trigger lifecycle are implemented and verified; graphics follows separately. S1f and the coordinated constructor/SDK/manifest switch remain pending. See the [execution record](plugin-implementation-plan.md) and [Stimulation handoff](stimulation-interface-design.md#8-follow-up-branch-handoff).
+Status: target API v1 contract. S1a/S1b, S1c processing methods and S1e Effector methods are implemented and verified. S1d has resumed on this branch: required Paradigm methods and readiness scheduling are restored and verified; narrow capabilities and trigger lifecycle are implemented and verified; graphics validation, opaque handles and failure-safe feedback replacement are also implemented and verified headlessly. S1f and the coordinated constructor/SDK/manifest switch remain pending. See the [execution record](plugin-implementation-plan.md) and [Stimulation handoff](stimulation-interface-design.md#8-follow-up-branch-handoff).
 
 Updated: 2026-11-20. Implementation baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`.
 
@@ -274,7 +274,7 @@ class TriggerEmitter(ABC):
     def teardown(self) -> None: ...
 ```
 
-Retain the existing small `Color` and `Rect` values: finite RGBA components in `[0, 1]`, and finite normalized-device coordinates with positive width/height. Keep the existing NDC origin at the center and upward y-axis; `Rect.x/y` identifies the rectangle's lower-left corner. A `TextureHandle` is opaque, surface-owned and valid until release/shutdown. Reject foreign/stale handles; repeated release of an already released owned handle is harmless. Upload consumes a positive-size `(H, W, C)` uint8 image with `C` in `1, 3, 4` before returning.
+Retain the existing small `Color` and `Rect` values: finite RGBA components in `[0, 1]`, and finite normalized-device coordinates with positive width/height. Keep the existing NDC origin at the center and upward y-axis; `Rect.x/y` identifies the rectangle's lower-left corner and may extend outside the visible viewport. The immutable values validate at construction. A `TextureHandle` is opaque, surface-owned and valid until release/shutdown. Reject foreign/stale handles; repeated release of an already released owned handle is harmless. Upload consumes a positive-size `(H, W, C)` uint8 image with `C` in `1, 3, 4` before returning.
 
 The host alone owns window initialization, event polling, frame submission and shutdown. All drawing/texture calls use its owner thread. Do not export the full [Renderer](../omnibci/domain/ports/renderer.py) or make plugins select concrete GPU adapters.
 

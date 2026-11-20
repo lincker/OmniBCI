@@ -1,8 +1,8 @@
 # Stimulation Interface and Rendering Design
 
-Status: S1d implementation has resumed on `refactor/module-interface` under the latest user instruction. The first batch is restored from `e2299db` and verified against `1526d06`: 28 reproduced failures, then 245 focused tests and eight import contracts passed. The capabilities/lifecycle batch is complete and verified; graphics follows separately. See the [execution scope](#8-follow-up-branch-handoff).
+Status: S1d implementation has resumed on `refactor/module-interface` under the latest user instruction. The first batch is restored from `e2299db` and verified against `1526d06`: 28 reproduced failures, then 245 focused tests and eight import contracts passed. The capabilities/lifecycle batch is complete and verified. The graphics batch passes 649 focused tests and eight import contracts; constructors and trial/result payloads remain S1f. See the [execution scope](#8-follow-up-branch-handoff).
 
-Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; the lifecycle and graphics changes below remain pending until their execution records confirm completion.
+Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; lifecycle and graphics software changes are recorded as complete below; physical GPU/device and other-OS checks remain unperformed.
 
 Stimulation needs complete plugin contracts and one owner for renderer, paradigm and trigger resources. Keep the existing rendering adapters and stimulus state machine; complete their boundaries and failure handling without adding a rendering framework or compatibility layer.
 
@@ -224,9 +224,11 @@ This batch is implemented after `e2ef5a0`. The new failure cases and focused che
 
 Preserve the first-batch admission behavior when it is restored. First add failing cases for partial setup, every cleanup failure, same-thread execution, stop/cancel races, blocked callbacks, no-trigger mode and receipt ordering. Verify real callers and both local/external node paths. Do not change trigger frame placement or claim measured physical onset as part of this interface work.
 
-### 8.3 Remaining scope and dependencies
+### 8.3 Graphics completion and remaining dependencies
 
-- Keep Color/Rect validation, opaque handle ownership, stale/foreign handle rejection and feedback texture replacement for the graphics batch. Preserve both adapters and the frame-pack format.
+The graphics batch is implemented against `854ba37`: 81 initial failures were reproduced, then 649 focused tests and eight import contracts passed. Color/Rect validate finite components and positive sizes. Both adapters use opaque surface-owned handles, reject foreign/released handles, and retain failed upload/release ownership until shutdown. Feedback replacement preserves its previous texture on upload failure and retains concurrent text changes. Both adapters and the frame-pack format remain. See the execution record for evidence and target limitations.
+
+- Graphics behavior is covered by headless fakes; real display/device timing remains a target check.
 - Keep trial/result method and payload migration coordinated with their actual consumers; do not add old/new method aliases or payload dispatch. The shared constructor, PluginContext, manifest/API-version and payload-schema switch remains S1f.
 - Do not rewrite Classic40's stimulus state machine, remove unrelated locks or add a general lifecycle manager merely to perform the interface changes.
 - The complete API v1 transition still requires the remaining work. Separate commits do not authorize a compatibility layer or allow S1f's seven-kind completion gate to be marked complete early.

@@ -80,8 +80,10 @@ class ModernGLRenderer:
     def __init__(self) -> None:
         self._glfw_started = False
         self._window = None
-        self._textures: dict[int, mgl.Texture] = {}
-        self._next_id = 1
+        self._textures: dict[TextureHandle, mgl.Texture] = {}
+        self._texture_owner = object()
+        self._started = False
+        self._ready = False
         self._closed = False
         self._shutdown_error = None
         for name in ("_ctx", "_prog_tex", "_prog_col", "_ibo", "_vbo_tex", "_vbo_col", "_vao_tex", "_vao_col"):
@@ -90,6 +92,9 @@ class ModernGLRenderer:
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     def initialize(self, width: int, height: int, title: str) -> None:
+        if self._started or self._closed:
+            raise RuntimeError("Renderer already started or closed")
+        self._started = True
         self._glfw_started = True
         if not glfw.init():
             raise RuntimeError("glfw.init() failed")
@@ -144,6 +149,8 @@ class ModernGLRenderer:
             self._ibo,
         )
 
+        self._ready = True
+
     def shutdown(self) -> None:
         if self._shutdown_error is not None:
             raise self._shutdown_error
@@ -169,6 +176,7 @@ class ModernGLRenderer:
             except Exception as exc:
                 errors.append(exc)
         self._closed = True
+        self._textures.clear()
         if errors:
             self._shutdown_error = ExceptionGroup("ModernGL resource cleanup failed", errors)
             raise self._shutdown_error
@@ -176,50 +184,75 @@ class ModernGLRenderer:
     # ── Window ─────────────────────────────────────────────────────────────
 
     def poll_events(self) -> None:
+        self._ensure_open()
         glfw.poll_events()
 
     def should_close(self) -> bool:
+        self._ensure_open()
         return glfw.window_should_close(self._window)
 
     def end_frame(self) -> None:
+        self._ensure_open()
         glfw.swap_buffers(self._window)
 
     # ── Texture management ──────────────────────────────────────────────────
 
     def upload_texture(self, image: np.ndarray) -> TextureHandle:
         """Upload an H×W luminance, RGB, or RGBA image."""
+        self._ensure_open()
         if not isinstance(image, np.ndarray):
             raise TypeError("Texture image must be a numpy.ndarray")
         if image.dtype != np.uint8:
             raise TypeError(f"Texture image dtype must be uint8, got {image.dtype}")
-        if image.ndim != 3 or image.shape[2] not in (1, 3, 4):
+        if image.ndim != 3 or min(image.shape[:2]) <= 0 or image.shape[2] not in (1, 3, 4):
             raise ValueError(
-                "Texture image shape must be (H, W, C) with C in (1, 3, 4), "
+                "Texture image shape must be positive-size (H, W, C) with C in (1, 3, 4), "
                 f"got {image.shape}"
             )
         image = np.ascontiguousarray(image)
         h, w, components = image.shape
         tex = self._ctx.texture((w, h), components, image.tobytes())
-        tex.filter = (mgl.NEAREST, mgl.NEAREST)
-        if components == 1:
-            tex.swizzle = "RRR1"
-        handle = TextureHandle(id=self._next_id)
-        self._textures[self._next_id] = tex
-        self._next_id += 1
+        handle = TextureHandle(_owner=self._texture_owner)
+        self._textures[handle] = tex
+        try:
+            tex.filter = (mgl.NEAREST, mgl.NEAREST)
+            if components == 1:
+                tex.swizzle = "RRR1"
+        except BaseException as failure:
+            try:
+                self.release_texture(handle)
+            except BaseException as cleanup:
+                raise BaseExceptionGroup("Texture upload and cleanup failed", [failure, cleanup])
+            raise
         return handle
 
+    def _ensure_open(self) -> None:
+        if self._closed or not self._ready:
+            raise RuntimeError("Renderer is closed or not initialized")
+
+    def _check_handle(self, handle: TextureHandle) -> None:
+        self._ensure_open()
+        if not isinstance(handle, TextureHandle) or handle._owner is not self._texture_owner:
+            raise ValueError("Texture handle belongs to another surface")
+
     def release_texture(self, handle: TextureHandle) -> None:
-        tex = self._textures.pop(handle.id, None)
+        self._check_handle(handle)
+        tex = self._textures.get(handle)
         if tex is not None:
             tex.release()
+            del self._textures[handle]
 
     # ── Drawing ─────────────────────────────────────────────────────────────
 
     def clear(self, color: Color = Color(0.0, 0.0, 0.0)) -> None:
+        self._ensure_open()
         self._ctx.clear(color.r, color.g, color.b, color.a)
 
     def draw_texture(self, handle: TextureHandle, rect: Rect) -> None:
-        x, y, w, h = rect
+        self._check_handle(handle)
+        if handle not in self._textures:
+            raise ValueError("Texture handle has been released")
+        x, y, w, h = rect.x, rect.y, rect.w, rect.h
         verts = np.array([
             x,     y,     0.0, 0.0,   # bottom-left
             x + w, y,     1.0, 0.0,   # bottom-right
@@ -227,12 +260,13 @@ class ModernGLRenderer:
             x,     y + h, 0.0, 1.0,   # top-left
         ], dtype=np.float32)
         self._vbo_tex.write(verts.tobytes())
-        self._textures[handle.id].use(location=0)
+        self._textures[handle].use(location=0)
         self._prog_tex["uTexture"].value = 0
         self._vao_tex.render(mgl.TRIANGLES)
 
     def draw_rect(self, rect: Rect, color: Color) -> None:
-        x, y, w, h = rect
+        self._ensure_open()
+        x, y, w, h = rect.x, rect.y, rect.w, rect.h
         verts = np.array([
             x,     y,
             x + w, y,
