@@ -3,6 +3,7 @@ export type TrialControl = {
   label?: string;
   type?: "int" | "float";
   field: "n_trials" | "trial_params";
+  payload_key?: string;
   default?: number;
   min?: number;
   max?: number;
@@ -49,6 +50,11 @@ export function readTrialControls(value: unknown): Record<string, TrialControl> 
         || (control.label !== undefined && typeof control.label !== "string")
         || (control.type !== undefined && control.type !== "int" && control.type !== "float")) {
       throw new Error(`Unsupported trial control: ${name}.`);
+    }
+    if (control.field === "trial_params"
+        ? typeof control.payload_key !== "string" || !control.payload_key.trim()
+        : control.payload_key !== undefined) {
+      throw new Error(`Invalid payload key for trial control: ${name}.`);
     }
     fields.add(control.field);
     for (const key of ["default", "min", "max"]) {

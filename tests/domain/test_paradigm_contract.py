@@ -12,10 +12,10 @@ class _PresentationOnlyParadigm(Paradigm):
     def teardown(self):
         pass
 
-    def trial_stimulus_present(self, params):
+    def present_trial(self, params):
         pass
 
-    def trial_result_present(self, result):
+    def present_result(self, result):
         pass
 
 

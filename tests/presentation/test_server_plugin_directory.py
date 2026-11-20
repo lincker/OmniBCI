@@ -24,8 +24,10 @@ def _plugin(directory):
         "package": {"id": "directory", "publisher": "test", "version": SELECTION.version,
                     "domain": "actuation", "api_version": "1"},
         "contributions": [{"id": "default", "kind": "effector", "plugin_type": "directory_probe",
-                           "display_name": "Directory probe", "entrypoint": "driver:Probe"}],
+                           "display_name": "Directory probe", "entrypoint": "driver:Probe",
+                           "payload_schemas": {"command": "command.schema.json"}}],
     }), encoding="utf-8")
+    (package / "command.schema.json").write_text('{"type":"object","properties":{},"additionalProperties":false}')
     return package
 
 

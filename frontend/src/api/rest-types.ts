@@ -1853,6 +1853,7 @@ export interface components {
             /** Version */
             version: string;
         };
+        JsonValue: unknown;
         /** MarketContributionResponse */
         MarketContributionResponse: {
             /**
@@ -2544,11 +2545,7 @@ export interface components {
         };
         /**
          * StartTrialRequest
-         * @description Trigger one or more stimulation trials.
-         *
-         *     n_trials     — how many trials to run (paradigm-agnostic base parameter).
-         *     trial_params — per-trial target/event ids; len must equal n_trials when
-         *                    provided.  None → each trial uses the paradigm default.
+         * @description Start an explicit batch of per-trial JSON objects.
          */
         StartTrialRequest: {
             /**
@@ -2557,7 +2554,9 @@ export interface components {
              */
             n_trials: number;
             /** Trial Params */
-            trial_params?: number[] | null;
+            trial_params: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
         };
         /**
          * StimulationStatusResponse
@@ -4999,7 +4998,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": components["schemas"]["StartTrialRequest"];
             };

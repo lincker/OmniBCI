@@ -28,7 +28,7 @@ _PACKAGE_FIELDS = frozenset({
 })
 _CONTRIBUTION_FIELDS = frozenset({
     "id", "kind", "entrypoint", "plugin_type", "display_name", "description",
-    "params", "controls", "platforms", "configuration", "channel_requirements",
+    "params", "controls", "platforms", "configuration", "channel_requirements", "payload_schemas",
 })
 
 
@@ -253,6 +253,7 @@ def _parse_contributions(
             configuration_schema=configuration_schema,
             configuration_version=configuration_version,
             channel_requirements=requirements,
+            payload_schemas=_payload_schemas(contribution, category, package_dir),
         ))
     return tuple(descriptors)
 
@@ -267,19 +268,37 @@ def _configuration(contribution: Mapping, package_dir: Path) -> tuple[dict | Non
         version = declaration["schema_version"]
         if type(version) is not int or version < 1:
             raise ValueError("configuration.schema_version must be a positive integer")
-        name = declaration["schema"]
-        if (not isinstance(name, str) or not name or "\\" in name
-                or ":" in name or Path(name).is_absolute() or ".." in Path(name).parts):
-            raise ValueError("configuration.schema must be a relative package path")
-        path = package_dir / name
-        if path.resolve() != path or not path.resolve().is_relative_to(package_dir.resolve()):
-            raise ValueError("configuration.schema must not traverse symlinks")
-        if path.stat().st_size > 1024 * 1024:
-            raise ValueError("configuration schema exceeds 1 MiB")
-        schema = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_json_object)
-        return validate_schema(schema), version
+        return _schema(declaration["schema"], package_dir), version
     except (OSError, ValueError, RecursionError) as exc:
         raise PluginManifestError(f"{package_dir / MANIFEST_NAME}: invalid configuration: {exc}") from exc
+
+
+def _payload_schemas(contribution: Mapping, kind: str, package_dir: Path) -> dict:
+    expected = {"trial", "result"} if kind == "paradigm" else {"command"} if kind == "effector" else set()
+    declaration = contribution.get("payload_schemas")
+    try:
+        if not expected:
+            if "payload_schemas" in contribution:
+                raise ValueError(f"{kind} does not accept payload_schemas")
+            return {}
+        if not isinstance(declaration, Mapping) or set(declaration) != expected:
+            raise ValueError(f"{kind} requires exactly {sorted(expected)}")
+        return {name: _schema(declaration[name], package_dir) for name in sorted(expected)}
+    except (OSError, ValueError, RecursionError) as exc:
+        raise PluginManifestError(f"{package_dir / MANIFEST_NAME}: invalid payload_schemas: {exc}") from exc
+
+
+def _schema(name: object, package_dir: Path) -> dict:
+    if (not isinstance(name, str) or not name or "\\" in name
+            or ":" in name or Path(name).is_absolute() or ".." in Path(name).parts):
+        raise ValueError("schema must be a relative package path")
+    path = package_dir / name
+    if path.resolve() != path or not path.resolve().is_relative_to(package_dir.resolve()):
+        raise ValueError("schema must not traverse symlinks")
+    if path.stat().st_size > 1024 * 1024:
+        raise ValueError("schema exceeds 1 MiB")
+    schema = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_json_object)
+    return validate_schema(schema)
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:

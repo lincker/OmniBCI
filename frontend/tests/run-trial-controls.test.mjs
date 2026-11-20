@@ -48,10 +48,10 @@ const latestProfiles = [...new Map(completeActivation.bindings.map((binding) => 
   selection: { package_id: "latest.package", contribution_id: "new-contribution", version: "9.9.9" },
 }])).values()];
 const ready = { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type };
-const legacyControls = { cue: { type: "int", field: "trial_params", default: 2, min: 1, max: 4 } };
+const numericControls = { cue: { type: "int", field: "trial_params", payload_key: "event_id", default: 2, min: 1, max: 4 } };
 const sequenceControls = {
   trials: { type: "int", field: "n_trials", default: 1, min: 1 },
-  cue: { type: "int", field: "trial_params", default: 1, min: 0, max: 40, default_sequence: "1-40" },
+  cue: { type: "int", field: "trial_params", payload_key: "event_id", default: 1, min: 0, max: 40, default_sequence: "1-40" },
 };
 
 function expandModules(tree) {
@@ -75,7 +75,7 @@ function render({ stimulation = ready, stimulationError = null, selectedParadigm
   signal = null, signalError = null,
   profiles = [], refresh = noop, configurationLoad,
   acquisitionPending = false, acquisitionActions = {}, actionErrors = {},
-  controls = legacyControls, controlValues = { n_trials: "3", cue: "2" }, trialError = null,
+  controls = numericControls, controlValues = { n_trials: "3", cue: "2" }, trialError = null,
   onStateChange = noop, onEffect = noop, onEditProcessing = noop } = {}) {
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   const previous = dispatcher.current;
@@ -148,7 +148,7 @@ test("the selected connected paradigm enables Trigger trial and sends its trial 
     assert.equal(triggerButton(tree).props.disabled, false);
     assert.equal(elements(tree).some((element) => element.type === "input" && element.props.type === "text"), false);
     submit(tree);
-    assert.deepEqual(calls, [[3, [2, 2, 2]]]);
+    assert.deepEqual(calls, [[3, [{ event_id: 2 }, { event_id: 2 }, { event_id: 2 }]]]);
   });
 });
 
@@ -432,7 +432,7 @@ test("the default sequence submits each of the 40 targets once in a single reque
     assert.match(text(tree), /Sequence repetitions/);
     assert.match(text(tree), /40 targets per sequence × 1 repetitions = 40 trials\./);
     submit(tree);
-    assert.deepEqual(calls, [[40, Array.from({ length: 40 }, (_, index) => index + 1)]]);
+    assert.deepEqual(calls, [[40, Array.from({ length: 40 }, (_, index) => ({ event_id: index + 1 }))]]);
   });
 });
 
@@ -445,7 +445,7 @@ for (const [name, sequence, repetitions, expected] of [
   test(`editable target text submits ${name}`, () => {
     withTrialCalls((calls) => {
       submit(render({ controls: sequenceControls, controlValues: { trials: repetitions, cue: sequence } }));
-      assert.deepEqual(calls, [[expected.length, expected]]);
+      assert.deepEqual(calls, [[expected.length, expected.map((value) => ({ event_id: value }))]]);
     });
   });
 }
@@ -453,7 +453,7 @@ for (const [name, sequence, repetitions, expected] of [
 test("sequence repetitions also work without a plugin trial-count control", () => {
   withTrialCalls((calls) => {
     submit(render({ controls: { cue: sequenceControls.cue }, controlValues: { n_trials: "2", cue: "1,3" } }));
-    assert.deepEqual(calls, [[4, [1, 3, 1, 3]]]);
+    assert.deepEqual(calls, [[4, [1, 3, 1, 3].map((value) => ({ event_id: value }))]]);
   });
 });
 
@@ -622,4 +622,19 @@ test("a ready trial can run without acquisition streaming or an unavailable-acti
   assert.equal(triggerButton(tree).props.disabled, false);
   assert.equal(triggerButton(tree).props["aria-describedby"], undefined);
   assert.equal(elements(tree).some((element) => element.props.id === "trial-action-reasons"), false);
+});
+
+test("v1 controls build object payloads using the declared key", () => {
+  withTrialCalls((calls) => {
+    submit(render({ controls: { cue: { type: "int", field: "trial_params", payload_key: "cue_id", default: 2 } },
+      controlValues: { n_trials: "2", cue: "2" } }));
+    assert.deepEqual(calls, [[2, [{ cue_id: 2 }, { cue_id: 2 }]]]);
+  });
+});
+
+test("a parameterless paradigm sends explicit empty objects", () => {
+  withTrialCalls((calls) => {
+    submit(render({ controls: {}, controlValues: { n_trials: "2" } }));
+    assert.deepEqual(calls, [[2, [{}, {}]]]);
+  });
 });

@@ -4,8 +4,8 @@
 """Classic 40-target SSVEP paradigm — RenderSurface-protocol edition.
 
 Rendering is driven by an external RenderLoop that calls ``render_frame``
-once per VSync.  Trial control methods (``trial_stimulus_present``,
-``trial_result_present``) run on the renderer owner thread.
+once per VSync.  Trial control methods (``present_trial``,
+``present_result``) run on the renderer owner thread.
 """
 from __future__ import annotations
 
@@ -219,14 +219,12 @@ class Classic40SSVEP_2(Paradigm):
         with self._lock:
             return self._state is not _State.IDLE
 
-    def trial_stimulus_present(self, params=None) -> None:
-        """Begin cue->stim sequence.  Thread-safe.
-
-        This paradigm interprets *params* as the target/event id: an int in
-        1..40 → cued trial for that target; anything else / None → no-cue
-        free run (default target 0).
-        """
-        event_id = params if isinstance(params, int) else 0
+    def present_trial(self, parameters: Mapping[str, object]) -> None:
+        """Begin a cued trial (1..40) or an explicit free run (0)."""
+        if (not isinstance(parameters, Mapping) or set(parameters) != {"event_id"}
+                or type(parameters["event_id"]) is not int or not 0 <= parameters["event_id"] <= _N_TARGETS):
+            raise ValueError("Trial requires event_id as an integer in 0..40")
+        event_id = parameters["event_id"]
         with self._lock:
             self._current_event = event_id
             self._result_target_id = 0
@@ -240,16 +238,20 @@ class Classic40SSVEP_2(Paradigm):
                 self._stim_frame_idx = 0
                 self._state          = _State.STIM
 
-    def trial_result_present(self, result=None) -> None:
-        """Update the result target and feedback text for ~1.5 s.  Thread-safe."""
-        text = self._parse_feedback(result)
-        logging.info(f"feedback result={result!r}, char={text!r}")
+    def present_result(self, result: Mapping[str, object]) -> None:
+        """Update feedback for the explicitly selected target."""
+        if (not isinstance(result, Mapping) or set(result) != {"target_id"}
+                or type(result["target_id"]) is not int or not 1 <= result["target_id"] <= _N_TARGETS):
+            raise ValueError("Result requires target_id as an integer in 1..40")
+        target_id = result["target_id"]
+        text = self._parse_feedback(target_id)
+        logging.info(f"feedback target_id={target_id!r}, char={text!r}")
         with self._lock:
             if text == 'Del':
                 self._text_view.remove_last()
             else:
                 self._text_view.add_text(text)
-            self._result_target_id = result
+            self._result_target_id = target_id
             self._result_countdown = _RESULT_FRAMES
             self._state            = _State.RESULT
 

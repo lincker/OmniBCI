@@ -13,10 +13,10 @@ from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
 
 
-def _ack(command="StartStimTrial", status="ok", target_index=3, message=None) -> Event:
+def _ack(command="StartStimTrial", status="ok", trial_params=None, message=None) -> Event:
     return Event(EventType.StimulationAck,
                  {"command": command, "status": status,
-                  "target_index": target_index, "message": message})
+                  "trial_params": {"event_id": 3} if trial_params is None else trial_params, "message": message})
 
 
 class TestStimulationFeedbackHandler:
@@ -24,7 +24,7 @@ class TestStimulationFeedbackHandler:
         h = StimulationFeedbackHandler()
         h.on_ack(_ack(status="ok"))
         assert h.ok_count == 1 and h.error_count == 0
-        assert h.last_ack["target_index"] == 3
+        assert h.last_ack["trial_params"] == {"event_id": 3}
 
     def test_error_ack_counted(self):
         h = StimulationFeedbackHandler()

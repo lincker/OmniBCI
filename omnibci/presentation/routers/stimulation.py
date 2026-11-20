@@ -87,7 +87,7 @@ def stop_stimulation(svc: StimulationAppService = Depends(get_stimulation_servic
     summary="Trigger a stimulation trial",
 )
 def start_trial(
-    body: StartTrialRequest = StartTrialRequest(),
+    body: StartTrialRequest,
     svc: StimulationAppService = Depends(get_stimulation_service),
 ):
     try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
 from omnibci.domain.ports.effector import Effector
@@ -38,6 +39,8 @@ def _write_package(root: Path, directory="device", *, publisher="acme",
         "manifest_version": 2, "package": package,
         "contributions": contributions if contributions is not None else [_contribution()],
     }
+    for name, contents in output_payload_files(document).items():
+        (location / name).write_text(contents)
     (location / "manifest.toml").write_text(tomlkit.dumps(document), encoding="utf-8")
     return location
 

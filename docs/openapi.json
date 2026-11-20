@@ -2740,13 +2740,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StartTrialRequest",
-                "default": {
-                  "n_trials": 1
-                }
+                "$ref": "#/components/schemas/StartTrialRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -8825,6 +8823,7 @@
         ],
         "title": "InstallMarketPackageRequest"
       },
+      "JsonValue": {},
       "MarketContributionResponse": {
         "properties": {
           "kind": {
@@ -10905,27 +10904,31 @@
         "properties": {
           "n_trials": {
             "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 1.0,
             "title": "N Trials",
             "default": 1
           },
           "trial_params": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
               },
-              {
-                "type": "null"
-              }
-            ],
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "minItems": 1,
             "title": "Trial Params"
           }
         },
+        "additionalProperties": false,
         "type": "object",
+        "required": [
+          "trial_params"
+        ],
         "title": "StartTrialRequest",
-        "description": "Trigger one or more stimulation trials.\n\nn_trials     — how many trials to run (paradigm-agnostic base parameter).\ntrial_params — per-trial target/event ids; len must equal n_trials when\n               provided.  None → each trial uses the paradigm default."
+        "description": "Start an explicit batch of per-trial JSON objects."
       },
       "StimulationStatusResponse": {
         "properties": {

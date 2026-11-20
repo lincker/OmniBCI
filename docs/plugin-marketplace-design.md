@@ -364,9 +364,9 @@ Declare runtime JSON schemas only for roles that accept plugin-defined payloads:
 | `effector` | `command` | The device payload passed to `execute`, excluding the host envelope. |
 | Other kinds | None | Their runtime arguments follow the typed Python API. |
 
-For example, an effector declares `payload_schemas = { command = "schemas/command.json" }` inside its contribution. These are bounded local schema files using the existing validator; they cannot fetch remote references or run plugin code. The exact package release pins them, so no additional payload-schema version, command registry or migration hook is required. Trial/result shapes must preserve existing cued/free-run/feedback behavior. Constructor schemas remain under `configuration`.
+For example, an effector declares `payload_schemas = { command = "schemas/command.json" }` inside its contribution. These are bounded local schema files using the existing validator; they cannot fetch remote references or run plugin code. The exact package release pins them, so no additional payload-schema version, command registry or migration hook is required. Trial/result shapes must preserve existing cued/free-run/feedback behavior. Constructor schemas remain under `configuration`. S1f implements these declarations and validates copied payloads without applying defaults. Classic40 uses explicit `event_id` (0 for free run, 1..40 for cues) and result `target_id` (1..40); logger commands require `target_id` with optional non-null `event_id`/`confidence`. Schema data stays with the owning host and adds no SDK exports.
 
-The exact schema should define identifier grammar, required fields, size limits, and field semantics. Reject unknown fields except a documented metadata namespace so misspelled capability or trust fields cannot be silently ignored. Use one manifest parser/validator for packaging, catalog discovery, installation, and repository publication.
+The exact schema should define identifier grammar, required fields, size limits, and field semantics. Reject unknown manifest fields so misspelled capability or trust fields cannot be silently ignored; v1 has no general metadata namespace. Use one manifest parser/validator for packaging, catalog discovery, installation, and repository publication.
 
 ### 5.2 Contributions and resolution
 

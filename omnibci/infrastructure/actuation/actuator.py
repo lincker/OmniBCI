@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Mapping, Optional
 
 from omnibci.domain.ports.effector import Effector
+from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 
@@ -26,6 +27,7 @@ class Actuator:
         settings_snapshot: dict,
     ) -> None:
         self.effector: Optional[Effector] = None
+        self._command_schema = None
         self._plugin_catalog = (
             plugin_catalog if plugin_catalog is not None else PluginCatalog()
         )
@@ -35,12 +37,12 @@ class Actuator:
     # ── Manifest-resolved plugin loading ──────────────────────────────────
 
     def _load_effector(self) -> Optional[Effector]:
-        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
-        return load_configured_plugin(
-            self._settings_snapshot, "actuation.effector", "effector", Effector,
-            catalog=self._plugin_catalog,
-            loader=self._plugin_loader,
+        from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
+        descriptor, parameters = resolve_configured_plugin(
+            self._settings_snapshot, "actuation.effector", "effector", catalog=self._plugin_catalog,
         )
+        self._command_schema = deepcopy(descriptor.payload_schemas["command"])
+        return self._plugin_loader.instantiate(descriptor, Effector, parameters=parameters)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -83,7 +85,10 @@ class Actuator:
         """
         if self.effector is None:
             raise RuntimeError("Actuator.execute called before setup()")
-        if self.effector.execute(command) is not None:
+        if self._command_schema is None:
+            raise RuntimeError("Effector command schema has not been prepared")
+        payload = validate_parameters(self._command_schema, command, apply_defaults=False)
+        if self.effector.execute(payload) is not None:
             raise TypeError("Effector.execute must return None")
 
     def teardown(self) -> None:
@@ -92,6 +97,7 @@ class Actuator:
             if self.effector.teardown() is not None:
                 raise TypeError("Effector.teardown must return None")
             self.effector = None
+            self._command_schema = None
 
     def quiesce(self) -> None:
         """Require the driver to confirm prior outputs are finished or cancelled."""

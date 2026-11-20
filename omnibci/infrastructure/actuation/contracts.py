@@ -128,7 +128,8 @@ def validate_actuation_command(payload: object) -> ValidatedActuationCommand:
     # command after it had passed validation and entered the mailbox.
     return ValidatedActuationCommand(
         payload=deepcopy({key: value for key, value in payload.items()
-                          if key not in {"seq", "issued_at"}}),
+                          if key not in {"seq", "issued_at"}
+                          and not (key in {"event_id", "confidence"} and value is None)}),
         target_id=target_id,
         seq=seq,
         issued_at=issued_at,

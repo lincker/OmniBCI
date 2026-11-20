@@ -58,7 +58,7 @@ class Event:
 
       TrialCompleted   application.events.TrialOutcome
       EpochProcessed   application.events.EpochProcessed
-      StartStimTrial   dict {"n_trials": int, "trial_params": list|None}
+      StartStimTrial   dict {"n_trials": int, "trial_params": list[dict]}
       AcquisitionState application.events.AcquisitionSnapshot
       CommandResult    application.events.CommandResult
       StimulationAck   dict produced by make_stimulation_ack

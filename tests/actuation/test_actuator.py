@@ -1,10 +1,16 @@
 """Actuator descriptor loading, lifecycle and error propagation."""
 from textwrap import dedent
+from pathlib import Path
+import json
 
 import pytest
 
 from omnibci.domain.ports.effector import Effector
 from omnibci.infrastructure.actuation.actuator import Actuator
+
+
+COMMAND_SCHEMA = json.loads((Path(__file__).parents[2] /
+    "omnibci/infrastructure/plugins/effectors/logger/command.schema.json").read_text())
 
 
 class _FakeEffector(Effector):
@@ -45,6 +51,7 @@ class _ExplodingEffector(Effector):
 def _actuator_with(effector) -> Actuator:
     a = Actuator(settings_snapshot={})
     a.effector = effector
+    a._command_schema = COMMAND_SCHEMA
     return a
 
 
@@ -53,6 +60,7 @@ def test_void_lifecycle_results_do_not_accept_false_as_success(monkeypatch, oper
     effector = _FakeEffector()
     monkeypatch.setattr(effector, operation, lambda *args: False)
     actuator = Actuator(settings_snapshot={})
+    actuator._command_schema = COMMAND_SCHEMA
     monkeypatch.setattr(actuator, "_load_effector", lambda: effector)
     if operation != "setup":
         actuator.setup()
@@ -99,6 +107,8 @@ class TestLifecycle:
                 plugin_type = "user_device"
                 entrypoint = "driver:UserDevice"
                 display_name = "User Device"
+                [contributions.payload_schemas]
+                command = "command.schema.json"
                 [contributions.configuration]
                 schema = "schema.json"
                 schema_version = 1
@@ -106,6 +116,7 @@ class TestLifecycle:
             ),
             encoding="utf-8",
         )
+        (package_dir / "command.schema.json").write_text('{"type":"object","properties":{"target_id":{"type":"integer"}},"required":["target_id"],"additionalProperties":false}')
         (package_dir / "schema.json").write_text('{"type":"object","properties":{},"additionalProperties":false}')
         (package_dir / "driver.py").write_text(
             dedent(

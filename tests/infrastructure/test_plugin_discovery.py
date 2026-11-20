@@ -8,6 +8,7 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
+from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 from omnibci.application.plugin_identity import PluginSelection
 
@@ -33,6 +34,8 @@ def _write_effector_manifest(
     package_dir.mkdir(parents=True)
     contribution = {"id": "default", "kind": "effector", "plugin_type": plugin_type,
                     "display_name": "Test Effector"}
+    for name, contents in output_payload_files({"contributions": [contribution]}).items():
+        (package_dir / name).write_text(contents)
     if entrypoint:
         contribution["entrypoint"] = entrypoint
     (package_dir / "manifest.toml").write_text(tomlkit.dumps({

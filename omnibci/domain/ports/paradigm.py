@@ -3,12 +3,13 @@ Paradigm — domain port for stimulus-presentation plugins.
 
 The stimulation subsystem loads a Paradigm plugin (selected by
 STIMULATION.paradigm) and drives it to present stimuli. Each paradigm owns its
-own per-trial parameter shape (SSVEP: target/event id; P300: flash sequence;
+own per-trial JSON object shape (SSVEP: event_id; P300: flash sequence;
 MI: cue class), opaque to the dispatch/queue layer.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 
 from omnibci.domain.ports.renderer import RenderSurface
 from omnibci.domain.ports.acquisition import TriggerOutput
@@ -25,17 +26,12 @@ class Paradigm(ABC):
         """Release partial or complete stimulus resources on the owner thread."""
 
     @abstractmethod
-    def trial_stimulus_present(self, params) -> None:
-        """Present one trial.
-
-        *params* is this paradigm's per-trial parameter, opaque to the
-        dispatch/queue layer.  Each paradigm defines its own shape (e.g. SSVEP:
-        an int target/event id; P300: a flash-sequence spec; MI: a cue class).
-        """
-        pass
+    def present_trial(self, parameters: Mapping[str, object]) -> None:
+        """Present one trial using the declared, host-validated JSON object."""
 
     @abstractmethod
-    def trial_result_present(self, result) -> None: pass
+    def present_result(self, result: Mapping[str, object]) -> None:
+        """Present feedback using the declared, host-validated JSON object."""
 
     @abstractmethod
     def render_frame(self, elapsed_seconds: float) -> None:

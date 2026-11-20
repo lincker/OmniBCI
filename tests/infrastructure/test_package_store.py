@@ -3,6 +3,7 @@ import json
 import zipfile
 
 import pytest
+from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
 from omnibci.application.plugin_packages import PluginPackageError, PluginPackageNotFoundError
@@ -23,8 +24,11 @@ def package_archive(tmp_path, version="1.0.0", *, properties=None, schema_versio
     schema = {"type": "object", "additionalProperties": False, "properties": properties if properties is not None else {
         "gain": {"type": "number", "minimum": 0, "default": 1.0},
     }}
+    payload_files = output_payload_files(manifest)
     destination = tmp_path / f"{package_id}-{version}.zip"
     with zipfile.ZipFile(destination, "w") as archive:
+        for name, contents in payload_files.items():
+            archive.writestr(name, contents)
         archive.writestr("manifest.toml", tomlkit.dumps(manifest))
         archive.writestr("configuration.schema.json", json.dumps(schema))
         archive.writestr("driver.py", code or "raise AssertionError('Catalog must not import plugin code')\n")

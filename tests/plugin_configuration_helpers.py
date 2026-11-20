@@ -32,3 +32,20 @@ def accept_profiles(service, selections, *, module_settings=None, engine_setting
             service.repository.save_module(service.propose(module, by_module[module], settings=settings),
                                   expected_revision=current.revision if current else None)
     return service.repository.get_activation_set()
+
+
+def output_payload_files(document):
+    """Give synthetic output Contributions explicit empty-object contracts."""
+    import json
+
+    files = {}
+    for index, contribution in enumerate(document.get("contributions", [])):
+        kind = contribution.get("kind")
+        if not isinstance(kind, str):
+            continue
+        fields = {"paradigm": ("trial", "result"), "effector": ("command",)}.get(kind, ())
+        if fields and "payload_schemas" not in contribution:
+            name = f"payload-{index}.schema.json"
+            contribution["payload_schemas"] = dict.fromkeys(fields, name)
+            files[name] = json.dumps({"type": "object", "properties": {}, "additionalProperties": False})
+    return files

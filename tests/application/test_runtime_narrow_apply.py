@@ -601,10 +601,16 @@ id="default"
 kind="effector"
 plugin_type="alternate_logger"
 entrypoint="effector:AlternateLogger"
+[contributions.payload_schemas]
+command="command.schema.json"
 [contributions.configuration]
 schema="config.schema.json"
 schema_version=1
 ''')
+    (plugin / "command.schema.json").write_text(json.dumps({
+        "type": "object", "properties": {"target_id": {"type": "integer"}},
+        "required": ["target_id"], "additionalProperties": False,
+    }))
     (plugin / "effector.py").write_text(
         "from omnibci.infrastructure.plugins.effectors.logger.effector import LogEffector\n"
         "class AlternateLogger(LogEffector):\n"

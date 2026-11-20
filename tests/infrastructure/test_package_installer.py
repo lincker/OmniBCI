@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
 from omnibci.infrastructure.plugins.package_installer import (
@@ -36,11 +37,15 @@ def _manifest(**package_fields):
 
 
 def _archive(tmp_path, *, manifest=None, entries=None, name="plugin.zip", compression=zipfile.ZIP_STORED):
+    manifest = manifest or _manifest()
+    payload_files = output_payload_files(manifest)
     destination = tmp_path / name
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         with zipfile.ZipFile(destination, "w", compression=compression) as archive:
-            archive.writestr("manifest.toml", tomlkit.dumps(manifest or _manifest()))
+            archive.writestr("manifest.toml", tomlkit.dumps(manifest))
+            for path, content in payload_files.items():
+                archive.writestr(path, content)
             archive.writestr("driver.py", "raise AssertionError('Plugin code must not execute')\n")
             for path, content in entries or ():
                 archive.writestr(path, content)

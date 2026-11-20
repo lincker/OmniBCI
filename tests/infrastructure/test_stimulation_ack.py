@@ -72,22 +72,22 @@ def _make(stimulator, render_done: bool = False) -> Stimulation:
 def test_ack_ok_after_successful_present():
     async def scenario():
         s = _make(_FakeStimulator())
-        s.stim_command_queue.put(Event(EventType.StartStimTrial, data=3))
+        s._put_stim_command_queue(Event(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{"event_id": 3}]}))
         await s.execute_command()
-        assert s.stimulator.presented == [3]
+        assert s.stimulator.presented == [{"event_id": 3}]
         assert len(s.event_bus.published) == 1
         ack = s.event_bus.published[0]
         assert ack.type == EventType.StimulationAck
         assert ack.data["command"] == "StartStimTrial"
         assert ack.data["status"] == "ok"
-        assert ack.data["target_index"] == 3
+        assert ack.data["trial_params"] == {"event_id": 3}
     asyncio.run(scenario())
 
 
 def test_ack_error_when_present_fails():
     async def scenario():
         s = _make(_FakeStimulator(fail=True))
-        s.stim_command_queue.put(Event(EventType.StartStimTrial, data=5))
+        s._put_stim_command_queue(Event(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{"event_id": 5}]}))
         await s.execute_command()
         assert len(s.event_bus.published) == 1
         ack = s.event_bus.published[0]
@@ -109,7 +109,7 @@ def test_ack_error_when_window_closed():
     a trial must be acked as error, not silently dropped/hung."""
     async def scenario():
         s = _make(_FakeStimulator(), render_done=True)  # window closed
-        s.stim_command_queue.put(Event(EventType.StartStimTrial, data=2))
+        s._put_stim_command_queue(Event(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{"event_id": 2}]}))
         await s.execute_command()
         assert s.stimulator.presented == []            # nothing presented
         ack = s.event_bus.published[0]
@@ -123,14 +123,14 @@ def test_correlated_result_is_emitted_only_after_trial_enters_renderer():
         s = _make(_FakeStimulator())
         request = CommandRequest(
             command_id="cmd-1",
-            payload={"n_trials": 1, "trial_params": [7]},
+            payload={"n_trials": 1, "trial_params": [{"event_id": 7}]},
         )
         s._put_stim_command_queue(Event(EventType.StartStimTrial, request))
         assert s.event_bus.published == []
 
         await s.execute_command()
 
-        assert s.stimulator.presented == [7]
+        assert s.stimulator.presented == [{"event_id": 7}]
         result_events = [
             event for event in s.event_bus.published
             if event.type == EventType.CommandResult
@@ -156,7 +156,7 @@ def test_trial_sequence_preserves_order_and_repetitions_while_waiting_for_render
 
     async def scenario():
         s = _make(BusyStimulator())
-        sequence = [1, 3, 5, 1, 3, 5]
+        sequence = [{"event_id": value} for value in [1, 3, 5, 1, 3, 5]]
         request = CommandRequest(
             command_id="sequence",
             payload={"n_trials": len(sequence), "trial_params": sequence},
@@ -182,7 +182,7 @@ def test_trial_sequence_preserves_order_and_repetitions_while_waiting_for_render
         assert results[0].command_id == "sequence"
         assert results[0].ok is True
         assert [
-            event.data["target_index"] for event in s.event_bus.published
+            event.data["trial_params"] for event in s.event_bus.published
             if event.type == EventType.StimulationAck
         ] == sequence
 
@@ -194,7 +194,7 @@ def test_correlated_result_rejects_closed_window():
         s = _make(_FakeStimulator(), render_done=True)
         request = CommandRequest(
             command_id="cmd-2",
-            payload={"n_trials": 1, "trial_params": [2]},
+            payload={"n_trials": 1, "trial_params": [{"event_id": 2}]},
         )
         s._put_stim_command_queue(Event(EventType.StartStimTrial, request))
 
@@ -213,7 +213,7 @@ def test_correlated_result_rejects_invalid_trial_spec_without_queueing():
     s = _make(_FakeStimulator())
     request = CommandRequest(
         command_id="cmd-3",
-        payload={"n_trials": 2, "trial_params": [1]},
+        payload={"n_trials": 2, "trial_params": [{"event_id": 1}]},
     )
 
     s._put_stim_command_queue(Event(EventType.StartStimTrial, request))
@@ -239,15 +239,15 @@ def test_closed_renderer_rejects_trial_without_querying_readiness(render_missing
         if render_missing:
             s._render_task = None
         s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-            "closed", {"n_trials": 1, "trial_params": [4]},
+            "closed", {"n_trials": 1, "trial_params": [{"event_id": 4}]},
         )))
         s.result_command_queue.put(Event(EventType.TrialCompleted, {"target_id": 3}))
 
         await s.execute_command()
 
         stimulator.paradigm.is_presenting.assert_not_called()
-        stimulator.paradigm.trial_stimulus_present.assert_not_called()
-        stimulator.paradigm.trial_result_present.assert_not_called()
+        stimulator.paradigm.present_trial.assert_not_called()
+        stimulator.paradigm.present_result.assert_not_called()
         assert s.stim_command_queue.empty()
         result = next(event.data for event in s.event_bus.published
                       if event.type == EventType.CommandResult)
@@ -262,13 +262,13 @@ def test_busy_paradigm_still_receives_result_feedback():
         stimulator = _FakeStimulator()
         stimulator.is_presenting = True
         s = _make(stimulator)
-        s.stim_command_queue.put(Event(EventType.StartStimTrial, 4))
+        s._put_stim_command_queue(Event(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{"event_id": 4}]}))
         s.result_command_queue.put(Event(EventType.TrialCompleted, {"target_id": 3}))
 
         await s.execute_command()
 
         assert stimulator.presented == []
-        assert stimulator.results == [3]
+        assert stimulator.results == [{"target_id": 3}]
         assert s.stim_command_queue.qsize() == 1
         assert s.event_bus.published == []
 
@@ -287,7 +287,7 @@ def test_readiness_failure_rejects_pending_trials_and_stops_admission(readiness)
         s = _make(stimulator)
         for command_id, sequence in [("batch", [1, 2, 3]), ("next", [4])]:
             s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-                command_id, {"n_trials": len(sequence), "trial_params": sequence},
+                command_id, {"n_trials": len(sequence), "trial_params": [{"event_id": value} for value in sequence]},
             )))
         s.result_command_queue.put(Event(EventType.TrialCompleted, {"target_id": 3}))
 
@@ -298,15 +298,15 @@ def test_readiness_failure_rejects_pending_trials_and_stops_admission(readiness)
             assert raised.value is readiness
         assert s.should_stop
         assert s.stim_command_queue.empty()
-        stimulator.paradigm.trial_stimulus_present.assert_not_called()
-        stimulator.paradigm.trial_result_present.assert_not_called()
+        stimulator.paradigm.present_trial.assert_not_called()
+        stimulator.paradigm.present_result.assert_not_called()
         sent = [call.args[0] for call in s.peer_channel.send.await_args_list]
         results = [event.data for event in sent if event.type == EventType.CommandResult]
         assert [result.command_id for result in results] == ["batch", "next"]
         assert all(not result.ok and result.error_code == "STIMULATION_READINESS_FAILED"
                    for result in results)
         acks = [event.data for event in sent if event.type == EventType.StimulationAck]
-        assert [ack["target_index"] for ack in acks] == [1, 2, 3, 4]
+        assert [ack["trial_params"] for ack in acks] == [{"event_id": value} for value in [1, 2, 3, 4]]
         assert all(ack["status"] == "error" for ack in acks)
         assert s.event_bus.published == []
 
@@ -314,13 +314,13 @@ def test_readiness_failure_rejects_pending_trials_and_stops_admission(readiness)
         stimulator.paradigm.is_presenting.side_effect = None
         stimulator.paradigm.is_presenting.return_value = False
         s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-            "late", {"n_trials": 1, "trial_params": [5]},
+            "late", {"n_trials": 1, "trial_params": [{"event_id": 5}]},
         )))
         await s.execute_command()
         assert s.stim_command_queue.empty()
         stimulator.paradigm.is_presenting.assert_called_once_with()
-        stimulator.paradigm.trial_stimulus_present.assert_not_called()
-        stimulator.paradigm.trial_result_present.assert_not_called()
+        stimulator.paradigm.present_trial.assert_not_called()
+        stimulator.paradigm.present_result.assert_not_called()
         result = s.event_bus.published[-1].data
         assert not result.ok
         assert result.error_code == "STIMULATION_STOPPING"
@@ -331,7 +331,7 @@ def test_readiness_failure_rejects_pending_trials_and_stops_admission(readiness)
 def test_missing_host_readiness_is_not_treated_as_idle():
     async def scenario():
         s = _make(object())
-        s.stim_command_queue.put(Event(EventType.StartStimTrial, 2))
+        s._put_stim_command_queue(Event(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{"event_id": 2}]}))
 
         with pytest.raises(AttributeError, match="is_presenting"):
             await s.execute_command()
@@ -357,7 +357,7 @@ def test_failed_fault_receipt_does_not_hide_readiness_error(delivery):
             s.peer_channel.send.return_value = delivery
         for command_id in ("first", "second"):
             s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-                command_id, {"n_trials": 1},
+                command_id, {"n_trials": 1, "trial_params": [{"event_id": 0}]},
             )))
 
         with pytest.raises(RuntimeError) as raised:
@@ -394,7 +394,7 @@ def test_readiness_fault_flushes_receipts_before_existing_shutdown():
         s.start = AsyncMock()
         s.stop = AsyncMock(side_effect=lambda: lifecycle.append("ipc-stop"))
         s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-            "pending", {"n_trials": 1, "trial_params": [2]},
+            "pending", {"n_trials": 1, "trial_params": [{"event_id": 2}]},
         )))
 
         async def send(event):
@@ -402,7 +402,7 @@ def test_readiness_fault_flushes_receipts_before_existing_shutdown():
             assert not released.is_set()
             await asyncio.sleep(0)
             s._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-                "arrived-during-fault", {"n_trials": 1},
+                "arrived-during-fault", {"n_trials": 1, "trial_params": [{"event_id": 0}]},
             )))
             s._put_sys_command_queue(Event(EventType.TrialCompleted, {"target_id": 3}))
             assert s.stim_command_queue.empty()
@@ -418,7 +418,7 @@ def test_readiness_fault_flushes_receipts_before_existing_shutdown():
         assert lifecycle == ["CommandResult", "StimulationAck", "renderer-stop", "ipc-stop"]
         assert s._render_task.done()
         stimulator.paradigm.is_presenting.assert_called_once_with()
-        stimulator.paradigm.trial_stimulus_present.assert_not_called()
-        stimulator.paradigm.trial_result_present.assert_not_called()
+        stimulator.paradigm.present_trial.assert_not_called()
+        stimulator.paradigm.present_result.assert_not_called()
 
     asyncio.run(scenario())

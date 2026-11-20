@@ -5,7 +5,7 @@ import { createServer } from "vite";
 const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
 after(() => server.close());
 const { MAX_TRIALS, parseTrialSequence, readTrialControls } = await server.ssrLoadModule("/src/plugin-controls.ts");
-const targetControl = { field: "trial_params", type: "int", min: 0, max: 40, default: 1 };
+const targetControl = { field: "trial_params", payload_key: "event_id", type: "int", min: 0, max: 40, default: 1 };
 
 test("the default full-target range includes each target once and excludes uncued target zero", () => {
   assert.deepEqual(parseTrialSequence("1-40", targetControl), Array.from({ length: 40 }, (_, index) => index + 1));
@@ -26,12 +26,12 @@ test("zero is accepted only when the control bounds permit it", () => {
 test("malformed syntax, fractions, descending ranges and unsafe integers are rejected", () => {
   for (const sequence of ["", "   ", ",1", "1,", "1,,2", "1, ,2", "1;2", "1.5", "1e2", "+1", "-1",
     "3-1", "1-", "1--3", "1-2-3", "a1", "1a", "9007199254740992", "1-9007199254740992"]) {
-    assert.throws(() => parseTrialSequence(sequence, { field: "trial_params", type: "int" }), sequence);
+    assert.throws(() => parseTrialSequence(sequence, { field: "trial_params", payload_key: "event_id", type: "int" }), sequence);
   }
 });
 
 test("expanded sequences are bounded before expanding large ranges", () => {
-  const unbounded = { field: "trial_params", type: "int" };
+  const unbounded = { field: "trial_params", payload_key: "event_id", type: "int" };
   assert.equal(MAX_TRIALS, 10000);
   assert.equal(parseTrialSequence("1-10000", unbounded).length, MAX_TRIALS);
   assert.throws(() => parseTrialSequence("0-10000", unbounded));
@@ -62,6 +62,15 @@ test("legacy numeric controls remain valid without default sequence metadata", (
     target: targetControl,
   };
   assert.deepEqual(readTrialControls(controls), controls);
-  assert.deepEqual(readTrialControls({ value: { field: "trial_params", type: "float", min: 0.5, max: 2.5 } }),
-    { value: { field: "trial_params", type: "float", min: 0.5, max: 2.5 } });
+  assert.deepEqual(readTrialControls({ value: { field: "trial_params", payload_key: "event_id", type: "float", min: 0.5, max: 2.5 } }),
+    { value: { field: "trial_params", payload_key: "event_id", type: "float", min: 0.5, max: 2.5 } });
+});
+
+test("per-trial controls must declare their object payload key", () => {
+  for (const key of [undefined, "", "   ", 1, null]) {
+    assert.throws(() => readTrialControls({ cue: { ...targetControl, payload_key: key } }));
+  }
+  assert.throws(() => readTrialControls({ count: { field: "n_trials", payload_key: "event_id" } }));
+  const controls = { cue: { ...targetControl, payload_key: "event_id" } };
+  assert.deepEqual(readTrialControls(controls), controls);
 });

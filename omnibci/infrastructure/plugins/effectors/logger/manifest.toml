@@ -20,3 +20,6 @@ description = "Hardware-free effector that logs each actuation command — end-t
 [contributions.configuration]
 schema = "default.schema.json"
 schema_version = 1
+
+[contributions.payload_schemas]
+command = "command.schema.json"

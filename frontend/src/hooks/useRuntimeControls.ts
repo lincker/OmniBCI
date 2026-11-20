@@ -81,7 +81,7 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     stopStim: action("stopStim", async () => {
       setNotices((previous) => ({ ...previous, stimulation: undefined })); await api.stimStop();
     }, true),
-    trigger: action("trigger", async (count: number, parameters?: number[]) => api.trialStart(count, parameters)),
+    trigger: action("trigger", api.trialStart),
     readCurrent: action("readCurrent", async () => {
       const accepted = current.modules.acquisition.activation;
       if (!accepted?.revision || current.hasChanges("acquisition", accepted)) throw new Error(t("run.reason.reconnectCurrentSource"));

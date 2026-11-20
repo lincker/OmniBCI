@@ -9,6 +9,8 @@ import threading
 from copy import deepcopy
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
+from omnibci.application.plugin_schema import validate_parameters
+from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.domain.ports.acquisition import TriggerEmitter
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.infrastructure.stimulation.render_loop import RenderLoop
@@ -65,6 +67,7 @@ class _NoTrigger(TriggerEmitter):
 class Stimulator:
     def __init__(self, *, settings_snapshot: dict) -> None:
         self._snapshot = deepcopy(settings_snapshot)
+        self._payload_schemas = {}
         self.paradigm: Paradigm | None    = None
         self.trigger:  TriggerEmitter | None = None
         self._loop:    RenderLoop | None  = None
@@ -89,11 +92,12 @@ class Stimulator:
         )
 
     def _load_paradigm(self) -> Paradigm:
-        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
-        paradigm = load_configured_plugin(
-            self._snapshot, "stimulation.paradigm", "paradigm", Paradigm,
+        from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
+        descriptor, parameters = resolve_configured_plugin(
+            self._snapshot, "stimulation.paradigm", "paradigm",
         )
-        return paradigm
+        self._payload_schemas = deepcopy(descriptor.payload_schemas)
+        return PluginLoader.instantiate(descriptor, Paradigm, parameters=parameters)
 
     # ── Internal setup ─────────────────────────────────────────────────────
 
@@ -182,11 +186,12 @@ class Stimulator:
         if self._owner_thread is not None and self._owner_thread != threading.get_ident():
             raise RuntimeError("Stimulation callbacks require the renderer owner thread")
 
-    def present_trial(self, params=None) -> None:
+    def present_trial(self, parameters: dict[str, object]) -> None:
         self._check_owner()
         if self.paradigm is None:
             raise RuntimeError("Stimulation paradigm has not been initialized")
-        self.paradigm.trial_stimulus_present(params)
+        payload = validate_parameters(self._payload_schemas["trial"], parameters, apply_defaults=False)
+        self._require_none(self.paradigm.present_trial(payload), "Paradigm.present_trial")
 
     @property
     def is_presenting(self) -> bool:
@@ -203,4 +208,5 @@ class Stimulator:
         self._check_owner()
         if self.paradigm is None:
             raise RuntimeError("Stimulation paradigm has not been initialized")
-        self.paradigm.trial_result_present(result=result)
+        payload = validate_parameters(self._payload_schemas["result"], result, apply_defaults=False)
+        self._require_none(self.paradigm.present_result(payload), "Paradigm.present_result")

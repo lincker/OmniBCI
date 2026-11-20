@@ -1,6 +1,6 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared static validation and constructor/SDK changes are implemented and verified. S1f static role declarations are also implemented. Runtime payload schemas/methods and overall S2–S6 completion remain pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2e and S3–S6 remain pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2d are complete and verified (S2d: `1526d06`); the remaining S2 work is pending.
 
@@ -193,6 +193,18 @@ The shared manifest validator now owns the allowed root/package/Contribution fie
 The revised declaration group reproduced **23 failures** with 17 existing cases passing, then passed all **40 cases**. Final verification passed **542 focused tests** (four integration cases deselected), **208 service/router/worker tests**, four separately selected package/SDK integration cases, and all **9 import contracts**. The preceding constructor checkpoint supplies the full 4015-headless / 36-integration baseline; another full checkpoint follows the coordinated payload/client replacement. Evidence is in `/private/tmp/omnibci-s1f2a-t3tbqljl`. Earlier temporary-directory probes are pre-implementation evidence only; the repository red/green runs use the actual project configuration.
 
 This completes the obsolete static-dispatch cleanup, not S1f as a whole. The next batch adds required local trial/result/command schemas, updates Paradigm methods and validates actual host/client payloads. No new developer guide is written yet.
+
+#### S1f third batch: runtime payloads and callers (2026-11-20)
+
+Paradigm now requires `present_trial(parameters)` and `present_result(result)` with explicit JSON objects. Every Paradigm declares local `trial`/`result` schemas; every Effector declares a local `command` schema. Other roles cannot declare these fields. The shared parser reuses bounded, duplicate-key-aware schema loading without importing code. Stimulator and Actuator retain schemas from the same descriptor used to construct their Instance and validate copied payloads without applying defaults. Schema checks occur at command boundaries, never per frame or signal sample.
+
+Classic40 accepts `{"event_id": 1..40}` for cued trials and `{"event_id": 0}` for free run; feedback is `{"target_id": 1..40}`. Invalid values no longer silently become free run. Existing cue/trigger/frame positions, result text and deletion behavior remain. Feedback projection excludes host identity and rejects boolean/string/fractional targets without coercion. Effector payloads omit absent optional `event_id`/`confidence`; receipt identity stays host-owned.
+
+REST and IPC share the bounded batch command: `n_trials` is an integer in `1..10000`, `trial_params` is a required equally sized list of JSON objects, and aggregate JSON remains bounded at 1 MiB. Stimulation acknowledgements carry that trial's `trial_params` object instead of `target_index`; they describe callback outcomes, not measured physical presentation. The existing numeric/sequence UI supplies the declared `payload_key`, preserving count/order/repetition without a general form framework. OpenAPI, generated REST types, WebSocket types and real frontend callers are updated together. No old method names, integer/default payload reader or queue-item fallback is retained.
+
+The initial schema/owner/batch group reproduced **42 failures** with 24 existing negative cases passing; Classic40 reproduced **21 failures**, and IPC reproduced **16 failures** with one already passing case. The three new frontend cases also failed before implementation. The combined core group then passed **87 cases**, IPC passed **17**, and the final host/router/installer caller group passed **577**. Final regression passed **4131 headless tests**, **36 integration tests** with one Windows Job Objects skip, **527 frontend tests**, the frontend production build, and **9 import contracts**. Both full backend suites used the frozen source/test tree in `/private/tmp/omnibci-s1f2b-70648dqs`; documentation was updated afterward. Initial caller failures were migrated directly; an initial archive-fixture failure was fixed without weakening production validation. The two existing WebSocket deprecation warnings remain. GPU/physical device and Windows/Linux execution were not exercised.
+
+This completes S1f's coordinated public role/constructor/payload switch. It does not complete the overall plugin refactor: durable origin evidence (S2e), exact artifact preparation/loading (S3), narrower application/node ports (S4), author tooling (S5) and release/documentation integration (S6) remain. Existing author guides remain historical until S6.
 
 ### S2 Fix Plugin Management, Configuration and Marketplace ownership
 

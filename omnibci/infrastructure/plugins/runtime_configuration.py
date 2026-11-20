@@ -22,10 +22,8 @@ def configured_bindings(snapshot: dict, *, slot: str | None = None) -> tuple[Pro
                  if slot is None or value["slot"] == slot)
 
 
-def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
-                           *, input_signal: SignalInfo | None = None,
-                           catalog: PluginCatalog | None = None, loader=PluginLoader):
-    """Use exact accepted selections; never substitute aliases or versions."""
+def resolve_configured_plugin(snapshot: dict, slot: str, kind: str, *, catalog: PluginCatalog | None = None):
+    """Resolve one selection and its parameters without constructing an Instance."""
     bindings = configured_bindings(snapshot, slot=slot)
     binding = next((binding for binding in bindings if binding.slot == slot), None)
     if binding is None or binding.kind != kind:
@@ -34,7 +32,14 @@ def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
     descriptor = catalog.resolve_selection(kind, binding.selection)
     if descriptor.configuration_version != binding.configuration_version:
         raise PluginLoadError(f"{slot}: configuration schema migration required")
-    parameters = deepcopy(binding.parameters)
+    return descriptor, deepcopy(binding.parameters)
+
+
+def load_configured_plugin(snapshot: dict, slot: str, kind: str, expected_base,
+                           *, input_signal: SignalInfo | None = None,
+                           catalog: PluginCatalog | None = None, loader=PluginLoader):
+    """Use exact accepted selections; never substitute aliases or versions."""
+    descriptor, parameters = resolve_configured_plugin(snapshot, slot, kind, catalog=catalog)
     if kind in {"filter", "decoder", "epoch_detector"} and not isinstance(input_signal, SignalInfo):
         raise PluginLoadError(f"{slot}: processing requires prepared input_signal")
     if descriptor.channel_requirements is not None:

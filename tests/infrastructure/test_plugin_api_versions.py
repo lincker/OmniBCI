@@ -22,7 +22,10 @@ def descriptor(tmp_path, body="self.parameters = parameters; self.resource_root 
         id = "output"
         kind = "effector"
         entrypoint = "output:Output"
+        [contributions.payload_schemas]
+        command = "command.schema.json"
     '''), encoding="utf-8")
+    (tmp_path / "command.schema.json").write_text('{"type":"object","properties":{},"additionalProperties":false}')
     (tmp_path / "output.py").write_text(dedent(f'''
         from omnibci.sdk import Effector
         class Output(Effector):

@@ -177,39 +177,41 @@ class TestTeardown:
 
 
 # ---------------------------------------------------------------------------
-# State machine — trial_stimulus_present
+# State machine — present_trial
 # ---------------------------------------------------------------------------
 
 class TestTrialStimulusPresent:
     def test_valid_event_id_transitions_to_cue(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(1)          # 1-based: target 1 = 'A'
+        paradigm.present_trial({"event_id": 1})          # 1-based: target 1 = 'A'
         assert paradigm._state == _State.CUE
 
     def test_zero_is_no_cue_goes_straight_to_stim(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(0)          # 0 = baseline / no-cue
+        paradigm.present_trial({"event_id": 0})          # 0 = baseline / no-cue
         assert paradigm._state == _State.STIM
 
     def test_cue_countdown_set(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(2)
+        paradigm.present_trial({"event_id": 2})
         assert paradigm._cue_countdown == _CUE_FRAMES
 
     def test_current_event_stored(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(7)
+        paradigm.present_trial({"event_id": 7})
         assert paradigm._current_event == 7
 
-    def test_invalid_event_id_goes_straight_to_stim(self, paradigm, renderer, trigger):
+    def test_invalid_event_id_preserves_idle(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(99)
-        assert paradigm._state == _State.STIM
+        with pytest.raises(ValueError):
+            paradigm.present_trial({"event_id": 99})
+        assert paradigm._state == _State.IDLE
 
-    def test_invalid_event_id_sends_trigger_immediately(self, paradigm, renderer, trigger):
+    def test_invalid_event_id_does_not_send_trigger(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(99)
-        trigger.send.assert_called_once_with(99)
+        with pytest.raises(ValueError):
+            paradigm.present_trial({"event_id": 99})
+        trigger.send.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +225,7 @@ class TestRenderFrameTransitions:
 
     def test_cue_transitions_to_stim_after_countdown(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(1)
+        paradigm.present_trial({"event_id": 1})
         self._tick(paradigm, _CUE_FRAMES - 1)
         assert paradigm._state == _State.CUE
         trigger.send.assert_not_called()
@@ -244,26 +246,26 @@ class TestRenderFrameTransitions:
 
     def test_stim_plays_all_frames(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(1)
+        paradigm.present_trial({"event_id": 1})
         self._tick(paradigm, _CUE_FRAMES)          # CUE → STIM
         self._tick(paradigm, _N_STIM_FRAMES)       # play every frame
         assert paradigm._stim_frame_idx == _N_STIM_FRAMES
 
     def test_stim_transitions_to_idle_when_frames_exhausted(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(1)
+        paradigm.present_trial({"event_id": 1})
         self._tick(paradigm, _CUE_FRAMES + _N_STIM_FRAMES + 1)
         assert paradigm._state == _State.IDLE
 
     def test_stim_clears_trigger_on_finish(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(1)
+        paradigm.present_trial({"event_id": 1})
         self._tick(paradigm, _CUE_FRAMES + _N_STIM_FRAMES + 1)
         trigger.clear.assert_called()
 
     def test_result_transitions_to_idle_after_countdown(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_result_present(1)            # 1-based: target 1 = 'A'
+        paradigm.present_result({"target_id": 1})            # 1-based: target 1 = 'A'
         assert paradigm._state == _State.RESULT
         self._tick(paradigm, _RESULT_FRAMES - 1)
         assert paradigm._state == _State.RESULT
@@ -284,30 +286,30 @@ class TestRenderFrameTransitions:
 
 
 # ---------------------------------------------------------------------------
-# trial_result_present
+# present_result
 # ---------------------------------------------------------------------------
 
 class TestTrialResultPresent:
     def test_transitions_to_result_state(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_result_present(1)
+        paradigm.present_result({"target_id": 1})
         assert paradigm._state == _State.RESULT
 
     def test_result_countdown_set(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_result_present(1)
+        paradigm.present_result({"target_id": 1})
         assert paradigm._result_countdown == _RESULT_FRAMES
 
     def test_add_text_accumulates(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_result_present(1)   # 'A'
-        paradigm.trial_result_present(2)   # 'B'
+        paradigm.present_result({"target_id": 1})   # 'A'
+        paradigm.present_result({"target_id": 2})   # 'B'
         assert paradigm._text_view._content == "AB"
 
     def test_del_removes_last_char(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_result_present(1)   # 'A'
-        paradigm.trial_result_present(40)  # 'Del'
+        paradigm.present_result({"target_id": 1})   # 'A'
+        paradigm.present_result({"target_id": 40})  # 'Del'
         assert paradigm._text_view._content == ""
 
 
@@ -360,7 +362,7 @@ class TestRenderFrameDrawing:
     @pytest.mark.parametrize("target_id", [1, 8, 9, 40])
     def test_cue_draws_target_frame_from_pack(self, paradigm, renderer, target_id, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(target_id)
+        paradigm.present_trial({"event_id": target_id})
         renderer.reset_mock()
         paradigm.render_frame()
 
@@ -375,10 +377,10 @@ class TestRenderFrameDrawing:
         self, paradigm, renderer, result_id, text, trigger
     ):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_result_present(1)
-        paradigm.trial_stimulus_present(1)
+        paradigm.present_result({"target_id": 1})
+        paradigm.present_trial({"event_id": 1})
         paradigm.render_frame()
-        paradigm.trial_result_present(result_id)
+        paradigm.present_result({"target_id": result_id})
         renderer.reset_mock()
         paradigm.render_frame()
 
@@ -393,11 +395,11 @@ class TestRenderFrameDrawing:
 
     def test_new_trial_clears_result_and_moves_cue(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_stimulus_present(1)
+        paradigm.present_trial({"event_id": 1})
         paradigm.render_frame()
-        paradigm.trial_result_present(40)
+        paradigm.present_result({"target_id": 40})
         paradigm.render_frame()
-        paradigm.trial_stimulus_present(9)
+        paradigm.present_trial({"event_id": 9})
         renderer.reset_mock()
         paradigm.render_frame()
 
@@ -407,11 +409,11 @@ class TestRenderFrameDrawing:
         )
         renderer.draw_rect.assert_not_called()
 
-    @pytest.mark.parametrize("target_id", [None, 0, 99])
+    @pytest.mark.parametrize("target_id", [0])
     def test_no_cue_mode_draws_stimulation_without_border(self, paradigm, renderer, target_id, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.trial_result_present(1)
-        paradigm.trial_stimulus_present(target_id)
+        paradigm.present_result({"target_id": 1})
+        paradigm.present_trial({"event_id": target_id})
         renderer.reset_mock()
         paradigm.render_frame()
 

@@ -141,17 +141,22 @@ class TestStimulatorPresent:
     def _started(self):
         s = Stimulator(settings_snapshot={})
         s.paradigm = MagicMock()
+        s.paradigm.present_trial.return_value = None
+        s.paradigm.present_result.return_value = None
+        s._payload_schemas = {name: {"type": "object", "properties": {key: {"type": "integer"}},
+                                    "required": [key], "additionalProperties": False}
+                              for name, key in (("trial", "event_id"), ("result", "target_id"))}
         return s, s.paradigm
 
     def test_present_trial_delegates(self):
         s, mock_paradigm = self._started()
-        s.present_trial(5)
-        mock_paradigm.trial_stimulus_present.assert_called_once_with(5)
+        s.present_trial({"event_id": 5})
+        mock_paradigm.present_trial.assert_called_once_with({"event_id": 5})
 
     def test_present_result_delegates(self):
         s, mock_paradigm = self._started()
-        s.present_result(3)
-        mock_paradigm.trial_result_present.assert_called_once_with(result=3)
+        s.present_result({"target_id": 3})
+        mock_paradigm.present_result.assert_called_once_with({"target_id": 3})
 
     def test_present_trial_requires_paradigm(self):
         s = Stimulator(settings_snapshot={})

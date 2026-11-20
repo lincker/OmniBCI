@@ -32,7 +32,7 @@ def test_pause_joins_renderer_clears_trigger_and_cancels_future_trials():
         exited = asyncio.Event()
         instance._render_task = asyncio.create_task(exited.wait())
         instance._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-            "queued-trials", {"n_trials": 2},
+            "queued-trials", {"n_trials": 2, "trial_params": [{"event_id": 1}, {"event_id": 2}]},
         )))
         pause = asyncio.create_task(instance._pause_stimulation(Event(
             EventType.PauseStimulation, CommandRequest("pause"),
@@ -57,7 +57,7 @@ def test_pause_joins_renderer_clears_trigger_and_cancels_future_trials():
             "generation": "generation", "module_revision": "revision", "engine_revision": "engine",
         }
         instance._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
-            "late-trial", {"n_trials": 1},
+            "late-trial", {"n_trials": 1, "trial_params": [{"event_id": 0}]},
         )))
         assert instance.stim_command_queue.empty()
         assert receipts(instance, EventType.StartStimTrial)[-1].ok is False

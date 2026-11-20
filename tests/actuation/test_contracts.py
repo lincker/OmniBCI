@@ -59,8 +59,7 @@ class TestValidCommand:
         command = validate_actuation_command({
             "target_id": 1, "event_id": None, "confidence": None,
         })
-        assert command.payload["event_id"] is None
-        assert command.payload["confidence"] is None
+        assert command.payload == {"target_id": 1}
 
 
 class TestInvalidCommand:

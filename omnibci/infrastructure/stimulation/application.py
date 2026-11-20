@@ -9,9 +9,9 @@ import multiprocessing as mp
 import asyncio
 from dataclasses import dataclass
 from queue import Empty, Queue
-from typing import Any
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
+from omnibci.application.commands.stimulation_commands import StartStimTrialCommand
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
@@ -30,7 +30,7 @@ _EXTERNAL_CONNECT_TIMEOUT_S = 10.0
 class _QueuedStimTrial:
     """Process-local trial item retaining REST correlation until presentation."""
 
-    params: Any
+    params: dict[str, object]
     request: CommandRequest | None = None
 
 
@@ -323,8 +323,7 @@ class Stimulation:
                     queued = self.stim_command_queue.get_nowait().data
                 except Empty:
                     break
-                params = queued.params if isinstance(queued, _QueuedStimTrial) else queued
-                request = queued.request if isinstance(queued, _QueuedStimTrial) else None
+                params, request = queued.params, queued.request
                 events = []
                 if request is not None:
                     events.append(Event(EventType.CommandResult, CommandResult(
@@ -334,7 +333,7 @@ class Stimulation:
                     )))
                 events.append(Event(EventType.StimulationAck, make_stimulation_ack(
                     "StartStimTrial", status="error",
-                    target_index=params if isinstance(params, int) else None,
+                    trial_params=params,
                     message=str(exc),
                 )))
                 # Await terminal writes before serve() closes IPC. Queuing on
@@ -353,19 +352,12 @@ class Stimulation:
                 # Present the trial, then send an ack back to the engine.
                 # PeerChannel's outbound subscription picks up StimulationAck from
                 # the bus and forwards it to the engine automatically.
-                # `data` is one trial's opaque paradigm parameter (may be None).
                 queued = stim_command.data
-                if isinstance(queued, _QueuedStimTrial):
-                    params = queued.params
-                    request = queued.request
-                else:
-                    params = queued
-                    request = None
-                target = params if isinstance(params, int) else None
+                params, request = queued.params, queued.request
                 if window_closed:
                     # Report a closed window instead of stalling the paradigm.
                     ack = make_stimulation_ack(
-                        "StartStimTrial", status="error", target_index=target,
+                        "StartStimTrial", status="error", trial_params=params,
                         message="stimulation window closed",
                     )
                     if request is not None:
@@ -380,7 +372,7 @@ class Stimulation:
                     try:
                         self.stimulator.present_trial(params)
                         ack = make_stimulation_ack(
-                            "StartStimTrial", status="ok", target_index=target
+                            "StartStimTrial", status="ok", trial_params=params
                         )
                         if request is not None:
                             self._emit_command_result(
@@ -393,7 +385,7 @@ class Stimulation:
                     except Exception as exc:
                         ack = make_stimulation_ack(
                             "StartStimTrial", status="error",
-                            target_index=target, message=str(exc),
+                            trial_params=params, message=str(exc),
                         )
                         if request is not None:
                             self._emit_command_result(
@@ -408,21 +400,20 @@ class Stimulation:
         if not self.result_command_queue.empty():
             sys_command = self.result_command_queue.get()
             if not window_closed and sys_command.type == EventType.TrialCompleted:
-                # The TrialCompleted payload arrives over the engine→stimulation
-                # socket as a plain dict (decode_event_body does not rebuild domain
-                # VOs), so extract target_id from the dict shape.  Wrapped in
-                # try/except: a malformed/out-of-range result must NOT crash the
-                # render process and close the stimulation window.
+                # Project only the result value; malformed feedback must not
+                # close the rendering window or coerce a different target.
                 from omnibci.domain.classification import Classification
                 data = sys_command.data
                 try:
                     if isinstance(data, Classification):
-                        result = data.target_id
+                        target_id = data.target_id
                     elif isinstance(data, dict):
-                        result = int(data.get("target_id"))
+                        target_id = data.get("target_id")
                     else:
-                        result = int(data)
-                    self.stimulator.present_result(result)
+                        raise ValueError("Feedback requires a classification object")
+                    if type(target_id) is not int or target_id < 0:
+                        raise ValueError("Feedback target_id must be a non-negative integer")
+                    self.stimulator.present_result({"target_id": target_id})
                 except Exception as exc:
                     logging.warning("present_result skipped (bad result %r): %s", data, exc)
 
@@ -460,14 +451,7 @@ class Stimulation:
         try:
             if not isinstance(spec, dict):
                 raise ValueError("trial specification must be an object")
-            n_trials = int(spec.get("n_trials", 1))
-            if n_trials <= 0:
-                raise ValueError("n_trials must be greater than zero")
-            params = spec.get("trial_params")
-            if params is None:
-                params = [None] * n_trials
-            elif not isinstance(params, (list, tuple)) or len(params) != n_trials:
-                raise ValueError("trial_params length must equal n_trials")
+            params = StartStimTrialCommand(**spec).trial_params
         except (TypeError, ValueError) as exc:
             if request is not None:
                 self._emit_command_result(

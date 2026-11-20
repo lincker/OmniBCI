@@ -172,7 +172,7 @@ def test_stimulator_loads_exact_curry_trigger_and_free_run_keeps_zero(driver, ad
     monkeypatch.setattr(module, "FramePack", lambda path: pack)
     paradigm.setup(renderer=Mock(), trigger=output)
     driver.Out32.reset_mock()
-    paradigm.trial_stimulus_present(None)
+    paradigm.present_trial({"event_id": 0})
     base = int(address, 16)
     assert driver.Out32.call_args_list == [call(base, 0), call(base, 0)]
     output.send(40)

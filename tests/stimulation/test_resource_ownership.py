@@ -27,7 +27,7 @@ def make_owner(monkeypatch, failures=()):
     trigger = SimpleNamespace(**{name: operation('trigger.' + name) for name in
         ('setup', 'clear', 'teardown', 'send')})
     paradigm = SimpleNamespace(**{name: operation('paradigm.' + name) for name in
-        ('teardown', 'render_frame', 'trial_stimulus_present', 'trial_result_present')})
+        ('teardown', 'render_frame', 'present_trial', 'present_result')})
 
     def setup(*, renderer, trigger):
         assert renderer is owner._renderer

@@ -106,6 +106,7 @@ class PluginDescriptor:
     configuration_schema: Mapping[str, Any] | None = None
     configuration_version: int | None = None
     channel_requirements: DecoderChannelRequirements | None = None
+    payload_schemas: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def supports_platform(self, platform_name: str) -> bool:
         """Both package and contribution constraints must permit the host."""

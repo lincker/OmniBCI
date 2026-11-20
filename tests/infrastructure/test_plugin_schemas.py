@@ -2,6 +2,7 @@
 import json
 
 import pytest
+from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
 from omnibci.application.plugin_identity import PluginSelection
@@ -28,6 +29,8 @@ def package(tmp_path, **configuration):
         "id": "output", "kind": "effector", "entrypoint": "output:Output",
         "configuration": configuration or {"schema": "default.schema.json", "schema_version": 1},
     }]}
+    for name, contents in output_payload_files(manifest).items():
+        (tmp_path / name).write_text(contents)
     (tmp_path / "manifest.toml").write_text(tomlkit.dumps(manifest), encoding="utf-8")
     (tmp_path / "default.schema.json").write_text(json.dumps(SCHEMA), encoding="utf-8")
     return PluginCatalog({"effector": lambda: [PluginRoot(tmp_path, "user", 0)]})

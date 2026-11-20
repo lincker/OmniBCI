@@ -102,7 +102,7 @@ export const api = {
 
   stimStart: (body: ModuleActionRequest) => post<RuntimeOperation>("/api/v1/stimulation/start", body),
   stimStop: () => post("/api/v1/stimulation/stop"),
-  trialStart: (n_trials = 1, trial_params?: number[]) =>
+  trialStart: (n_trials: number, trial_params: S["StartTrialRequest"]["trial_params"]) =>
     post("/api/v1/stimulation/trial/start", { n_trials, trial_params }),
 
   acqStreamStart: (body: StartReadingRequest) => post("/api/v1/acquisition/stream/start", body),

@@ -1,6 +1,7 @@
 """Map EventBus events to the shared JSON-safe outbound wire contract."""
 
 import logging
+from copy import deepcopy
 from typing import Any, Optional
 
 from omnibci.shared.events import Event, EventType
@@ -57,7 +58,7 @@ def event_to_wire(event: Event) -> Optional[dict]:
         return {
             "event": "StimulationAck",
             "command": str(d.get("command", "")),
-            "target_index": d.get("target_index"),
+            "trial_params": deepcopy(d.get("trial_params")),
             "status": d.get("status", "ok"),
             "message": d.get("message"),
         }
@@ -66,7 +67,7 @@ def event_to_wire(event: Event) -> Optional[dict]:
 
 
 def make_stimulation_ack(command: str, status: str = "ok",
-                         target_index: Optional[int] = None,
+                         trial_params: Optional[dict[str, object]] = None,
                          message: Optional[str] = None) -> dict:
     """
     Build the JSON-safe payload the stimulation process sends back to ack a
@@ -74,10 +75,10 @@ def make_stimulation_ack(command: str, status: str = "ok",
 
         client.send_event(Event(EventType.StimulationAck,
                                  make_stimulation_ack("StartStimTrial",
-                                                      target_index=3)))
+                                                      trial_params={"event_id": 3})))
     """
     return {"command": command, "status": status,
-            "target_index": target_index, "message": message}
+            "trial_params": deepcopy(trial_params), "message": message}
 
 
 def make_actuation_ack(target_id: Optional[int] = None,
