@@ -1,8 +1,8 @@
 # Stimulation Interface and Rendering Design
 
-Status: deferred to a dedicated follow-up branch. No S1d implementation changes remain on `refactor/module-interface`. The first batch is preserved in Git history at `e2299db`; the second batch was analyzed but not implemented. See the [handoff](#8-follow-up-branch-handoff).
+Status: S1d implementation has resumed on `refactor/module-interface` under the latest user instruction. The first batch is restored from `e2299db` and verified against `1526d06`: 28 reproduced failures, then 245 focused tests and eight import contracts passed. Capabilities/lifecycle and graphics follow as separate verified commits. See the [execution scope](#8-follow-up-branch-handoff).
 
-Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; the APIs and lifecycle below remain future Stimulation work.
+Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; the lifecycle and graphics changes below remain pending until their execution records confirm completion.
 
 Stimulation needs complete plugin contracts and one owner for renderer, paradigm and trigger resources. Keep the existing rendering adapters and stimulus state machine; complete their boundaries and failure handling without adding a rendering framework or compatibility layer.
 
@@ -198,9 +198,7 @@ Headless fakes can verify ordering, ownership and error handling. Display/GPU/dr
 
 ## 8. Follow-up branch handoff
 
-The user deferred all Stimulation/Paradigm implementation on 2026-11-20 to keep `refactor/module-interface` focused. Keep this design as a proposal; do not implement the remaining batches or restore the withdrawn first batch on this branch. No follow-up branch has been created by this scope decision.
-
-The later combined S1d/S1e instruction still excludes Stimulation, Paradigm and Renderer changes. TriggerEmitter lifecycle requires Stimulator setup/cleanup and its `_NoTrigger` implementation, so it cannot be completed independently under that exclusion. Keep the trigger capability, driver lifecycle and related SDK changes with this handoff. Only the independent S1e portion proceeds; add no unused lifecycle methods or compatibility layer to split the trigger change.
+The earlier branch exclusion is superseded by the latest user instruction: prioritize Stimulation, Paradigm and Renderer on the current branch and commit them separately. No new branch is needed. S2d is complete in `1526d06`; S1d resumes before S1f and the remaining implementation steps. TriggerEmitter, its drivers and Stimulator change together under their actual lifecycle owner.
 
 ### 8.1 Withdrawn first batch
 
@@ -208,11 +206,11 @@ Commit `e2299db` is the reference implementation, based on `e81f825`. Its produc
 
 Its tests are `tests/domain/test_paradigm_contract.py`, `tests/stimulation/test_stimulation.py`, `tests/stimulation/test_pause_stimulation.py` and `tests/infrastructure/test_stimulation_ack.py`. The historical run first reproduced 28 failures, then passed 270 focused tests, 3718 headless tests, 36 integration tests and eight import contracts, with one Windows-only integration skip. These results describe the withdrawn implementation, not the current branch. Original logs and JUnit reports remain in `/private/tmp/omnibci-s1d-batch1-7qvx6tp2`.
 
-On the follow-up branch, inspect its actual base and recover the applicable code/tests from that commit. Reconcile documentation status separately; do not blindly restore the old branch scope or assume that historical test results validate the new base.
+Recover the applicable code/tests against the current base. Reconcile documentation status separately; historical test results do not validate the restored implementation.
 
 ### 8.2 Proposed second batch: capabilities and lifecycle
 
-This batch has not been implemented or approved for implementation on the current branch. Present its concrete scope again before changing code on the follow-up branch.
+This batch is now authorized on the current branch. Implement it after the restored first batch, with failing lifecycle cases before production changes.
 
 | Change boundary | Concrete adjustment and reason |
 | --- | --- |
@@ -231,4 +229,4 @@ Preserve the first-batch admission behavior when it is restored. First add faili
 - Keep Color/Rect validation, opaque handle ownership, stale/foreign handle rejection and feedback texture replacement for the graphics batch. Preserve both adapters and the frame-pack format.
 - Keep trial/result method and payload migration coordinated with their actual consumers; do not add old/new method aliases or payload dispatch. The shared constructor, PluginContext, manifest/API-version and payload-schema switch remains S1f.
 - Do not rewrite Classic40's stimulus state machine, remove unrelated locks or add a general lifecycle manager merely to perform the interface changes.
-- The complete API v1 transition still requires this deferred work. Branch separation does not authorize a compatibility layer or allow S1f's seven-kind completion gate to be marked complete early.
+- The complete API v1 transition still requires the remaining work. Separate commits do not authorize a compatibility layer or allow S1f's seven-kind completion gate to be marked complete early.

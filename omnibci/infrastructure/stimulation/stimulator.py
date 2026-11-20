@@ -137,17 +137,13 @@ class Stimulator:
 
     @property
     def is_presenting(self) -> bool:
-        """True while the paradigm is mid-trial (not ready for the next trial).
-
-        Duck-typed: paradigms may expose ``is_presenting()``; those that don't
-        report ready immediately (preserving the previous drain-all behaviour).
-        """
-        p = self.paradigm
-        fn = getattr(p, "is_presenting", None) if p is not None else None
-        try:
-            return bool(fn()) if callable(fn) else False
-        except Exception:
-            return False
+        """True while a trial or feedback is active; query failures propagate."""
+        if self.paradigm is None:
+            raise RuntimeError("Stimulation paradigm has not been initialized")
+        presenting = self.paradigm.is_presenting()
+        if not isinstance(presenting, bool):
+            raise TypeError("Paradigm.is_presenting() must return a bool")
+        return presenting
 
     def present_result(self, result) -> None:
         if self.paradigm is not None:
