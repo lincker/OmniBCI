@@ -4,8 +4,12 @@
 # @Date     : 2026-01-28 05:58
 import hashlib
 import sys
-from importlib.machinery import ModuleSpec, NamespaceLoader, PathFinder
-from importlib.util import module_from_spec, spec_from_file_location
+import stat
+from threading import RLock
+from importlib import import_module
+from importlib.abc import MetaPathFinder
+from importlib.machinery import ModuleSpec, NamespaceLoader, PathFinder, SourceFileLoader, SourcelessFileLoader
+from importlib.util import spec_from_file_location
 from pathlib import Path
 from types import ModuleType
 from typing import Type, TypeVar
@@ -21,19 +25,66 @@ class PluginLoadError(RuntimeError):
     """The selected descriptor could not be loaded or instantiated."""
 
 
+_ENTRYPOINT_PATHS: dict[str, tuple[Path, Path | None]] = {}
+
+
+class _ArtifactSourceLoader(SourceFileLoader):
+    def get_code(self, fullname):
+        # Never read or write .pyc files inside an immutable plugin artifact.
+        return self.source_to_code(self.get_data(self.path), self.path)
+
+
+class _ArtifactFinder(MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if not fullname.startswith("_omnibci_plugin_") or path is None:
+            return None
+        selected = _ENTRYPOINT_PATHS.get(fullname)
+        if selected is not None:
+            source, package_dir = selected
+            return spec_from_file_location(
+                fullname, source, loader=_ArtifactSourceLoader(fullname, str(source)),
+                submodule_search_locations=[str(package_dir)] if package_dir is not None else None,
+            )
+        spec = PathFinder.find_spec(fullname, path)
+        if spec is not None:
+            if isinstance(spec.loader, SourceFileLoader):
+                spec.loader = _ArtifactSourceLoader(fullname, spec.origin)
+            elif isinstance(spec.loader, SourcelessFileLoader):
+                raise PluginLoadError("Plugin modules require Python source, not bytecode-only imports")
+        return spec
+
+
+sys.meta_path.insert(0, _ArtifactFinder())
+
+
 class PluginLoader:
+
+    _lock = RLock()
 
     @staticmethod
     def _module_prefix(descriptor: PluginDescriptor) -> str:
-        identity = "\0".join((
-            descriptor.category,
-            descriptor.identifier,
-            descriptor.contribution_id,
-            descriptor.version or "",
-            str(descriptor.location.resolve()),
-        ))
-        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-        return f"_omnibci_plugin_{digest}"
+        """Share code by local package content, independently of Contribution."""
+        location = descriptor.location.resolve()
+        digest = hashlib.sha256("\0".join((
+            descriptor.identifier, descriptor.version, sys.platform, str(location),
+        )).encode("utf-8"))
+        for child in sorted(location.rglob("*")):
+            if child.is_symlink():
+                raise PluginLoadError(f"{descriptor.manifest_path}: plugin tree contains symlink {child}")
+            relative = child.relative_to(location)
+            if ("__pycache__" in relative.parts or child.suffix == ".pyc"
+                    or relative.as_posix() == ".omnibci-install.json"):
+                continue
+            digest.update(relative.as_posix().encode("utf-8") + b"\0")
+            mode = child.stat().st_mode
+            if stat.S_ISDIR(mode):
+                digest.update(b"directory\0")
+            elif stat.S_ISREG(mode):
+                with child.open("rb") as reader:
+                    digest.update(hashlib.file_digest(reader, "sha256").digest())
+            else:
+                raise PluginLoadError("Plugin artifacts require regular files and directories")
+        return f"_omnibci_plugin_{digest.hexdigest()}"
 
     @staticmethod
     def _install_namespace(name: str, location: Path) -> None:
@@ -64,14 +115,9 @@ class PluginLoader:
                 and (loaded_name == prefix or loaded_name.startswith(f"{prefix}."))
             ):
                 sys.modules.pop(loaded_name, None)
-
-    @staticmethod
-    def _reject_symlinks(location: Path, manifest_path: Path) -> None:
-        for child in location.rglob("*"):
-            if child.is_symlink():
-                raise PluginLoadError(
-                    f"{manifest_path}: plugin tree contains symlink {child}"
-                )
+        for name in tuple(_ENTRYPOINT_PATHS):
+            if name == prefix or name.startswith(f"{prefix}."):
+                _ENTRYPOINT_PATHS.pop(name, None)
 
     @classmethod
     def _prepare_module(
@@ -81,7 +127,7 @@ class PluginLoader:
         module_path: str,
         manifest_path: Path,
     ) -> tuple[str, Path, Path | None]:
-        """Create namespace parents and return the exact source import target."""
+        """Create only the synthetic root and validate the exact entrypoint path."""
         cls._install_namespace(prefix, location)
         parts = module_path.split(".")
         parent_path = location
@@ -99,7 +145,6 @@ class PluginLoader:
                     f"{manifest_path}: entrypoint prefix {part!r} is not a package"
                 )
             parent_name = f"{parent_name}.{part}"
-            cls._install_namespace(parent_name, package_dir)
             parent_path = package_dir
 
         leaf = parts[-1]
@@ -131,20 +176,9 @@ class PluginLoader:
         target: Path,
         package_dir: Path | None,
     ) -> ModuleType:
-        """Execute the validated ``.py`` path instead of re-resolving its name."""
-        search_locations = [str(package_dir)] if package_dir is not None else None
-        spec = spec_from_file_location(
-            module_name,
-            target,
-            submodule_search_locations=search_locations,
-        )
-        if spec is None or spec.loader is None:
-            raise PluginLoadError(f"Cannot create an import spec for {target}")
-
-        module = module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-        return module
+        """Use Python's import locks and package initialization for the pinned path."""
+        _ENTRYPOINT_PATHS[module_name] = (target, package_dir)
+        return import_module(module_name)
 
     @classmethod
     def load_entrypoint(
@@ -156,63 +190,64 @@ class PluginLoader:
 
         The plugin receives a stable synthetic package namespace, so relative
         imports work while unrelated user directories never enter ``sys.path``.
-        The exact validated source file is executed; the plugin root and
-        intermediate package ``__init__.py`` files are intentionally skipped.
+        The synthetic root executes no initializer. Nested Python packages
+        initialize normally, once per locally selected artifact.
         """
-        entrypoint = descriptor.entrypoint
-        if not descriptor.supports_platform(sys.platform):
-            raise PluginLoadError(
-                f"{descriptor.identifier}/{descriptor.contribution_id} is not supported "
-                f"on {sys.platform}"
-            )
-        if entrypoint is None:
-            raise PluginLoadError(
-                f"{descriptor.manifest_path}: plugin has no entrypoint"
-            )
-
-        expected_location = descriptor.location
-        location = expected_location.resolve()
-        if location != expected_location or not location.is_dir():
-            raise PluginLoadError(
-                f"{descriptor.identifier}: plugin directory changed after discovery"
-            )
-        cls._reject_symlinks(location, descriptor.manifest_path)
-
-        prefix = cls._module_prefix(descriptor)
-        modules_before = set(sys.modules)
-        try:
-            module_name, target, package_dir = cls._prepare_module(
-                prefix,
-                location,
-                entrypoint.module,
-                descriptor.manifest_path,
-            )
-            module = cls._load_source_module(
-                module_name,
-                target,
-                package_dir,
-            )
-            plugin_class = getattr(module, entrypoint.attribute)
-            if not isinstance(plugin_class, type):
-                raise TypeError(
-                    f"{entrypoint.attribute!r} is not a class"
+        with cls._lock:
+            entrypoint = descriptor.entrypoint
+            if not descriptor.supports_platform(sys.platform):
+                raise PluginLoadError(
+                    f"{descriptor.identifier}/{descriptor.contribution_id} is not supported "
+                    f"on {sys.platform}"
                 )
-            if not issubclass(plugin_class, expected_base):
-                raise TypeError(
-                    f"{plugin_class.__name__} is not a subclass of "
-                    f"{expected_base.__name__}"
+            if entrypoint is None:
+                raise PluginLoadError(
+                    f"{descriptor.manifest_path}: plugin has no entrypoint"
                 )
-            return plugin_class
-        except BaseException as exc:
-            cls._cleanup_modules(prefix, modules_before)
-            if not isinstance(exc, Exception):
-                raise
-            if isinstance(exc, PluginLoadError):
-                raise
-            raise PluginLoadError(
-                f"{descriptor.manifest_path}: failed to load entrypoint "
-                f"{entrypoint}: {exc}"
-            ) from exc
+
+            expected_location = descriptor.location
+            location = expected_location.resolve()
+            if location != expected_location or not location.is_dir():
+                raise PluginLoadError(
+                    f"{descriptor.identifier}: plugin directory changed after discovery"
+                )
+
+            prefix = cls._module_prefix(descriptor)
+            modules_before = set(sys.modules)
+            try:
+                module_name, target, package_dir = cls._prepare_module(
+                    prefix,
+                    location,
+                    entrypoint.module,
+                    descriptor.manifest_path,
+                )
+                module = cls._load_source_module(
+                    module_name,
+                    target,
+                    package_dir,
+                )
+                plugin_class = getattr(module, entrypoint.attribute)
+                if not isinstance(plugin_class, type):
+                    raise TypeError(
+                        f"{entrypoint.attribute!r} is not a class"
+                    )
+                if not issubclass(plugin_class, expected_base):
+                    raise TypeError(
+                        f"{plugin_class.__name__} is not a subclass of "
+                        f"{expected_base.__name__}"
+                    )
+                return plugin_class
+            except BaseException as exc:
+                if prefix not in modules_before:
+                    cls._cleanup_modules(prefix, modules_before)
+                if not isinstance(exc, Exception):
+                    raise
+                if isinstance(exc, PluginLoadError):
+                    raise
+                raise PluginLoadError(
+                    f"{descriptor.manifest_path}: failed to load entrypoint "
+                    f"{entrypoint}: {exc}"
+                ) from exc
 
     @classmethod
     def instantiate(
@@ -222,8 +257,6 @@ class PluginLoader:
         **kwargs,
     ) -> T:
         """Construct using the declared API, never a constructor-error fallback."""
-        prefix = cls._module_prefix(descriptor)
-        modules_before = set(sys.modules)
         try:
             if descriptor.api_version != "1":
                 raise ValueError(f"Unsupported plugin API: {descriptor.api_version}")
@@ -245,7 +278,6 @@ class PluginLoader:
             plugin_class = cls.load_entrypoint(descriptor, expected_base)
             return plugin_class(**arguments)
         except BaseException as exc:
-            cls._cleanup_modules(prefix, modules_before)
             if not isinstance(exc, Exception):
                 raise
             if isinstance(exc, PluginLoadError):

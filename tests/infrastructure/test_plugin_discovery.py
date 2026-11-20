@@ -445,7 +445,7 @@ def test_system_exit_cleans_synthetic_modules(tmp_path):
     )
 
 
-def test_constructor_failure_cleans_new_synthetic_modules(tmp_path):
+def test_constructor_failure_retains_successfully_loaded_code(tmp_path):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
         root, "constructor", plugin_id="constructor", plugin_type="constructor"
@@ -475,9 +475,8 @@ def test_constructor_failure_cleans_new_synthetic_modules(tmp_path):
     with pytest.raises(PluginLoadError, match="constructor failed"):
         PluginLoader.instantiate(descriptor, Effector, parameters={})
 
-    assert not any(
-        name == prefix or name.startswith(f"{prefix}.") for name in sys.modules
-    )
+    assert prefix in sys.modules
+    assert prefix + ".driver" in sys.modules
 
 
 @pytest.mark.parametrize(

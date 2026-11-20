@@ -1,8 +1,8 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes are also implemented and verified; S3–S6 remain pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes are also implemented and verified; S3a code caching is implemented and verified; the remaining S3 preparation/ownership and S4–S6 work is pending; target GPU/device and other-OS checks are not claimed.
 
-The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2d are complete and verified (S2d: `1526d06`); the remaining S2 work is pending.
+The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2e are complete and verified (S2e: `cf30c57`).
 
 Updated: 2026-11-20. Original inspection baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`. The retained S1a–S1c implementation is committed in `e81f825`.
 
@@ -332,6 +332,14 @@ S2 is complete for the local management ownership scope. Exact artifact/environm
 **Checks:** `test_runtime_configuration.py`, plugin contribution/loader tests, `test_plugin_lifecycle_admission.py`, `test_runtime_package_ownership.py`, package lifecycle tests and spawned-worker tests. Add a preparation-versus-disable race, mismatched artifact rejection, independent instances sharing code, normal nested initialization, import failure/concurrency and cleanup failure cases.
 
 **Gate:** the bytes checked at preparation are the bytes selected for import; installed packages prepare offline; pending/running/recovery resources cannot be removed; changed development code requires a fresh snapshot/host. Preserve existing reference guarantees instead of replacing them with a lease framework.
+
+#### S3a execution: code caching and nested imports (2026-11-20)
+
+[PluginLoader](../omnibci/infrastructure/plugins/loader.py) now keeps one private namespace per package content/platform/local location, shared by its Contributions. Repeated bindings construct independent Instances and parameter copies without executing the entry module again. Python initializes real nested packages normally; the synthetic root remains non-executing. A loading lock prevents duplicate concurrent imports. Constructors run outside that lock and a constructor failure never evicts code used by another Instance. A failed first import removes its new private namespace; a failed sibling preserves previously loaded code.
+
+The artifact source loader compiles current source without reading/writing bytecode caches, including relative helpers. Bytecode-only helpers are rejected. Resources contribute to content identity; installation receipts and Python caches do not. Global `sys.path` stays unchanged. This is the code-lifetime portion of S3 only: runtime configuration still resolves from the catalog, and preparation-time content/environment pins, authoritative mutation ownership and their handoff remain pending.
+
+Validation first reproduced **10 failures** in 12 new cases (two existing guarantees were already green). The final cache/discovery suite passes **41 tests**, related loader/host/package suites pass **309 tests**, and the unchanged 646-file verification tree passes **4,168 headless tests**, **36 integration tests with one Windows-only skip**, and **9 import contracts**. No physical display/device or other-OS execution is claimed. Full-run evidence is retained at `/private/tmp/omnibci-s3a-h94prse4`; no compatibility alias or public SDK name was added.
 
 ### S4 Narrow application and external-node interfaces
 
