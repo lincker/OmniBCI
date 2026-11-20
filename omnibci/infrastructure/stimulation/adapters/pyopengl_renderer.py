@@ -271,13 +271,17 @@ class PyOpenGLRenderer:
     # -- Internal setup ------------------------------------------------------
 
     def _setup_programs(self) -> None:
+        # Draw-state validation requires a bound VAO; compilation and linking
+        # must succeed before draw methods establish that state.
         self._prog_texture = compileProgram(
             compileShader(_VERT_TEXTURE, GL_VERTEX_SHADER),
             compileShader(_FRAG_TEXTURE, GL_FRAGMENT_SHADER),
+            validate=False,
         )
         self._prog_color = compileProgram(
             compileShader(_VERT_COLOR, GL_VERTEX_SHADER),
             compileShader(_FRAG_COLOR, GL_FRAGMENT_SHADER),
+            validate=False,
         )
 
     def _setup_shared_ebo(self) -> None:
