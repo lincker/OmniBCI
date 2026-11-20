@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tests.execution_helpers import synthetic_execution_snapshot
+
 from omnibci.infrastructure.stimulation.application import Stimulation
 
 
@@ -10,6 +12,8 @@ def make_app(monkeypatch, *, clear_error=False, render_error=False, setup_error=
              initialize_trigger=True, external=True):
     snapshot = {"CONFIG.node_role": "stimulation", "CONFIG.module_revisions": {"stimulation": "1" * 64},
                 "CONFIG.engine_revision": "2" * 64, "CONFIG.generation": "generation"} if external else {}
+    if external:
+        snapshot = synthetic_execution_snapshot(snapshot)
     app = Stimulation(settings_snapshot=snapshot)
     steps = []
 

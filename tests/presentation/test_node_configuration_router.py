@@ -56,7 +56,7 @@ def test_node_api_selected_then_running_uses_applied_inputs(node_api, role, kind
     assert data["configuration"]["generation"] is None
     assert {item["kind"] for item in data["configuration"]["bindings"]} == kinds
     assert "private.cnt" not in response.text
-    engine._engine = Mock()
+    engine._engine = Mock(node_operation_id=Mock(return_value="prepare-1"))
     engine._running = engine._accepting_commands = True
     engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
     engine._applied_snapshot = {**saved, "CONFIG.generation": "run-1"}
@@ -90,7 +90,7 @@ def test_output_node_configuration_is_available_with_no_acquisition_or_processin
     saved.pop("ACTUATION.enabled")
     saved["PLUGINS.bindings"] = [binding for binding in saved["PLUGINS.bindings"]
                                  if binding["slot"].startswith(f"{role}.")]
-    engine._engine = Mock()
+    engine._engine = Mock(node_operation_id=Mock(return_value="prepare-1"))
     engine._running = engine._accepting_commands = True
     engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
     engine._applied_snapshot = {**saved, "CONFIG.generation": "foundation"}

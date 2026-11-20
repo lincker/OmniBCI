@@ -1,6 +1,4 @@
 """Private, JSON-safe artifact handoff between local preparation and a host."""
-import hashlib
-import json
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +8,7 @@ import sys
 
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.configuration.definitions import MODULES
+from omnibci.application.plugin_execution import PluginExecutionReceipt, fingerprint
 from omnibci.application.plugin_packages import PluginPackageError
 from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.artifact_inventory import artifact_inventory, content_digest
@@ -45,11 +44,6 @@ def configured_bindings(snapshot: dict, *, slot: str | None = None, modules=None
     return tuple(ProfileBinding.from_dict(value) for value in raw
                  if (slot is None or value['slot'] == slot)
                  and (modules is None or value['slot'].split('.', 1)[0] in modules))
-
-
-def _digest(value) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
-                                     allow_nan=False).encode()).hexdigest()
 
 
 def _environment() -> dict:
@@ -113,14 +107,14 @@ def read_prepared_plugin(binding: ProfileBinding, record: dict):
     """Verify the pinned local path; never scan a catalog or consult a repository."""
     try:
         _check_record(record)
-        if record['binding_sha256'] != _digest(binding.to_dict()):
+        if record['binding_sha256'] != fingerprint(binding.to_dict()):
             raise ValueError('Prepared artifact does not match this binding')
         environment = _environment()
         if record['node_id'] != platform.node():
             raise ValueError('Prepared artifact belongs to another node')
         if record['target'] != environment['target']:
             raise ValueError('Prepared artifact target changed')
-        if record['environment_sha256'] != _digest(environment):
+        if record['environment_sha256'] != fingerprint(environment):
             raise ValueError('Prepared artifact environment changed')
         location = Path(record['location'])
         directory = Path(record['plugin_dir']) if record['plugin_dir'] is not None else None
@@ -185,13 +179,37 @@ class PluginArtifactPreparer:
             digest, origin, repository = _artifact_state(descriptor.location, binding, directory, environment)
             record = {
                 'location': str(descriptor.location), 'plugin_dir': str(directory) if directory is not None else None,
-                'content_sha256': digest, 'environment_sha256': _digest(environment),
+                'content_sha256': digest, 'environment_sha256': fingerprint(environment),
                 'node_id': platform.node(), 'target': environment['target'], 'origin': origin,
                 'verified_repository': repository, 'entrypoint': str(descriptor.entrypoint),
-                'binding_sha256': _digest(binding.to_dict()),
+                'binding_sha256': fingerprint(binding.to_dict()),
             }
             if read_prepared_plugin(binding, record) != descriptor:
                 raise ValueError('Plugin declaration changed during preparation')
             return record
         except _FAILURES as exc:
             raise PluginLoadError(f'{binding.slot}: {exc}') from exc
+
+
+def execution_receipt(snapshot: dict, module: str, operation_id: str) -> PluginExecutionReceipt:
+    """Project the host's loaded pins; advertise only after its readiness barrier."""
+    records = {}
+    environment = None
+    for binding in configured_bindings(snapshot, modules=(module,)):
+        record = snapshot['PLUGINS.artifacts'][binding.slot]
+        _check_record(record)
+        if record['binding_sha256'] != fingerprint(binding.to_dict()):
+            raise PluginLoadError('Execution artifact does not match its binding')
+        identity = (record['node_id'], record['target'], record['environment_sha256'])
+        if environment is not None and identity != environment:
+            raise PluginLoadError('Execution artifacts must use one local environment')
+        environment = identity
+        records[binding.slot] = {key: record[key] for key in (
+            'binding_sha256', 'content_sha256', 'origin', 'verified_repository',
+        )}
+    if environment is None:
+        raise PluginLoadError('Execution requires owned plugin artifacts')
+    return PluginExecutionReceipt(
+        module, operation_id, snapshot['CONFIG.generation'], snapshot['CONFIG.module_revisions'][module],
+        snapshot['CONFIG.engine_revision'], *environment, records,
+    )

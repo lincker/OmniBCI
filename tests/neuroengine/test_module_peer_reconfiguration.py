@@ -1,5 +1,7 @@
 """Module application replaces only its own peer and preserves the engine workers."""
 import asyncio
+
+from tests.execution_helpers import output_bindings
 from unittest.mock import AsyncMock
 
 import pytest
@@ -71,7 +73,7 @@ async def test_failed_candidate_cleanup_stays_owned_until_gateway_stop():
 def snapshot(**changes):
     return {"CONFIG.module_revisions": {"stimulation": "a" * 64, "actuation": "b" * 64},
             "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run",
-            "STIMULATION.auto_spawn": False,
+            "STIMULATION.auto_spawn": False, "PLUGINS.bindings": output_bindings(),
             "ACTUATION.auto_spawn": False, **changes}
 
 

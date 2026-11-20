@@ -402,7 +402,13 @@ class NeuroEngineService(EnginePort):
                         != snapshot.get("CONFIG.module_revisions", {}).get(module)):
                     raise ProfileRevisionConflict("Prepare the retained external configuration before reconnecting")
             if self.is_engine_ready and self._applied_snapshot is not None:
-                return "running", deepcopy(self._applied_snapshot)
+                snapshot = deepcopy(self._applied_snapshot)
+                if module in ("stimulation", "actuation") and not snapshot.get(f"{module.upper()}.auto_spawn", True):
+                    operation = self._engine.node_operation_id(module)
+                    if not isinstance(operation, str) or not operation:
+                        raise ConfigProfileConflictError("Prepare the external output before connecting its node")
+                    snapshot["CONFIG.operation_id"] = operation
+                return "running", snapshot
             thread = self._engine_thread
             if self._running or self._restart_blocked or thread is not None and thread.is_alive():
                 raise ConfigProfileConflictError("Runtime still owns resources; stop it before connecting nodes")

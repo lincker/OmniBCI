@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from tests.execution_helpers import synthetic_execution_snapshot
+
 
 @pytest.fixture(params=["stimulation", "actuation"])
 def role(request):
@@ -72,22 +74,27 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
     snapshot = {"CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1"}
     if external:
         snapshot["CONFIG.node_role"] = role
+        snapshot = synthetic_execution_snapshot(snapshot)
     app = getattr(module, role.capitalize())(settings_snapshot=snapshot)
     return app, peer, peer_factory.call_args.args[0], lifecycle, queue
 
 
 def test_managed_process_keeps_existing_transport_without_identity(monkeypatch, role):
     app, peer, config, lifecycle, queue = make_app(monkeypatch, role, external=False)
-    assert config.transport._client.identity is None
+    assert config.transport._client.receipt is None
     assert config.transport._client._reconnect is True
     assert app._external_node is False
 
 
 def test_external_process_has_pinned_identity_and_single_connection(monkeypatch, role):
     app, peer, config, lifecycle, queue = make_app(monkeypatch, role)
-    assert config.transport._client.identity.to_dict() == {
-        "role": role, "module_revision": "a" * 64, "engine_revision": "c" * 64, "generation": "run-1",
-    }
+    receipt = config.transport._client.receipt
+    assert receipt.module == role
+    assert receipt.module_revision == "a" * 64
+    assert receipt.engine_revision == "c" * 64
+    assert receipt.generation == "run-1"
+    assert receipt.operation_id == "prepare-1"
+    assert set(receipt.artifacts) == {"stimulation.paradigm" if role == "stimulation" else "actuation.effector"}
     assert config.transport._client._reconnect is False
 
 

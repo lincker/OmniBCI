@@ -9,6 +9,7 @@ from queue import Empty, Full
 from uuid import uuid4
 
 from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandRequest, CommandResult
+from omnibci.application.plugin_execution import bindings_fingerprint
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogListener
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
@@ -95,6 +96,7 @@ class NeuroEngine:
         self._module_locks = {module: asyncio.Lock() for module in ("acquisition", "processing")}
         self._output_locks = {module: asyncio.Lock() for module in ("stimulation", "actuation")}
         self._output_configurations = {}
+        self._output_identities = {}
         self.peer_gateway = peer_gateway
         # Queues constructed by the composition builder but not otherwise
         # exposed as command queues (EventBus input + DataManager buffer).
@@ -689,8 +691,10 @@ class NeuroEngine:
         from omnibci.infrastructure.neuroengine.gateway.peers import stimulation_peer_config, actuation_peer_config
 
         identity = None
+        self._output_identities.pop(module, None)
         if not snapshot.get(f"{module.upper()}.auto_spawn", True):
-            identity = PeerIdentity(module, revisions.get(module), self._engine_revision, self._generation)
+            identity = PeerIdentity(module, revisions.get(module), self._engine_revision, self._generation,
+                                    uuid4().hex, bindings_fingerprint(snapshot["PLUGINS.bindings"], module))
         if module == "stimulation":
             config = stimulation_peer_config(
                 host=snapshot.get("STIMULATION.server_ip", "127.0.0.1"),
@@ -706,8 +710,16 @@ class NeuroEngine:
         if module == "actuation":
             self._set_actuation_active(False)
         await self.peer_gateway.replace_peer(module, config)
+        if identity is not None:
+            self._output_identities[module] = identity
         if module == "actuation":
             self._configure_actuation_listeners()
+
+    def node_operation_id(self, role: str) -> str | None:
+        identity = self._output_identities.get(role)
+        if identity is not None and self.peer_gateway.is_peer_ready(role):
+            return identity.operation_id
+        return None
 
     async def set_actuation_active(self, active: bool) -> None:
         async def apply():

@@ -1984,6 +1984,8 @@ export interface components {
             engine_revision: string;
             /** Generation */
             generation: string | null;
+            /** Operation Id */
+            operation_id: string | null;
             /** Settings */
             settings: {
                 [key: string]: unknown;

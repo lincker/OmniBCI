@@ -18,6 +18,7 @@ def configuration(*, generation="run-1"):
         {},
         (ProfileBinding("actuation.effector", "effector", None,
                         PluginSelection("test.effector", "logger", "1.0.0"), {}),),
+        operation_id="prepare-1" if generation is not None else None,
     )
 
 

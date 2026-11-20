@@ -97,13 +97,15 @@ class NodeConfiguration:
     engine_revision: str
     _module_revisions_json: str = field(repr=False)
     generation: str | None
+    operation_id: str | None
     _settings_json: str = field(repr=False)
     _bindings_json: str = field(repr=False)
     format_version: int = 1
 
     def __init__(self, role: str, module_revisions: dict[str, str], engine_revision: str,
                  generation: str | None, settings: dict,
-                 bindings: tuple[ProfileBinding, ...], format_version: int = 1):
+                 bindings: tuple[ProfileBinding, ...], format_version: int = 1,
+                 *, operation_id: str | None = None):
         _validate_role(role)
         if type(format_version) is not int or format_version != 1:
             raise PluginSchemaError("Unsupported node configuration format_version")
@@ -116,6 +118,12 @@ class NodeConfiguration:
             not isinstance(generation, str) or not generation or generation != generation.strip()
         ):
             raise PluginSchemaError("Node generation must be non-empty text or null")
+        if operation_id is not None and (
+            not isinstance(operation_id, str) or not operation_id or operation_id != operation_id.strip()
+        ):
+            raise PluginSchemaError("Node operation_id must be non-empty text or null")
+        if role != "engine" and (generation is None) != (operation_id is None):
+            raise PluginSchemaError("Running node configuration requires a preparation operation_id")
         _validate_settings(role, settings)
         if not isinstance(bindings, (tuple, list)) or any(
             not isinstance(binding, ProfileBinding) or binding.kind not in _ROLE_KINDS[role]
@@ -132,6 +140,7 @@ class NodeConfiguration:
         object.__setattr__(self, "_module_revisions_json", _canonical(module_revisions))
         object.__setattr__(self, "engine_revision", engine_revision)
         object.__setattr__(self, "generation", generation)
+        object.__setattr__(self, "operation_id", operation_id)
         object.__setattr__(self, "format_version", format_version)
         object.__setattr__(self, "_settings_json", _canonical(settings))
         object.__setattr__(self, "_bindings_json", _canonical([binding.to_dict() for binding in bindings]))
@@ -151,12 +160,12 @@ class NodeConfiguration:
     def to_dict(self) -> dict:
         return {"format_version": self.format_version, "role": self.role,
                 "module_revisions": self.module_revisions, "engine_revision": self.engine_revision,
-                "generation": self.generation, "settings": self.settings,
+                "generation": self.generation, "operation_id": self.operation_id, "settings": self.settings,
                 "bindings": json.loads(self._bindings_json)}
 
     @classmethod
     def from_dict(cls, data: dict) -> NodeConfiguration:
-        fields = {"format_version", "role", "module_revisions", "engine_revision", "generation", "settings", "bindings"}
+        fields = {"format_version", "role", "module_revisions", "engine_revision", "generation", "operation_id", "settings", "bindings"}
         if not isinstance(data, dict) or set(data) != fields or not isinstance(data["bindings"], list):
             raise PluginSchemaError("Node configuration has missing or unknown fields")
         return cls(**{**data, "bindings": tuple(ProfileBinding.from_dict(item) for item in data["bindings"])})
@@ -190,6 +199,7 @@ def project_node_configuration(runtime_snapshot: dict, role: str) -> NodeConfigu
                                      for module in _ROLE_MODULES[role]},
         engine_revision=runtime_snapshot.get("CONFIG.engine_revision"),
         generation=runtime_snapshot.get("CONFIG.generation"), settings=settings,
+        operation_id=runtime_snapshot.get("CONFIG.operation_id"),
         bindings=bindings,
     )
 
@@ -230,5 +240,7 @@ def materialize_node_configuration(configuration: NodeConfiguration,
     result["CONFIG.engine_revision"] = configuration.engine_revision
     if configuration.generation is not None:
         result["CONFIG.generation"] = configuration.generation
+    if configuration.operation_id is not None:
+        result["CONFIG.operation_id"] = configuration.operation_id
     result["CONFIG.node_role"] = configuration.role
     return result

@@ -2,6 +2,8 @@
 
 import asyncio
 
+from omnibci.application.plugin_execution import PluginExecutionReceipt
+
 import pytest
 
 from omnibci.infrastructure.ipc.contracts import PROTOCOL_VERSION, encode_event
@@ -14,16 +16,23 @@ from omnibci.infrastructure.ipc.protocol import Frame
 from omnibci.shared.events import Event, EventType
 
 
-IDENTITY = PeerIdentity("actuation", "a" * 64, "c" * 64, "generation-1")
+RECEIPT = PluginExecutionReceipt(
+    "actuation", "prepare-1", "generation-1", "a" * 64, "c" * 64,
+    "device-node", "linux-aarch64", "e" * 64,
+    {"actuation.effector": {"binding_sha256": "d" * 64, "content_sha256": "f" * 64,
+                            "origin": "local", "verified_repository": None}},
+)
+IDENTITY = PeerIdentity("actuation", "a" * 64, "c" * 64, "generation-1", "prepare-1", RECEIPT.bindings_sha256)
 
 
 @pytest.mark.parametrize("keep_current", [False, True])
 def test_old_configuration_identity_field_is_rejected(keep_current):
-    payload = IDENTITY.to_dict()
+    payload = RECEIPT.to_dict()
     payload["system_revision"] = payload["engine_revision"]
     if not keep_current:
         del payload["engine_revision"]
-    assert not IDENTITY.matches(payload)
+    with pytest.raises(ValueError, match="missing or unknown"):
+        PluginExecutionReceipt.from_dict(payload)
 
 
 async def wait_for(predicate):
@@ -61,18 +70,18 @@ def test_unverified_socket_cannot_receive_commands_or_claim_liveness():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("identity", [
-    PeerIdentity("stimulation", "a" * 64, "c" * 64, "generation-1"),
-    PeerIdentity("actuation", "b" * 64, "c" * 64, "generation-1"),
-    PeerIdentity("actuation", "a" * 64, "c" * 64, "generation-2"),
-    PeerIdentity("actuation", "a" * 64, "d" * 64, "generation-1"),
+@pytest.mark.parametrize("field,value", [
+    ("module", "stimulation"), ("module_revision", "b" * 64), ("generation", "generation-2"),
+    ("engine_revision", "d" * 64), ("operation_id", "prepare-2"),
 ])
-def test_wrong_identity_is_rejected(identity):
+def test_wrong_identity_is_rejected(field, value):
     async def scenario():
         server, port = await listen()
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         try:
-            writer.write(encode_event(Event(EventType.PeerHello, identity.to_dict())))
+            payload = RECEIPT.to_dict()
+            payload[field] = value
+            writer.write(encode_event(Event(EventType.PeerHello, payload)))
             await writer.drain()
             assert await asyncio.wait_for(reader.read(), 1) == b""
             assert not server.is_connected
@@ -89,7 +98,7 @@ def test_matching_identity_ack_precedes_normal_bidirectional_traffic():
         inbound, outbound = [], []
         server.set_inbound_handler(lambda event: inbound.append(event) is None)
         client = NetworkClient(server_ip="127.0.0.1", server_port=port,
-                               identity=IDENTITY, reconnect=False)
+                               receipt=RECEIPT, reconnect=False)
         client.set_inbound_handler(lambda event: outbound.append(event) is None)
         task = asyncio.create_task(client.start())
         try:
@@ -130,22 +139,26 @@ def test_pending_handshake_reserves_single_controller_slot_and_stop_closes_it():
     asyncio.run(scenario())
 
 
-def test_client_requires_matching_ack_and_does_not_reconnect_old_identity():
+@pytest.mark.parametrize("changed", ["generation", "environment_sha256", "content_sha256"])
+def test_client_requires_matching_ack_and_does_not_reconnect_old_identity(changed):
     async def scenario():
         connections = []
         async def stale_server(reader, writer):
             connections.append(True)
             hello = await read_event_frame(reader)
             assert hello.type == EventType.PeerHello
-            payload = IDENTITY.to_dict()
-            payload["generation"] = "wrong"
+            payload = RECEIPT.to_dict()
+            if changed == "content_sha256":
+                payload["artifacts"]["actuation.effector"][changed] = "0" * 64
+            else:
+                payload[changed] = "0" * 64
             writer.write(encode_event(Event(EventType.PeerAccepted, payload)))
             await writer.drain()
             writer.close()
             await writer.wait_closed()
         server = await asyncio.start_server(stale_server, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
-        client = NetworkClient(server_port=port, identity=IDENTITY, reconnect=False)
+        client = NetworkClient(server_port=port, receipt=RECEIPT, reconnect=False)
         try:
             with pytest.raises(ValueError, match="identity"):
                 await asyncio.wait_for(client.start(), 1)
@@ -183,7 +196,7 @@ def test_handshake_timeout_releases_reserved_controller_slot(monkeypatch):
         try:
             assert await asyncio.wait_for(reader.read(), 1) == b""
             await wait_for(lambda: not server._pending_clients and not server._closing_writers)
-            client = NetworkClient(server_port=port, identity=IDENTITY, reconnect=False)
+            client = NetworkClient(server_port=port, receipt=RECEIPT, reconnect=False)
             task = asyncio.create_task(client.start())
             try:
                 await wait_for(lambda: client.is_connected)
@@ -211,7 +224,7 @@ def test_client_cannot_send_before_ack_and_stop_closes_pending_handshake():
             disconnected.set()
         server = await asyncio.start_server(no_ack, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
-        client = NetworkClient(server_port=port, identity=IDENTITY, reconnect=False)
+        client = NetworkClient(server_port=port, receipt=RECEIPT, reconnect=False)
         task = asyncio.create_task(client.start())
         try:
             await asyncio.wait_for(hello_received.wait(), 1)
@@ -238,7 +251,7 @@ def test_terminal_transport_notifies_owner_once_after_link_cleanup():
             notifications.append(transport._client.writer)
             ended.set()
         transport = peer_transport.ConnectTransport(
-            "127.0.0.1", port, identity=IDENTITY, reconnect=False, on_disconnect=notify,
+            "127.0.0.1", port, receipt=RECEIPT, reconnect=False, on_disconnect=notify,
         )
         try:
             await transport.start()
@@ -259,7 +272,7 @@ def test_deliberate_transport_stop_does_not_request_reconfiguration():
         server, port = await listen()
         notifications = []
         transport = peer_transport.ConnectTransport(
-            "127.0.0.1", port, identity=IDENTITY, reconnect=False,
+            "127.0.0.1", port, receipt=RECEIPT, reconnect=False,
             on_disconnect=lambda: notifications.append(True),
         )
         try:
@@ -309,7 +322,7 @@ def test_terminal_client_does_not_retry_failed_initial_connection(monkeypatch):
         raise ConnectionRefusedError()
     monkeypatch.setattr(network.asyncio, "open_connection", refused)
     async def scenario():
-        client = NetworkClient(identity=IDENTITY, reconnect=False)
+        client = NetworkClient(receipt=RECEIPT, reconnect=False)
         await asyncio.wait_for(client.start(), 1)
         assert attempts == [True]
         assert not client.is_connected
@@ -341,7 +354,7 @@ def test_failed_handshake_cleanup_blocks_restart_until_socket_release(monkeypatc
         monkeypatch.setattr(network.asyncio, "open_connection", connect)
         ended = asyncio.Event()
         transport = peer_transport.ConnectTransport(
-            "127.0.0.1", 8001, identity=IDENTITY, reconnect=False,
+            "127.0.0.1", 8001, receipt=RECEIPT, reconnect=False,
             on_disconnect=ended.set,
         )
         await transport.start()
@@ -369,4 +382,4 @@ def test_failed_handshake_cleanup_blocks_restart_until_socket_release(monkeypatc
 ])
 def test_identity_requires_role_revision_and_generation(role, revision, generation):
     with pytest.raises(ValueError):
-        PeerIdentity(role, revision, "c" * 64, generation)
+        PeerIdentity(role, revision, "c" * 64, generation, "prepare-1", RECEIPT.bindings_sha256)

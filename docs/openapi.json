@@ -9201,6 +9201,17 @@
             ],
             "title": "Generation"
           },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
           "settings": {
             "additionalProperties": true,
             "type": "object",
@@ -9222,6 +9233,7 @@
           "module_revisions",
           "engine_revision",
           "generation",
+          "operation_id",
           "settings",
           "bindings"
         ],

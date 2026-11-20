@@ -34,7 +34,7 @@ from omnibci.application.command_contracts import command_contract
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 from omnibci.infrastructure.outbound import make_actuation_ack, make_actuation_fault
 from omnibci.infrastructure.ipc.peer_channel import PeerChannel
 from omnibci.infrastructure.actuation.engine_channel import engine_peer_config
@@ -60,10 +60,6 @@ class Actuation:
         *,
         settings_snapshot: dict,
     ):
-        self._event_queue = mp.Queue()
-        self._event_queue_closed = False
-        self.event_bus = EventBus(self._event_queue)
-
         self._runtime_snapshot = deepcopy(settings_snapshot)
         source = MODULE_SETTING_DEFAULTS["actuation"] | self._runtime_snapshot
         host = source["ACTUATION.server_ip"]
@@ -75,12 +71,15 @@ class Actuation:
         self._max_command_age = float(source["ACTUATION.max_command_age_s"])
         self._external_node = source.get("CONFIG.node_role") == "actuation"
         self._reconnect_requested = False
-        identity = None
+        receipt = None
         if self._external_node:
-            identity = PeerIdentity("actuation", source["CONFIG.module_revisions"]["actuation"],
-                                    source["CONFIG.engine_revision"], source["CONFIG.generation"])
+            receipt = execution_receipt(source, "actuation", source["CONFIG.operation_id"])
+        self._event_queue = mp.Queue()
+        self._event_queue_closed = False
+        self.event_bus = EventBus(self._event_queue)
+
         self.peer_channel = PeerChannel(engine_peer_config(
-            host, port, identity=identity, reconnect=not self._external_node,
+            host, port, receipt=receipt, reconnect=not self._external_node,
             on_disconnect=self._connection_lost if self._external_node else None,
         ), self.event_bus)
 

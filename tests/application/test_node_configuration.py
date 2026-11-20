@@ -37,7 +37,7 @@ def runtime():
         "sample_rate": 1000, "channel_count": 2, "data_file_path": "private/source.cnt",
     })
     return {
-        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "engine-generation-1",
+        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "engine-generation-1", "CONFIG.operation_id": "prepare-1",
         "ACQUISITION.sample_rate": 1000, "ACQUISITION.channel_count": 2,
         "STIMULATION.server_ip": "192.0.2.1", "STIMULATION.server_port": 8765,
         "NEUROENGINE.queue_size": 100, "STIMULATION.renderer": "pyopengl",
@@ -159,6 +159,7 @@ def test_projection_requires_no_installed_catalog_and_preserves_parent_identity(
     assert dto.to_dict()["format_version"] == 1
     assert dto.settings["STIMULATION.auto_spawn"] is False
     runtime.pop("CONFIG.generation")
+    runtime.pop("CONFIG.operation_id")
     assert project_node_configuration(runtime, "stimulation").generation is None
 
 
@@ -425,3 +426,10 @@ def test_legacy_global_setup_is_not_projected_to_nodes(runtime):
     runtime["SIGNAL.setup"] = {"source_id": "test-source", "outputs": ["O1"]}
     assert "SIGNAL.setup" not in project_node_configuration(runtime, "engine").settings
     assert "SIGNAL.setup" not in project_node_configuration(runtime, "stimulation").settings
+
+
+@pytest.mark.parametrize("operation", [None, "", " ", True])
+def test_running_external_node_requires_preparation_operation(runtime, operation):
+    runtime["CONFIG.operation_id"] = operation
+    with pytest.raises(PluginSchemaError, match="operation"):
+        project_node_configuration(runtime, "actuation")

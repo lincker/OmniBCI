@@ -835,8 +835,10 @@ async def test_external_recovery_can_rebuild_foundation_and_publish_only_retaine
     assert restored["CONFIG.module_revisions"][module] == old["CONFIG.module_revisions"][module]
     commands.request.assert_not_called()
     engine._module_snapshot_provider.assert_not_called()
+    graph.node_operation_id.return_value = "retained-operation"
     state, publication = engine.node_configuration_snapshot(lambda: {}, module=module)
-    assert state == "running" and publication == engine.applied_snapshot
+    assert state == "running"
+    assert publication == {**engine.applied_snapshot, "CONFIG.operation_id": "retained-operation"}
     assert engine.admission.recovery_status.keys() == {module}
 
     def stopped(event):

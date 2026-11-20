@@ -35,6 +35,23 @@ def read(binding, record):
     return read_prepared_plugin(binding, record)
 
 
+def test_execution_receipt_exports_only_owned_pins_without_local_paths(installed):
+    from omnibci.infrastructure.plugins.preparation import execution_receipt
+    from omnibci.application.plugin_execution import bindings_fingerprint
+
+    store, binding, _ = installed
+    record = prepare(store, binding)
+    snapshot = {"PLUGINS.bindings": [binding.to_dict()], "PLUGINS.artifacts": {binding.slot: record},
+                "CONFIG.generation": "run-1", "CONFIG.module_revisions": {"actuation": "a" * 64},
+                "CONFIG.engine_revision": "b" * 64}
+    receipt = execution_receipt(snapshot, "actuation", "prepare-1")
+    assert receipt.artifacts[binding.slot]["content_sha256"] == record["content_sha256"]
+    assert receipt.environment_sha256 == record["environment_sha256"]
+    assert receipt.bindings_sha256 == bindings_fingerprint(snapshot["PLUGINS.bindings"], "actuation")
+    assert "location" not in json.dumps(receipt.to_dict())
+    assert str(store.plugin_dir) not in json.dumps(receipt.to_dict())
+
+
 def test_managed_preparation_and_json_handoff_are_static_and_offline(installed, monkeypatch):
     from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
     store, binding, _ = installed
