@@ -301,10 +301,19 @@ Engine configuration hashes use the `engine` namespace independently of module
 revisions and module/Profile history. Engine generation identifies the running
 instance.
 
-SDK `PluginContext.module_revision` identifies the consuming module. A Trigger
-shipped in an acquisition-domain package therefore uses the Stimulation revision
-when loaded by Stimulation. Results carry Acquisition and Processing revisions;
-source preparation and preview identify the Acquisition revision.
+The host keeps module revisions private; plugin constructors receive only their
+own parameters/resources and, for Processing, mapped input metadata. A Trigger
+belongs to Stimulation regardless of its package classification. Results retain
+Acquisition and Processing revisions. Actuation intents retain the source trial
+and both revisions; acknowledgements also identify the actual output-host
+operation. Private execution history links that operation to prepared artifact
+and environment hashes. It proves acknowledged preparation, not physical delivery
+or activation of a subsequently cancelled candidate.
+
+`omnibci-plugin develop` reuses the same current-module configuration objects in
+an isolated store/configuration and fresh normal hosts. It cannot select saved
+ordinary Profiles or silently borrow ordinary installed companions. See the
+[developer workflow](plugin-development.md#develop-a-fixed-snapshot).
 
 ## API and storage
 

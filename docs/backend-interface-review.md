@@ -1,20 +1,36 @@
 # Backend Interface Review and Refactoring Recommendations
 
-Status: baseline findings and target recommendations. Completed S1a–S1c and S1e implementation is recorded in the [implementation plan](plugin-implementation-plan.md). Stimulation work has resumed under the latest user instruction. D07 required methods/readiness are restored and verified; D08–D09/R03 narrow capabilities and lifecycle are implemented and verified; graphics validation, opaque handles and feedback replacement are implemented and verified headlessly. The first S1f batch implements and verifies constructor/SDK/API selection replacement. Static role declaration cleanup is also implemented and verified; runtime payload schemas and their host/client replacement are implemented and verified. S2e also records local/market origin and accepted evidence without widening plugin inputs. Exact artifact preparation and subsequent plan steps remain pending. See the [handoff](stimulation-interface-design.md#8-follow-up-branch-handoff). Historical findings below describe the inspected baseline unless marked resolved.
+Status: historical findings with current disposition. S0–S5 implement the core domain, plugin and module boundaries; S6 completes clients, documentation and local installed-package acceptance; remaining target-platform release gates are explicit in the execution record. The table below identifies completed software changes and deliberately separate follow-ups. Detailed findings retain the inspected baseline and are not claims that removed interfaces remain in current code.
 
 Baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`, reviewed on 2026-11-18. This review follows the [plugin and marketplace proposal](plugin-marketplace-design.md): one new Plugin API v1, no historical compatibility paths, a thin SDK facade, and execution owned by backend modules.
 
 Design updated on 2026-11-19: the public API defines role/data/capability contracts; the SDK publishes their canonical definitions and supports development; module hosts own construction, scheduling and lifecycle. The system has not launched, so the initial v1 can replace current contracts in one coordinated change without compatibility adapters.
 
-The [Plugin API v1 domain draft](plugin-api-v1.md) now supplies the concrete export inventory, signatures and invariants for D01–D10/K01. Its single-active-epoch decoder uses explicit reset and model setup/teardown; the recommendations below follow that refinement.
+The [Plugin API v1 contract](plugin-api-v1.md) now supplies the concrete export inventory, signatures and invariants for D01–D10/K01. Its single-active-epoch decoder uses explicit reset and model setup/teardown; the recommendations below follow that refinement.
 
-The simplified target has 18 public names and no generic plugin context or compatibility layer. Removal of `PluginContext` is agreed, preserving its original explicit injection and configuration isolation. API v1 requires updating the existing implementation and every affected caller while preserving functionality; the [replacement checklist](plugin-api-v1.md#7-complete-replacement-of-existing-code) makes that work explicit. Host-only identities and internal DTOs do not become SDK exports. Market releases, local archives/shared source and user development follow the same [source-workflow contract](plugin-marketplace-design.md#91-three-entry-workflows-and-one-runtime-contract).
+The simplified target has 18 public names and no generic plugin context or compatibility layer. Removal of `PluginContext` is implemented, preserving its original explicit injection and configuration isolation. API v1 requires updating the existing implementation and every affected caller while preserving functionality; the [replacement checklist](plugin-api-v1.md#7-complete-replacement-of-existing-code) makes that work explicit. Host-only identities and internal DTOs do not become SDK exports. Market releases, local archives/shared source and user development follow the same [source-workflow contract](plugin-marketplace-design.md#91-three-entry-workflows-and-one-runtime-contract).
 
-Names follow the [canonical plugin terminology and module names](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries). Plugin Management owns Packages, Configuration selects Contributions, and the four Module Hosts own Instances. Marketplace integration supplies release evidence and bytes. Code references below preserve current identifiers, including `PluginMarketRepository`; naming decisions are not claims that implementation or UI renaming has occurred.
+Names follow the [canonical plugin terminology and module names](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries). Plugin Management owns Packages, Configuration selects Contributions, and the four Module Hosts own Instances. Marketplace integration supplies release evidence and bytes. Code references below preserve historical identifiers, including `PluginMarketRepository`. Current clients use Plugins; the architecture names do not require a new class for every owner.
 
 The [implementation plan](plugin-implementation-plan.md) turns these findings into ordered work and records simplifications, acceptance gates and deferred portions. This review remains the evidence inventory; it does not require a new class or service for every named boundary.
 
 The 2026-11-20 branch closeout adds [cross-module acceptance requirements](#cross-module-acceptance-addendum-2026-11-20) to the existing findings. The [closeout record](plugin-implementation-plan.md#7-current-branch-closeout-2026-11-20) separates retained S1a–S1c code, historical test evidence and pending work. These additions change no public API or implementation scope.
+
+### Current disposition (2026-11-21)
+
+| Findings | Software disposition | Open portion |
+| --- | --- | --- |
+| D01–D10, R01–R04 | S1a–S1f implement role/value validation and every affected host/caller, including Stimulation and Actuation ownership. | Real GPU/device and other-OS acceptance remain unverified locally. |
+| K01–K02, K04, K06 | Canonical v1 SDK, shared static declarations, scoped catalog, exact preparation and artifact-scoped imports are implemented in S1–S3. | No old constructor or discovery compatibility path remains. |
+| K03 | Shared installer, retained origin and exact artifact/environment pins are implemented. | M2: multiple target artifacts. |
+| K05 | Pending/active/recovery protection, one store mutation owner and actual node execution receipts are implemented in S3–S4. | M3: remote package administration. |
+| K07 | Installer-owned integrity, retained accepted evidence and offline preparation are implemented. | M1: publication/revocation policy and publisher/key operations. |
+| A01–A04 | Narrow ports, owned configuration queries, scoped settings, typed boundary records and explicit outcomes are implemented in S4. | No replacement engine or repository framework is needed. |
+| A05 | Results queries use generation rather than the engine object graph. | B1: choose and implement the retention promise. |
+| T01–T03 | Shared peer mechanics, output causality, application-owned values and presentation-owned codecs are implemented; affected clients/contracts agree. | Physical delivery is not established by a software acknowledgement. |
+| T04 | Kept separate from the plugin API transition. | B2: bounded per-client WebSocket delivery. |
+
+The [execution plan](plugin-implementation-plan.md) records failing cases, subsequent checks and commits. Current author guidance is in [plugin-development.md](plugin-development.md); baseline examples below must not be copied as current API usage.
 
 ## 1. Conclusions and review scope
 
@@ -29,7 +45,7 @@ Findings use two priorities:
 
 “Confirmed” means the declaration/caller mismatch or behavior is directly visible in code, with small executable probes where useful. “Design risk” identifies a weak boundary without claiming an observed production failure. “Proposal” describes the intended replacement, not a capability already implemented.
 
-| Module or boundary | Current public surface | Review sections |
+| Module or boundary | Inspected baseline surface | Review sections |
 | --- | --- | --- |
 | Domain values | `SignalChunk`, `SignalInfo`, `Epoch`, `Classification`, channel mapping and decoder input requirements | D01–D02 and preservation notes |
 | Acquisition | `SignalSource`, acquisition commands/status, source inspection/checkpoints, preview and data delivery | D03, R01 |
@@ -206,7 +222,7 @@ Keep foundation lifecycle in `NeuroEngineService`. Move orchestration into exist
 
 **Acceptance:** application code no longer dereferences worker, gateway or bus objects; all engine construction uses a pinned snapshot; startup barriers and unresolved-shutdown ownership remain intact; focused fakes implement the same public protocols as production adapters.
 
-**S4a implementation (2026-11-20):** EngineHandle now exposes runtime operations, one explicit snapshot factory and required shutdown confirmation. Application services no longer traverse the graph or annotate infrastructure process-manager types. Existing managers implement application-owned structural lifecycle protocols directly. Four focused failures were reproduced before replacement; full validation is recorded in the [implementation plan](plugin-implementation-plan.md#s4a-execution-runtime-operations-and-generation-access).
+**S4a implementation (2026-11-20):** EngineHandle now exposes runtime operations, one explicit snapshot factory and required shutdown confirmation. Application services no longer traverse the graph or annotate infrastructure process-manager types. Existing managers implement application-owned structural lifecycle protocols directly. Four focused failures were reproduced before replacement; full validation is recorded in the [implementation plan](plugin-implementation-plan.md#s4a-execution-runtime-operations-and-generation-access-2026-11-20).
 
 ### A02 Flat snapshots and receipts obscure module ownership
 
@@ -346,7 +362,7 @@ Derive execution ownership from contribution kind and make package categories de
 
 **Adjustment:** keep the author/user selection small, but record trusted origin, exact version, complete target, digest and actual host environment identity in the private resolved binding. Extend existing descriptor/binding values; a separate `ResolvedPluginArtifact` class is only useful if implementation reveals a shared boundary that needs it. The execution node determines eligibility; a browser or management server must not substitute its own platform for an external node's platform. Reuse the fixed host dependency set without a selectable runtime-profile registry.
 
-**S2c implementation (2026-11-20):** the [market port](../omnibci/application/plugin_market.py) returns verified downloads and rechecks proof; its repository/adapter no longer installs or holds inventory. The [market service](../omnibci/application/services/plugin_market_service.py) supplies expected metadata to the same installation service used by local uploads. That owner revalidates proof under its guard before common publication. See the [execution record](plugin-implementation-plan.md#s2c-execution-2026-11-20). Durable origin evidence is still absent from [receipts](../omnibci/infrastructure/plugins/package_store.py), and [catalog roots](../omnibci/infrastructure/plugins/plugin_catalog.py) still mix unmanaged directories with enabled packages. Those remain separate S2/S5 work; runtime instances stay with module hosts.
+**S2c implementation (2026-11-20):** the [market port](../omnibci/application/plugin_market.py) returns verified downloads and rechecks proof; its repository/adapter no longer installs or holds inventory. The [market service](../omnibci/application/services/plugin_market_service.py) supplies expected metadata to the same installation service used by local uploads. That owner revalidates proof under its guard before common publication. See the [execution record](plugin-implementation-plan.md#s2c-execution-2026-11-20). S2e subsequently added durable origin evidence to [receipts](../omnibci/infrastructure/plugins/package_store.py). S5 changed [catalog roots](../omnibci/infrastructure/plugins/plugin_catalog.py) to managed releases and built-ins, with explicit isolated development snapshots. Runtime instances stay with module hosts.
 
 **S2b implementation (2026-11-20):** [PackageService](../omnibci/application/services/plugin_package_service.py) now receives saved/accepted reference values through a callback; Configuration owns version-copy use cases and their result. Its two-method [metadata port](../omnibci/application/configuration/ports.py) supports disabled-target preview without exposing package mutations. [Bootstrap](../omnibci/bootstrap.py) supplies the same store and shared guard; pending and unresolved runtime providers are retained. The [execution record](plugin-implementation-plan.md#s2b-execution-2026-11-20) records verification. Downloads and static staging can occur outside the final mutation guard; S2c retains proof revalidation under the common installation guard. A new generic source-provider registry or lease framework is unnecessary.
 
@@ -358,11 +374,11 @@ Extend existing package references to prepared/running artifact locks when expan
 
 **S5b completion (2026-11-21):** ordinary discovery is restricted to enabled managed releases and built-ins. Explicit development creates isolated immutable installations and current configuration, chooses the owner by Contribution kind and resolves companions only within that scope. Fresh normal hosts retain artifact/execution evidence and project restart ownership through confirmed shutdown. Source edits cannot alter a running snapshot. See the [execution record](plugin-implementation-plan.md#s5b-execution-isolated-development-through-normal-hosts-2026-11-21).
 
-**S2a implemented and verified (2026-11-20):** identity and kind definitions now belong to [an application leaf](../omnibci/application/plugin_identity.py), with standard validation errors and direct caller imports. Configuration models and descriptors retain no identity import facade. See the [execution record](plugin-implementation-plan.md#s2-first-batch-review-2026-11-20) for verification. S2b separately narrows the service boundary described in K03; catalog scope and eligibility remain pending.
+**S2a implemented and verified (2026-11-20):** identity and kind definitions now belong to [an application leaf](../omnibci/application/plugin_identity.py), with standard validation errors and direct caller imports. Configuration models and descriptors retain no identity import facade. See the [execution record](plugin-implementation-plan.md#s2-first-batch-review-2026-11-20) for verification. S2b separately narrows the service boundary described in K03; S2d subsequently completed catalog scope and static eligibility.
 
 **S2d implementation (2026-11-20):** [installation](../omnibci/infrastructure/plugins/package_installer.py), [inventory/enablement](../omnibci/infrastructure/plugins/package_lifecycle_store.py) and Bootstrap's [configuration adapter](../omnibci/infrastructure/plugins/configuration_catalog.py) now share the explicitly selected directory and host version. Metadata uses the installer's target platform; explicit stores no longer scan an unrelated default directory. See the [execution record](plugin-implementation-plan.md#s2d-execution-2026-11-20).
 
-**P2 — remaining node eligibility risk.** Static compatibility for a supplied platform is not evidence that an external node has the artifact, dependencies or prepared hardware. Operation-specific node preparation/readiness remains S3/S4; no such result is inferred from inventory availability.
+**P2 — remaining node eligibility risk.** Static compatibility for a supplied platform is not evidence that an external node has the artifact, dependencies or prepared hardware. S3/S4 subsequently implemented operation-specific node preparation/readiness; no such result is inferred from inventory availability.
 
 Current [node materialization](/Users/lincker/workspace/OmniBCI/omnibci/application/node_configuration.py:197) already validates locally owned contributions, and [runtime apply](/Users/lincker/workspace/OmniBCI/omnibci/application/services/runtime_apply_service.py:51) distinguishes external output roles. Preserve those checks; this finding does not claim that all remote execution uses the server's platform.
 
@@ -388,7 +404,7 @@ Use one mutation authority per node/store; reject competing owners rather than a
 
 ### K06 Imported code and constructed instances have different lifetimes
 
-**S3a implementation status:** code caching, normal nested-package imports, concurrent loading and failure ownership are implemented and verified. The first paragraph below records the old behavior. Exact preparation-time pins remain K05/S3 work; see the [execution record](plugin-implementation-plan.md#s3a-execution-code-caching-and-nested-imports-2026-11-20).
+**S3a implementation status:** code caching, normal nested-package imports, concurrent loading and failure ownership are implemented and verified. The first paragraph below records the old behavior. S3b–S3d subsequently connected exact preparation-time pins and store ownership; see the [execution record](plugin-implementation-plan.md#s3a-execution-code-caching-and-nested-imports-2026-11-20).
 
 **P2 — confirmed loader behavior and design risk.** The [module namespace](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/plugins/loader.py:29) includes contribution and location, without a content digest. [_load_source_module](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/plugins/loader.py:130) replaces the `sys.modules` entry and executes source on every construction. [Parent package initializers](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/plugins/loader.py:159) are deliberately skipped. Repeated construction can therefore recreate classes/module state while previously imported helper modules remain cached; normal Python package initialization cannot be assumed. This is a contract ambiguity, not evidence of an observed production failure.
 
@@ -456,7 +472,7 @@ Move common error mapping to the existing presentation error boundary. Services 
 
 These requirements refine the existing findings and their implementation gates. They do not identify four new broken subsystems or require additional modules, SDK exports or compatibility layers.
 
-**Configuration queries — S2/S4, K02/A02/A04/T03.** S2b removes PackageService and Configuration router dependency traversal. Setup/node/runtime consumers remain for S4. The repository is already an application-owned port; using it is not inherently an infrastructure dependency violation. The issue is reaching through another service to its broad dependencies without specifying the caller's actual boundary.
+**Configuration queries — S2/S4, K02/A02/A04/T03.** S2b removes PackageService and Configuration router dependency traversal. S4 subsequently migrated Setup/node/runtime consumers to owned query and planning boundaries. The repository is already an application-owned port; using it is not inherently an infrastructure dependency violation. The issue is reaching through another service to its broad dependencies without specifying the caller's actual boundary.
 
 | Existing callers | Required boundary |
 | --- | --- |

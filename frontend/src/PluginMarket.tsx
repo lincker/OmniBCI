@@ -133,7 +133,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
 
   return <div className="settings-workspace plugin-market">
     <aside className="explorer">
-      <div className="explorer-heading">{t("market.extensions")}</div>
+      <div className="explorer-heading">{t("market.plugins")}</div>
       <nav className="workspace-navigation" aria-label={t("market.library")}>
         <button className={`explorer-item ${tab === "installed" ? "selected" : ""}`} aria-current={tab === "installed" ? "page" : undefined}
           onClick={() => setTab("installed")}><Icon name="plug" /><span>{t("market.installed")}</span><span className="count">{installed.length}</span></button>
@@ -149,7 +149,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
       </div>
     </aside>
     <section className="settings-editor">
-      <div className="breadcrumbs">{t("market.extensions")}<Icon name="chevron" />{tab === "guide" ? t("market.guide") : tab === "installed" ? t("market.installedHeading") : t("market.signedRepository")}</div>
+      <div className="breadcrumbs">{t("market.plugins")}<Icon name="chevron" />{tab === "guide" ? t("market.guide") : tab === "installed" ? t("market.installedHeading") : t("market.signedRepository")}</div>
       <header className="editor-heading"><div><p className="eyebrow">{t("market.library")}</p><h1>{tab === "guide" ? t("market.guide") : tab === "installed" ? t("market.installedHeading") : t("market.repositoryHeading")}</h1>
         <p>{tab === "guide" ? t("market.guideIntro") : t("market.intro")}</p></div>
         <button disabled={locked} onClick={() => { if (tab === "guide") setTab("installed"); upload.current?.click(); }}><Icon name="plus" />{t("market.installZip")}</button>

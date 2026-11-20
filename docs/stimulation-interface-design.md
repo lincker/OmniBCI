@@ -1,8 +1,8 @@
 # Stimulation Interface and Rendering Design
 
-Status: S1d implementation has resumed on `refactor/module-interface` under the latest user instruction. The first batch is restored from `e2299db` and verified against `1526d06`: 28 reproduced failures, then 245 focused tests and eight import contracts passed. The capabilities/lifecycle batch is complete and verified. The graphics batch passes 649 focused tests and eight import contracts; the first S1f batch implements explicit constructors; trial/result payloads and their REST/IPC/frontend callers are implemented and verified in S1f. See the [execution scope](#8-follow-up-branch-handoff).
+Status: S1d/S1f software implementation is complete on `refactor/module-interface`. Required Paradigm methods, narrow capabilities, trigger lifecycle, one async execution path, unified cleanup, opaque graphics handles and explicit constructors/payloads are implemented with their callers. The [execution record](plugin-implementation-plan.md) records regression evidence; real GPU/device timing and other-OS execution remain unverified locally. Section 8 retains the historical batch handoff.
 
-Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; lifecycle and graphics software changes are recorded as complete below; physical GPU/device and other-OS checks remain unperformed.
+Updated: 2026-11-21. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; lifecycle and graphics software changes are recorded as complete below; physical GPU/device and other-OS checks remain unperformed.
 
 Stimulation needs complete plugin contracts and one owner for renderer, paradigm and trigger resources. Keep the existing rendering adapters and stimulus state machine; complete their boundaries and failure handling without adding a rendering framework or compatibility layer.
 
@@ -22,7 +22,7 @@ Frame-pack generation and image storage remain covered by [Building the stimulat
 
 ## 2. Responsibilities and current execution
 
-| Component | Target responsibility | Boundary |
+| Component | Responsibility | Boundary |
 | --- | --- | --- |
 | Stimulation application | Admit trial/result requests, validate host identity, manage queues and receipts, and coordinate pause/stop. | Keep IPC, module revisions and command IDs private. |
 | `Stimulator` | Construct selected components and own their preparation, rendering execution and cleanup; the application retains the task. | One resource owner across successful and partial startup. |
@@ -47,7 +47,7 @@ flowchart LR
 
 The [current application](../omnibci/infrastructure/stimulation/application.py:108) creates a task for `Stimulator.start_async()`. Setup and `RenderLoop.run_async()` execute on that event-loop thread. Each iteration polls events, calls `render_frame(t)`, calls `end_frame()`, then yields to other coroutines. The application also [awaits the rendering task during shutdown](../omnibci/infrastructure/stimulation/application.py:172).
 
-The alternative `Stimulator.start()` creates resources on its caller's thread and then starts a background render thread. Its defects below must not be attributed to every run of the current asynchronous application.
+At the inspection baseline, the alternative `Stimulator.start()` created resources on its caller's thread and then started a background render thread. S1d removed that path. Its historical defects below must not be attributed to the current asynchronous application.
 
 ## 3. Baseline problems and their effects
 
@@ -194,11 +194,11 @@ The implementation must satisfy the following scenarios:
 
 Use the existing [render-loop tests](../tests/stimulation/test_render_loop.py), [application lifecycle tests](../tests/stimulation/test_application_lifecycle.py), [pause tests](../tests/stimulation/test_pause_stimulation.py), [feedback tests](../tests/stimulation/test_feedback_display.py) and [frame-pack tests](../tests/stimulation/test_frame_pack.py) as the regression foundation. Add focused failure cases where those contracts are not covered, and update SDK/loader examples with the coordinated API change. Do not remove scenario coverage to accommodate a smaller interface.
 
-Headless fakes can verify ordering, ownership and error handling. Display/GPU/driver timing claims require checks on the relevant execution target. These are planned acceptance criteria; the withdrawn first-batch implementation is recorded below and does not establish hardware validation.
+Headless fakes can verify ordering, ownership and error handling. Display/GPU/driver timing claims require checks on the relevant execution target. The software acceptance scenarios are covered by the implemented S1d/S1f tests and S6 regression checks. The historical first-batch record below does not establish hardware validation.
 
 ## 8. Follow-up branch handoff
 
-The earlier branch exclusion is superseded by the latest user instruction: prioritize Stimulation, Paradigm and Renderer on the current branch and commit them separately. No new branch is needed. S2d is complete in `1526d06`; S1d resumes before S1f and the remaining implementation steps. TriggerEmitter, its drivers and Stimulator change together under their actual lifecycle owner.
+Historical handoff, now completed on this branch. The user reopened Stimulation, Paradigm and Renderer without creating another branch. S1d completed in `e2ef5a0`, `854ba37` and `b6271c5`; S1f subsequently completed constructors and payload callers. The sections below preserve the batch reasoning and evidence, rather than pending work.
 
 ### 8.1 Withdrawn first batch
 
@@ -206,7 +206,7 @@ Commit `e2299db` is the reference implementation, based on `e81f825`. Its produc
 
 Its tests are `tests/domain/test_paradigm_contract.py`, `tests/stimulation/test_stimulation.py`, `tests/stimulation/test_pause_stimulation.py` and `tests/infrastructure/test_stimulation_ack.py`. The historical run first reproduced 28 failures, then passed 270 focused tests, 3718 headless tests, 36 integration tests and eight import contracts, with one Windows-only integration skip. These results describe the withdrawn implementation, not the current branch. Original logs and JUnit reports remain in `/private/tmp/omnibci-s1d-batch1-7qvx6tp2`.
 
-Recover the applicable code/tests against the current base. Reconcile documentation status separately; historical test results do not validate the restored implementation.
+The applicable code/tests were restored and reverified in `e2ef5a0`; see the implementation record for that evidence. The withdrawn commit's results are not reused as proof for the restored code.
 
 ### 8.2 Second batch: capabilities and lifecycle
 
@@ -215,20 +215,20 @@ This batch is implemented after `e2ef5a0`. The new failure cases and focused che
 | Change boundary | Concrete adjustment and reason |
 | --- | --- |
 | Domain and SDK capabilities | Extract `RenderSurface` from `domain/ports/renderer.py`; declare `TriggerOutput` alongside the trigger port in `domain/ports/acquisition.py`. Publish those narrow contracts instead of full Renderer. Pass the existing objects directly; add no proxy or generic context. Keep canonical signatures in [Plugin API v1](plugin-api-v1.md#55-drawing-and-trigger-capabilities). |
-| Paradigm and built-in consumers | Require `setup(*, renderer, trigger)` and argument-free teardown. Remove `bind_trigger` and Classic40's superseded constructor trigger argument. Update Classic40 and FeedbackDisplay to use RenderSurface. The shared parameters/context constructor replacement remains S1f. |
+| Paradigm and built-in consumers | Require `setup(*, renderer, trigger)` and argument-free teardown. Remove `bind_trigger` and Classic40's superseded constructor trigger argument. Update Classic40 and FeedbackDisplay to use RenderSurface. S1f subsequently replaced the shared parameters/context constructor. |
 | Trigger implementations | Add setup/teardown to Curry8Trigger, Scan45Trigger and the explicit no-trigger implementation. Move device acquisition out of constructors, make send return None, and report driver/platform failures instead of logging fake success or returning None from initialization. Follow actual driver release capabilities; do not invent a DLL close operation. Preserve event ranges, repeated markers and the 20 ms clear wait. |
 | Execution path | Keep Stimulator.start_async and RenderLoop.run_async; remove the alternate background-thread path and migrate its test coverage. Make the stop-request operation explicit. The application keeps its existing render task; do not add another task owner or execution framework. |
 | Cleanup ownership | Stimulator records components before partial acquisition and owns the single cleanup path. The loop only polls, draws and submits frames. The application requests termination and awaits settlement, without independently clearing the trigger or tearing down plugins. Follow the exact preparation/cleanup order in section 5. Preserve original and cleanup failures, and reject replacement while a callback or cleanup remains unresolved. |
 | Minimal renderer lifecycle support | PyOpenGLRenderer and ModernGLRenderer must tolerate partial initialization during shutdown; one failed release must not skip safe window/context cleanup. UIWindow must raise on initialization failure rather than leave a half-initialized object. These are prerequisites for truthful unified cleanup, not a texture-handle redesign. |
 | Pause/stop and caller outcomes | Remove independent clear_trigger calls from the application. Send a successful terminal stop receipt only after cleanup and before closing IPC. Review StimulationAppService identity retention on failed stop and StimulationProcessManager's handling of nonzero/forced exits; a dead process alone does not establish successful cleanup. Reuse existing receipts and failure/quarantine state. |
 
-Preserve the first-batch admission behavior when it is restored. First add failing cases for partial setup, every cleanup failure, same-thread execution, stop/cancel races, blocked callbacks, no-trigger mode and receipt ordering. Verify real callers and both local/external node paths. Do not change trigger frame placement or claim measured physical onset as part of this interface work.
+The completed batches preserve admission behavior and add failing cases before fixes for partial setup, cleanup failures, same-thread execution, stop/cancel races, blocked callbacks, no-trigger mode and receipt ordering. Local/external node software paths are covered. Do not change trigger frame placement or claim measured physical onset as part of this interface work.
 
 ### 8.3 Graphics completion and remaining dependencies
 
 The graphics batch is implemented against `854ba37`: 81 initial failures were reproduced, then 649 focused tests and eight import contracts passed. Color/Rect validate finite components and positive sizes. Both adapters use opaque surface-owned handles, reject foreign/released handles, and retain failed upload/release ownership until shutdown. Feedback replacement preserves its previous texture on upload failure and retains concurrent text changes. Both adapters and the frame-pack format remain. See the execution record for evidence and target limitations.
 
 - Graphics behavior is covered by headless fakes; real display/device timing remains a target check.
-- Keep trial/result method and payload migration coordinated with their actual consumers; do not add old/new method aliases or payload dispatch. The shared constructor, PluginContext, manifest/API-version and payload-schema switch remains S1f.
+- Keep trial/result method and payload migration coordinated with their actual consumers; do not add old/new method aliases or payload dispatch. The shared constructor, PluginContext removal, manifest/API-version and payload-schema switch were completed in S1f.
 - Do not rewrite Classic40's stimulus state machine, remove unrelated locks or add a general lifecycle manager merely to perform the interface changes.
-- The complete API v1 transition still requires the remaining work. Separate commits do not authorize a compatibility layer or allow S1f's seven-kind completion gate to be marked complete early.
+- S1f completed the seven-kind transition without a compatibility layer. Physical display, trigger and actuator timing remain target-specific acceptance work.

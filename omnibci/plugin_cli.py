@@ -24,6 +24,7 @@ def main(argv=None):
     develop.add_argument("--contribution", required=True, help="Contribution ID declared by the source project")
     develop.add_argument("--companion", type=Path, action="append", default=[], help="Companion ZIP (repeatable)")
     develop.add_argument("--port", type=int, default=8002, help="Local development API port")
+    develop.add_argument("--command-timeout", type=float, help="Host command timeout in seconds (default: host setting)")
     args = parser.parse_args(argv)
     try:
         if args.command == "develop":
@@ -31,7 +32,7 @@ def main(argv=None):
             if os.name == "nt":
                 signal.signal(signal.SIGBREAK, signal.default_int_handler)
             return develop_project(args.project, args.configuration, args.contribution,
-                                   companions=args.companion, port=args.port)
+                                   companions=args.companion, port=args.port, command_timeout=args.command_timeout)
         result = (validate_project(args.project) if args.command == "validate"
                   else package_project(args.project, args.output))
     except (PackageInstallError, PluginPackageError, ValueError, OSError) as exc:

@@ -30,17 +30,18 @@ Keep these three files together: `manifest.toml`, `decoder.py`, and
 filename; the other paths are declared in it. Rename the package publisher/id
 and contribution id when creating your own plugin.
 
-From this directory, create the archive with Python's standard library:
+From this directory, validate and package with the host tooling:
 
 ```bash
-python -m zipfile -c ../oz-polarity-demo.zip manifest.toml decoder.py default.schema.json README.md
+omnibci-plugin validate .
+omnibci-plugin package . --output ../oz-polarity-demo.zip
 ```
 
 The manifest must be at the ZIP root, without an enclosing directory. In OmniBCI,
-open **Extensions → Install ZIP…**, install the archive, and enable its version.
-In **Setup → Signal Processing → Decoder**, create a profile for **Oz Polarity Demo**.
+open **Plugins → Install ZIP…**, install the archive, and enable its version.
+In **Setup → Signal Processing → Decoder**, select **Oz Polarity Demo** and edit its current parameters and mapping. Saving a Profile is optional.
 Choose an Acquisition whose named EEG channels include `Oz`, preview the input,
-select the Decoder profile, and apply the configuration. Use a suitable epoch
+and start Processing to apply the configuration. Use a suitable epoch
 detector. Targets `1` and `2` must also agree with your paradigm and effector if
 those modules are used. The example adds no paradigm, detector, or filter.
 
@@ -49,7 +50,6 @@ directly, without a separate signal-contract selector. NumPy is
 already a host dependency; package installation never runs pip or installs
 additional dependencies. The decoder uses no external assets or model files.
 
-The existing authoring guide is deferred until the coordinated API v1 switch.
-This executable example follows the implemented processing methods and explicit
-API v1 constructor. Manifest rules and the complete author guide are still being
-updated as part of the coordinated refactor.
+For an isolated source run, use `omnibci-plugin develop . --contribution oz-polarity --configuration /absolute/path/development.json --command-timeout 60` with an explicit Acquisition companion. The [developer workflow](../../docs/plugin-development.md#develop-a-fixed-snapshot) includes the complete configuration shape. Source edits take effect after confirmed stop and a fresh launch; the same development version can be reused. Ordinary distributed releases remain immutable.
+
+See the [Decoder guide](../../docs/decoder-plugin-development.md) for the implemented API v1 lifecycle, input semantics and verification steps.

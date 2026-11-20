@@ -12,8 +12,9 @@ frontend tests and builds, generated REST types, and architecture imports.
 
 The headless jobs build and install a wheel, then run
 [check_installed_wheel.py](../.github/scripts/check_installed_wheel.py) in isolated
-Python. It verifies installed manifests, schemas, settings defaults, and stimulus
-resources without relying on the editable checkout. Build release wheels from a
+Python. It verifies API v1 manifests, schemas, settings defaults, the 18 canonical
+SDK exports, the author CLI entry point, deterministic starter packaging and all
+281 stimulus frames without importing the editable checkout. Build release wheels from a
 clean checkout to avoid retaining deleted files in an old `build/lib` directory.
 
 [contract.yml](../.github/workflows/contract.yml) regenerates OpenAPI and compares
@@ -72,6 +73,17 @@ The current regression suite checks:
 - Bounded signal delivery and output sender queues. A full Processing input queue
   closes that input and marks Processing for recovery while Acquisition continues
   reading and previewing.
+- Static source validation/packaging through the shared installer, fixed development
+  snapshots, explicit companion packages and fresh normal hosts. Source edits cannot
+  change a running snapshot; repeated interrupts and unconfirmed shutdown retain
+  ownership. Development command-timeout overrides affect only isolated settings.
+- File Reader → packaged starter Decoder → Logger through real HTTP/module paths,
+  joining trial/configuration identity to output acknowledgement and private
+  execution history, then confirming normal shutdown.
+- Host-owned artifact/environment readiness receipts, candidate replacement and
+  cancelled preparation; successful preparation does not imply activation or
+  physical device delivery.
+- Plugins navigation and downloadable API v1 guide/starter consistency.
 - Frontend edit preservation during operations, explicit conflict handling,
   uncertain responses, and partial refresh failures.
 
@@ -79,6 +91,19 @@ The authoritative runtime and configuration description is
 [module-config.md](module-config.md). Plugin signal contracts are documented in
 [the SDK contract](plugin-manifest.md#sdk-and-construction-api); REST and WebSocket payloads are documented
 in [frontend-separation.md](frontend-separation.md).
+
+## Local release acceptance (2026-11-21)
+
+The [S6 execution record](plugin-implementation-plan.md#s6-execution-client-integration-and-local-release-acceptance-2026-11-21)
+contains the final macOS test counts, immutable source manifest, installed-wheel
+digest and evidence locations. It includes the real file/Decoder/Logger closure,
+the documented installed development command, frontend production build and
+confirmed cleanup. The development example uses an explicit 60-second command
+budget for cold initialization; it is not a runtime latency guarantee.
+
+Windows/Linux CI and physical display/device checks have not been run for this
+local acceptance. Keep those release gates open; neither headless fakes nor the
+presence of a workflow file replaces execution evidence.
 
 ## Performance and physical-device checks
 

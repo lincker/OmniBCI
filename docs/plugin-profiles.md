@@ -88,6 +88,11 @@ revision containing the older values. It does not load the editor or apply a
 module. Console module actions submit current values without binding their
 runtime state to a saved Profile identity.
 
+Execution history is separate from editable module/Profile history. It retains
+private acknowledged artifact/environment receipts per host operation; a prepared
+candidate can be cancelled before activation. Development runs use separate
+configuration and temporary execution history, without reading ordinary Profiles.
+
 ## Storage and ownership
 
 The root is `OMNIBCI_CONFIG_DIR` when set, otherwise
@@ -99,6 +104,7 @@ plugin-profiles/<uuid>/history/<integer-revision>.toml
 activation/<module>.toml
 activation/history/<module>/<operation-uuid>.toml
 settings.toml
+execution-history/<operation-key-hash>.json
 locks/settings.lock
 locks/profiles.lock
 locks/<module>.lock

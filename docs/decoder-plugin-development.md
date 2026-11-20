@@ -1,244 +1,106 @@
 # Write a Decoder plugin
 
-This guide is a historical API 2 snapshot and is not current developer guidance.
-S1c has changed processing methods and the first S1f batch replaces constructors
-and API selection. Remaining declarations and the developer guide are deferred
-until the coordinated refactor is complete. Use
-the [canonical plugin terminology](plugin-marketplace-design.md#31-canonical-plugin-terminology):
-install a Plugin Package, configure its decoder Contribution, and let Processing
-Host construct and run the decoder Instance.
+This guide describes the implemented **Plugin API v1**. Open **Plugins → Decoder developer guide** in the console for this offline reference and the actual starter files. The executable [Oz Polarity Demo](../examples/decoder_plugin/) is validated, installed and executed in repository tests. It demonstrates the interface, not a validated BCI classifier.
 
-Open the plugin management page, currently labeled **Extensions**, then
-**Decoder developer guide** in the web console or desktop app for an offline
-overview, commented manifest, and downloadable starter files. The target page
-name is **Plugins**.
-The executable starter lives in `examples/decoder_plugin/`; the app displays
-those same files rather than maintaining a separate copy of the code.
+For all seven plugin kinds and the source-development command, see [Develop an OmniBCI plugin](plugin-development.md). Install a Package, select its decoder Contribution and let Processing construct and own its Instance. Saving a Profile is optional and never starts an Instance.
 
 ## Files to provide
 
 ```text
 my-decoder/
-  manifest.toml          # Required, at the package / ZIP root
-  decoder.py             # Required implementation, referenced by entrypoint
-  default.schema.json    # Parameter schema for editable UI Profiles
-  README.md              # Recommended: usage, training and validation notes
-  assets/                # Optional: model weights or other package resources
+  manifest.toml          # Required at the project / ZIP root
+  decoder.py             # Implementation named by the entrypoint
+  default.schema.json    # Parameters, defaults and validation
+  README.md              # Usage, model assumptions and validation notes
+  assets/                # Optional packaged model resources
 ```
 
-Only `manifest.toml` has a prescribed filename. The Python module and schema may
-have other names if `entrypoint` and `configuration.schema` reference them.
-Discovery can list contributions without a configuration schema, but a configurable
-Decoder needs a schema to participate in the UI Profile workflow. A decoder
-with no editable parameters can provide an empty object schema with
-`"properties": {}` and `"additionalProperties": false`.
-Single-file entrypoints do not require `__init__.py`, `setup.py`, or a wheel.
+Only `manifest.toml` has a prescribed filename. The manifest references the other paths. A configurable Decoder requires a parameter schema; an empty closed object is sufficient when there are no parameters. No registry decorator, `setup.py` or plugin wheel is needed.
 
 ## Manifest and channel requirements
 
-Start from the fully commented `examples/decoder_plugin/manifest.toml`.
-`manifest_version = 2` describes the document format; `package.api_version = "2"`
-selects the constructor API. They are separate from the package release version,
-configuration schema version, and `signal_input_contract` capability version.
-Package identity is the case-sensitive `publisher.id`; each contribution has an
-id unique within that package. Declare `kind = "decoder"` and an entrypoint in
-package-relative `module:Class` form. The host loads that declared entrypoint.
+Copy the commented starter manifest, rename its publisher/package/contribution IDs, and retain `manifest_version = 2` with `package.api_version = "1"`. Package identity is case-sensitive `publisher.id`; package release and configuration-schema versions have separate meanings.
 
-A Decoder that declares `[contributions.channel_requirements]` must also declare
-`signal_input_contract = 2` on that contribution. Contract `1` describes prepared
-input metadata without declarative channel requirements. Processing contributions
-without a requirements section must declare contract `1`; an absent declaration
-is rejected during manifest discovery.
+Declare `kind = "decoder"`, a package-relative `module:Class` entrypoint and `[contributions.channel_requirements]`. The requirements table is mandatory for a Decoder but may be empty. There is no separate signal-contract selector.
 
 | Field | Meaning |
 | --- | --- |
-| `description` | Explanation of the algorithm's input assumptions; displayed, not executed. |
-| `signal_type` | Optional required signal type for every final input channel, for example `eeg`. Omit to impose no type restriction. |
-| `min_count` | Positive integer minimum for the final input's signal-channel count. The trigger row does not count. |
-| `required_names` | Mandatory channel names, as an unordered subset. Extra channels are allowed. An empty list imposes no named-channel requirement. |
-| `default_names` | Ordered suggestions for output names. The user binds them to Acquisition channel IDs or source row positions; names alone do not establish a mapping. |
+| `description` | Explain the model's assumptions; this text does not run validation. |
+| `signal_type` | Optional type required for every final input channel, such as `eeg`. |
+| `min_count` | Minimum signal-channel count after mapping, excluding the event row. |
+| `required_names` | Required name subset; extra channels are allowed and order is not prescribed. |
+| `default_names` | Ordered label suggestions for mapping. Names alone do not identify source rows. |
 
-Channel names must match the final mapped input names, including spelling and
-case. A nonempty default selection must satisfy the minimum count and contain
-the mandatory names. It does not establish an exact-order requirement.
-An Acquisition containing a channel is insufficient if the Decoder Profile
-does not include it in the final input.
+Names match the final mapped inputs exactly. An Acquisition channel is insufficient if the actual Processing mapping excludes it. A nonempty default selection must satisfy the minimum count and required names. Additional model assumptions about exact order, units or sample rate belong in constructor validation against `input_signal`.
 
-The declaration is read-only algorithm metadata. The user's actual selection,
-order, output names, and unknown-type declarations remain in `processing_input`
-on the Decoder Profile. The live Acquisition owns its normalized descriptor;
-raw source metadata remains available separately. Do not add a
-second `parameters.input_channels` setting for the same mapping. Existing
-Profiles are not overwritten by updated defaults or an Acquisition switch;
-preview and runtime preparation validate their resolved input. Offline Profiles
-can be saved before an Acquisition is available.
+Configuration owns `processing_input`: source selection, order, renamed outputs and declarations for unknown signal types. Do not duplicate those preferences in `parameters.input_channels`. An empty output list explicitly uses all source signal channels. Individual rows use exactly one `source_channel_id` or zero-based `source_channel_index`, excluding the event row. For example:
 
-In the Signal Processing binding editor, Acquisition channels are on the left and
-ordered algorithm inputs are on the right. Users can select all channels or bind
-individual sources, including an explicit different-name binding such as
-`{"name": "Oz", "source_channel_id": "channel-0", "signal_type": "eeg"}`.
-**Manual mapping** also supports offline bindings such as
-`{"name": "Oz", "source_channel_index": 2, "signal_type": "eeg"}` for source
-row 3. Each binding uses exactly one source ID or zero-based signal-row index.
-The final event row is excluded. Manual rows can be generated, edited, added,
-removed, and reordered, then saved independently in a Decoder Profile. They
-remain **Not verified** until previewed against current Acquisition Metadata.
-Preview and runtime preparation resolve row indices against the real descriptor
-and reject missing rows, duplicate source selections, and type conflicts.
-The optional type declaration fills an unknown Acquisition type and rejects a
-conflict with a known type. It does not edit the Acquisition descriptor. Mapping
-only selects, orders, and renames signal rows; it preserves sample amplitudes and
-the trigger row.
-The bound signal enters Epoching and pre-trigger buffering first. Optional
-ordered filters transform the assembled window before Decoder execution.
+```json
+{"name": "Oz", "source_channel_id": "channel-2", "signal_type": "eeg"}
+```
 
-**Epoching** names the segmentation operation; **Epoch** names its data object.
-`Epoch.pre_trigger_data` and `Epoch.has_pre_trigger_data` describe captured
-history, independently of whether baseline correction is enabled. The data
-layout is `[pre-trigger data | window]`, and the full duration includes both.
-
-For a model whose full channel order or units must be exact, validate
-those additional assumptions in its constructor using `context.input_signal`.
-`required_names` alone does not express them. Publish only requirements that the
-algorithm actually needs; the tutorial's `Oz` requirement is an arbitrary
-example, not an electrode recommendation for other algorithms.
+Verify that the chosen source really corresponds to the intended electrode. Mapping selects/orders/renames rows; it does not change samples or turn a different electrode into Oz. A declared type can fill an unknown type but cannot override a known conflict. Preview and runtime preparation reject missing rows, duplicate source selection and incompatible layouts. Offline Profiles remain unverified until a source descriptor is available.
 
 ## Python contract
 
-Import public contracts from `omnibci.sdk`:
+Import the canonical definitions from `omnibci.sdk`:
 
 ```python
-from omnibci.sdk import Decoder, PluginContext, PluginParameters, Prediction
+from omnibci.sdk import Decoder, SignalInfo, Prediction
 ```
-
-The entrypoint subclasses `Decoder` and accepts exactly the API 2 keyword inputs
-`parameters` and `context` in `__init__`. The host validates parameters against
-the JSON Schema, fills declared defaults, and passes an independent copy.
-Read packaged resources relative to `context.resource_root`; do not rely on
-the process working directory or import server settings and service objects.
 
 | Method | Required behavior |
 | --- | --- |
-| `__init__(self, *, parameters, context)` | Initialize the model and verify any additional input assumptions. |
-| `should_decode(self, window) -> bool` | Cheap readiness check on the accumulated window before filters run. |
-| `decode(self, window, latest_samples) -> Prediction \| None` | Produce an integer target id, optionally a confidence value, or return no prediction. Either outcome may update the decoder's working state. |
-| `for_new_epoch(self)` | Optional for stateless decoders; stateful decoders must return an instance with isolated per-epoch working state. |
+| `__init__(self, *, parameters, resource_root, input_signal)` | Initialize local state and check mapped input assumptions. |
+| `setup(self)` | Load reusable model resources once per binding. |
+| `begin_epoch(self)` | Reset working state for every epoch, including repeated event IDs. |
+| `should_decode(self, raw_window)` | Return a boolean readiness result on the accumulated window before filters. |
+| `decode(self, window, *, latest_raw_segment)` | Return `Prediction` or `None`; both may update working state. |
+| `teardown(self)` | Release resources, including after partially failed setup. |
 
-`context.input_signal` is a `SignalInfo` describing the ordered
-mapped input, including channel IDs, names, types, and units. Use its channels to
-resolve names to matrix row indices. `context.acquired_signal.channels` describes
-the original Acquisition channels, before mapping; never use its indices for
-mapped input. These two descriptors provide the channel records directly.
+All methods are serialized by the host. Implement explicit no-ops for lifecycle methods a stateless model does not need. There is no per-epoch cloning hook. Keep reusable model resources through epoch resets and acquire them during setup, not on every decode call.
 
-Decoder arrays have shape **signal channels × samples**, without a trigger row
-or pre-trigger data. `window` contains the post-trigger data accumulated up to
-this call, after the ordered epoch Filter chain. It need not extend to an end
-marker: the host can attempt decoding while collection is still in progress.
-The host calls `should_decode` on the accumulated window **before** those filters.
+`parameters` is an independent schema-validated copy with defaults. `resource_root` identifies the immutable package being executed. `input_signal` is the prepared mapped `SignalInfo`; use its ordered channels to locate matrix rows. The constructor receives no generic context, original Acquisition descriptor, revisions or server services.
 
-`latest_samples` is the most recently appended epoch fragment. Upstream channel
-mapping has already run, but this separate input does not
-pass through the epoch Filter chain. It does not accumulate all samples received
-since the previous decode, so it is not a complete incremental-delivery contract.
-A whole-window decoder can ignore it. Every `ProcessingPipeline.run` call must
-supply `latest_samples` explicitly; omission and `None` are rejected. When there
-is no new fragment, pass an empty matrix with shape `(signal_channels, 0)`.
-There is no fallback to the full window.
+Both arrays have shape **signal channels × samples**, without pre-trigger samples or an event row. `window` is post-trigger data accumulated so far after the optional ordered Filter chain; it can end before a closing marker. The readiness check sees the raw accumulated window before those filters.
 
-Do not modify either input array in place. A `decode` call that returns `None`
-may still have updated internal state; `None` means only that no prediction was
-produced. Keep mutable state isolated per epoch with `for_new_epoch()`.
-Complete incremental delivery would require a separate contract.
+`latest_raw_segment` is a required keyword containing only the most recently appended mapped epoch fragment, without epoch filters. It is not all data since the previous decode and does not promise complete incremental delivery. When no new fragment exists, the host supplies shape `(signal_channels, 0)`. `None` and an omitted argument are invalid. Whole-window decoders can ignore this separate fragment.
 
-Pre-trigger segments go to filters separately through `FilterContext.baseline`.
-Capturing these samples does not enable baseline correction.
-`BaselineCorrection` uses the entire supplied segment as its
-reference interval and subtracts its per-channel mean from the window.
-Filters used with named input must
-preserve the declared channel layout; do not silently reinterpret row indices.
-At a closing boundary, `force_decode_at_boundary()` bypasses `should_decode`, so
-handle short windows inside `decode` as the starter does. Stream drain uses
-`decode_if_ready()`: it retains the readiness gate and checks for pending data to
-avoid another decode when no samples have been appended since the last attempt.
-Under the current collection lifecycle, a returned `Prediction` completes the
-trial and ends epoch collection; returning `None` does not guarantee collection
-will continue when a boundary or drain is closing it.
+Do not modify borrowed arrays in place. `Prediction` ends collection of the current epoch; returning `None` continues collection. Targets are nonnegative integer values (including zero), not booleans or fractional values. Confidence is absent or finite in `[0, 1]`. The host retains event labels, forced status and trial/configuration identity; the decoder never receives a ground-truth event label.
 
-A non-None result must be a `Prediction`. Its `target_id` must be a Python integer
-or NumPy integer scalar, excluding booleans; floats (including `1.0`), strings,
-and arrays are rejected before conversion. `Classification` enforces nonnegative
-target ids and confidence in `[0, 1]` when supplied. Invalid outputs fail with the
-decoder class, event id, and configuration revision in the error context.
+A closing boundary can bypass readiness. Handle short and non-finite windows explicitly. Stream drain keeps the readiness gate and checks for pending data to avoid repeating a decode without new samples. The starter returns `None` for short or non-finite windows, otherwise target 1 or 2 from the sign of the mapped Oz mean.
 
-Target ids must agree with the chosen paradigm and effector. A Processing package
-can declare additional Decoder, Epoch Detector or Filter contributions.
-Keep decoding independent of device connections,
-GUI components and filesystem writes. Load model weights during construction
-rather than on every window, and test new-epoch isolation for stateful models.
+Pre-trigger buffering is independent of baseline correction. A Filter receives the original reference explicitly as `pre_trigger_data`; Decoder input excludes it. Ordered Filters preserve shape, channel order, sample rate and units.
 
-## Parameter schema
+## Parameter schema and dependencies
 
-Use the project's supported JSON Schema subset. Each object declares
-`additionalProperties: false`; the root is an object. Declare a type, a readable
-title/description, a default and any bounds for each configurable parameter.
-Defaults must satisfy the schema. JSON has no comments; use `description` fields
-to explain parameter semantics. `x-scope` describes portability and `x-apply`
-suggests a reconfiguration boundary; the host decides when a change can apply.
+Use the supported closed JSON Schema subset: object root, `additionalProperties: false`, declared fields and valid defaults. JSON descriptions belong in `description` fields. External references and unsupported keywords fail static validation. `x-scope` describes portability; `x-apply` suggests a boundary while the host decides when changes can apply.
 
-Do not use `$schema`, `$ref` or arbitrary JSON Schema features: unsupported
-keywords are rejected. The supported subset is defined by
-[the schema validator](../omnibci/application/plugin_schema.py).
+Optional package/contribution `platforms` constrain `darwin`, `linux` and `win32`. `package.engines.omnibci` supports the documented numeric comparison subset, while `package.host_version` and `[package.requires]` check exact host/library versions. The host never installs dependencies from the plugin. Do not vendor `omnibci`, ship a virtual environment or expect build hooks to run.
 
-## Compatibility and packaging
+## Validate, develop and install
 
-Use `package.platforms` only when the plugin actually restricts supported OSes:
-`darwin`, `linux`, and `win32`. Omission allows all supported hosts. Optional
-`package.host_version` is an exact OmniBCI version, not a version range.
-Optional `[package.requires]` maps installed host distribution names to exact
-versions; it is not `[requirements]` and does not accept pip-style ranges.
-The installer currently checks the host's exposed library inventory, including
-NumPy, scikit-learn and MNE. It never installs Python dependencies. Do not
-ship a virtual environment or a `requirements.txt` expecting it to run.
+From the repository root:
 
-Create a ZIP from **inside** the starter directory using the standard library:
-
-```bash
-python -m zipfile -c ../oz-polarity-demo.zip manifest.toml decoder.py default.schema.json README.md
+```sh
+omnibci-plugin validate examples/decoder_plugin
+omnibci-plugin package examples/decoder_plugin --output dist/oz-polarity-demo.zip
 ```
 
-Include your `assets` directory in the command if the implementation needs it.
-The ZIP must contain `manifest.toml` at its root, without an enclosing folder.
-Change `package.publisher`, `package.id`, the contribution id, and display text
-for your plugin. Increment `package.version` whenever distributed bytes change;
-an installed package/version is immutable. Schema version is separate.
+For a downloaded starter, substitute its directory. Output archives must be outside that directory. The shared tools preserve assets and verify deterministic package bytes without importing the implementation. Changed distributed bytes require a new package release version.
 
-## Install and validate
+Use the complete current-configuration example in [the development workflow](plugin-development.md#develop-a-fixed-snapshot), with a real recording path:
 
-1. Open **Install ZIP…** on the plugin management page, select the archive, then enable that exact
-   package version. Installation checks metadata and schemas without importing
-   Python; successful installation alone does not prove the algorithm executes.
-2. In **Setup → Signal Processing → Decoder**, select the contribution and edit its
-   current parameters and input selection. Saving a Profile is optional.
-3. Connect Acquisition using its current values, get source metadata and preview input.
-   Check channel IDs, output names, order, units and types. Missing required channels,
-   too few channels or the wrong signal type must prevent runtime preparation.
-4. Start Processing to apply its current values, then start reading from a known
-   replay file with a suitable epoch boundary detector. Verify expected targets
-   before using live data.
-5. Test reordered source/input channels, a missing required channel, short and
-   non-finite windows, repeated epochs and supported OSes. Compare against known
-   offline outputs from your real model.
-
-The repository's `tests/infrastructure/test_decoder_plugin_example.py` installs
-the real starter archive, discovers and constructs it, and checks predictions
-against reordered named input and short windows. From the repository root:
-
-```bash
-python -m pytest tests/infrastructure/test_decoder_plugin_example.py
+```sh
+omnibci-plugin develop examples/decoder_plugin --contribution oz-polarity --configuration /absolute/path/development.json --command-timeout 60
 ```
 
-The tutorial deliberately uses a mean-sign rule, not a validated classifier.
-Its files are a starting point for implementing and validating your own model.
+This connects the explicitly configured source and starts Processing through normal hosts in separate inventory/configuration. It does not start reading. The constructor sees the frozen snapshot's resources and prepared input. Press Ctrl+C, wait for confirmed cleanup, edit and restart; the same development version can produce a fresh snapshot. Unknown cleanup retains files and blocks restart.
 
-Related repository documents: `docs/plugin-manifest.md`, `docs/module-config.md`,
-and `docs/plugin-profiles.md`.
+For ordinary use, open **Plugins → Install ZIP…**, install and enable the exact version. In **Setup → Signal Processing → Decoder**, select the Contribution and edit current parameters and mapping. Saving a Profile is optional. Connect Acquisition, inspect metadata, preview the mapped input, start Processing and then start reading. Choose an epoch detector matching the recording's event semantics. Targets must agree with the selected paradigm/effector when those modules are used.
+
+## Verify behavior
+
+The starter tests cover static installation, mapped/reordered named inputs, missing required channels, short/forced/non-finite windows, and unchanged borrowed arrays. The release checks also run CNT File Reader → starter Decoder → Logger and correlate the acknowledgement to the source trial and host execution history.
+
+For a stateful model, additionally test repeated epochs, returns of `None`, partial setup failure, teardown and candidate replacement. Use actual model validation data to assess accuracy; interface tests do not establish decoding quality. Measure runtime latency and validate equipment/display behavior separately as described in [validation](validation.md).

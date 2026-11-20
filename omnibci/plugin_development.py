@@ -13,7 +13,7 @@ from uuid import uuid4
 import tomlkit
 
 from omnibci.application.commands.engine_commands import StartEngineCommand
-from omnibci.application.configuration.definitions import MODULES
+from omnibci.application.configuration.definitions import MODULES, validate_server_settings
 from omnibci.application.configuration.models import MODULE_KINDS
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.plugin_packages import PluginPackageConflictError
@@ -47,7 +47,11 @@ def _read_configuration(path):
     return modules
 
 
-def _prepare_run(project, configuration, contribution, companions, workspace):
+def _prepare_run(project, configuration, contribution, companions, workspace, *, command_timeout=None):
+    if command_timeout is not None:
+        command_timeout = validate_server_settings({
+            "NEUROENGINE.command_timeout_s": command_timeout,
+        })["NEUROENGINE.command_timeout_s"]
     modules = _read_configuration(configuration)
     workspace.mkdir(parents=True, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="run-", dir=workspace)).resolve()
@@ -75,9 +79,10 @@ def _prepare_run(project, configuration, contribution, companions, workspace):
         if not selected_binding:
             raise ValueError("Development configuration must select the requested contribution in its owning module")
         repository.root.mkdir(parents=True, exist_ok=True)
-        (repository.root / "settings.toml").write_text(tomlkit.dumps({
-            "LOGGING": {"file_path": str(run / "host.log")},
-        }), encoding="utf-8")
+        settings = {"LOGGING": {"file_path": str(run / "host.log")}}
+        if command_timeout is not None:
+            settings["NEUROENGINE"] = {"command_timeout_s": command_timeout}
+        (repository.root / "settings.toml").write_text(tomlkit.dumps(settings), encoding="utf-8")
         (run / "run.json").write_text(json.dumps({
             "module": module, "selection": selected.selection.to_dict(), "sha256": summary["sha256"],
             "modules": modules,
@@ -123,7 +128,8 @@ def _settled(run):
         return False
 
 
-def develop_project(project: Path, configuration: Path, contribution: str, *, companions=(), port=8002) -> int:
+def develop_project(project: Path, configuration: Path, contribution: str, *, companions=(), port=8002,
+                    command_timeout=None) -> int:
     """Use one project restart guard and a fresh process/store for every run."""
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError("Development API port must be between 1 and 65535")
@@ -136,7 +142,7 @@ def develop_project(project: Path, configuration: Path, contribution: str, *, co
     owner = PluginStoreOwner(workspace, configuration_root=workspace)
     run, launch_attempted = None, False
     try:
-        run = _prepare_run(project, configuration, contribution, companions, workspace)
+        run = _prepare_run(project, configuration, contribution, companions, workspace, command_timeout=command_timeout)
         record = json.loads((run / "run.json").read_text(encoding="utf-8"))
         print(json.dumps({"run_directory": str(run), "sha256": record["sha256"],
                           "selection": record["selection"], "url": f"http://127.0.0.1:{port}"}), flush=True)

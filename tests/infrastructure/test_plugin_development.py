@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import tomlkit
 
 from omnibci import sdk
 from omnibci.application.configuration.models import ProfileBinding
@@ -23,6 +24,46 @@ from tests.plugin_development_helpers import KINDS, SLOTS, source_project, confi
 @pytest.fixture
 def development():
     return importlib.import_module("omnibci.plugin_development")
+
+
+@pytest.mark.parametrize("timeout", [None, 30.0])
+def test_development_command_timeout_only_changes_isolated_server_settings(development, tmp_path, monkeypatch, timeout):
+    project = source_project(tmp_path)
+    configuration = configuration_file(tmp_path, ["effector"])
+    ordinary = tmp_path / "ordinary"
+    ordinary.mkdir()
+    settings = ordinary / "settings.toml"
+    original = '[NEUROENGINE]\ncommand_timeout_s=12.0\n'
+    settings.write_text(original)
+    monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(ordinary))
+    run = development._prepare_run(project, configuration, "effector", (), project / ".omnibci-dev",
+                                   command_timeout=timeout)
+    isolated = tomlkit.loads((run / "configuration/settings.toml").read_text())
+    assert isolated.get("NEUROENGINE", {}).get("command_timeout_s") == timeout
+    assert settings.read_text() == original
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, "30", float("inf"), float("nan")])
+def test_invalid_development_timeout_fails_before_artifact_or_process_creation(development, tmp_path, monkeypatch, timeout):
+    from omnibci.application.configuration.errors import ConfigValidationError
+
+    project = source_project(tmp_path)
+    configuration = configuration_file(tmp_path, ["effector"])
+    monkeypatch.setattr(development.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("Host must not launch"))
+    with pytest.raises(ConfigValidationError):
+        development.develop_project(project, configuration, "effector", command_timeout=timeout)
+    assert not list((project / ".omnibci-dev").glob("run-*"))
+    assert not (project / ".omnibci-dev/state/.controller.active").exists()
+
+
+def test_develop_cli_passes_explicit_host_command_timeout(development, tmp_path, monkeypatch):
+    from omnibci.plugin_cli import main
+
+    calls = []
+    monkeypatch.setattr(development, "develop_project", lambda *args, **kwargs: calls.append((args, kwargs)) or 0)
+    assert main(["develop", str(tmp_path), "--contribution", "reader", "--configuration", str(tmp_path / "current.json"),
+                 "--command-timeout", "30"]) == 0
+    assert calls[0][1]["command_timeout"] == 30.0
 
 
 def test_ordinary_discovery_does_not_load_unmanaged_source_directories(tmp_path):

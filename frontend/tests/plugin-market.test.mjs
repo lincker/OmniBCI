@@ -1,4 +1,4 @@
-/** Extensions navigation and exact package request contracts. */
+/** Plugins navigation and exact package request contracts. */
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { readFile } from "node:fs/promises";
@@ -13,13 +13,13 @@ const { I18nProvider } = await server.ssrLoadModule("/src/i18n.tsx");
 const { PluginMarket } = await server.ssrLoadModule("/src/PluginMarket.tsx");
 const { DecoderDeveloperGuide } = await server.ssrLoadModule("/src/DecoderDeveloperGuide.tsx");
 const { pluginMarketApi } = await server.ssrLoadModule("/src/api/plugin-market.ts");
-globalThis.window = { location: { hash: "#extensions" }, localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
+globalThis.window = { location: { hash: "#plugins" }, localStorage: { getItem: () => "en" }, navigator: { language: "en" } };
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: window.localStorage });
 const render = (component, props) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(component, props)));
 
-test("Extensions hash opens the library without a routine configuration status bar", () => {
+test("Plugins hash opens the library without a routine configuration status bar", () => {
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(App)));
-  assert.match(html, /aria-label="Extensions"[^>]*aria-current="page"/);
+  assert.match(html, /aria-label="Plugins"[^>]*aria-current="page"/);
   assert.match(html, /<h1>Installed plugins<\/h1>/);
   assert.doesNotMatch(html, /aria-label="Configuration status"|Configuration details/);
   assert.match(html, /aria-label="Plugin library"/);
@@ -43,11 +43,16 @@ test("offline Decoder guide downloads the executable starter and complete author
     assert.equal(decodeURIComponent(encoded.replaceAll("&#x27;", "'")), await readFile(new URL(expected.get(name), import.meta.url), "utf8"));
   }
   assert.match(html, /required_names/);
-  assert.match(html, /context.input_signal.channels/);
-  assert.match(html, /<code>context\.acquired_signal\.channels<\/code>/);
-  assert.doesNotMatch(html, /<code>context\.channel_names<\/code>/);
-  assert.match(html, /decode\(window, latest_samples\)/);
-  assert.match(html, /latest_samples<\/code> contains the most recently appended samples and does not pass through those window filters/);
+  assert.match(html, /API v1 constructor/);
+  assert.match(html, /input_signal.channels/);
+  assert.match(html, /decode\(window, \*, latest_raw_segment\)/);
+  assert.match(html, /latest_raw_segment<\/code> contains the most recently appended samples/);
+  assert.match(html, /begin_epoch\(\)/);
+  assert.match(html, /setup\(\)/);
+  assert.match(html, /teardown\(\)/);
+  assert.match(html, /omnibci-plugin validate/);
+  assert.match(html, /omnibci-plugin package/);
+  assert.doesNotMatch(html, /API 2|PluginContext|signal_input_contract|context\.|for_new_epoch|latest_samples/);
   assert.doesNotMatch(html, /href="https?:/);
 });
 
