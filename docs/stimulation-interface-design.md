@@ -1,6 +1,6 @@
 # Stimulation Interface and Rendering Design
 
-Status: S1d implementation has resumed on `refactor/module-interface` under the latest user instruction. The first batch is restored from `e2299db` and verified against `1526d06`: 28 reproduced failures, then 245 focused tests and eight import contracts passed. The capabilities/lifecycle batch is complete and verified. The graphics batch passes 649 focused tests and eight import contracts; constructors and trial/result payloads remain S1f. See the [execution scope](#8-follow-up-branch-handoff).
+Status: S1d implementation has resumed on `refactor/module-interface` under the latest user instruction. The first batch is restored from `e2299db` and verified against `1526d06`: 28 reproduced failures, then 245 focused tests and eight import contracts passed. The capabilities/lifecycle batch is complete and verified. The graphics batch passes 649 focused tests and eight import contracts; the first S1f batch implements explicit constructors; trial/result payload replacement remains pending. See the [execution scope](#8-follow-up-branch-handoff).
 
 Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; lifecycle and graphics software changes are recorded as complete below; physical GPU/device and other-OS checks remain unperformed.
 

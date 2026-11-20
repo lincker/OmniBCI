@@ -19,7 +19,7 @@ MANIFEST_NAME = "manifest.toml"
 VALID_CATEGORIES = frozenset({
     "paradigm", "decoder", "acquisition", "effector", "trigger", "filter", "epoch_detector",
 })
-SUPPORTED_API_VERSIONS = frozenset({"2"})
+SUPPORTED_API_VERSIONS = frozenset({"1"})
 DOMAIN_KINDS = {
     "acquisition": frozenset({"acquisition", "trigger"}),
     "processing": frozenset({"decoder", "epoch_detector", "filter"}),

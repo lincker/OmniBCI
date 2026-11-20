@@ -1,4 +1,5 @@
 """Trigger constructors are inert; setup failures never select no-trigger mode."""
+from pathlib import Path
 import ctypes
 from unittest.mock import Mock
 
@@ -11,7 +12,7 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import S
 @pytest.mark.parametrize('implementation', [Curry8Trigger, Scan45Trigger])
 def test_constructor_and_partial_teardown_need_no_device(implementation, monkeypatch):
     monkeypatch.setattr('sys.platform', 'linux')
-    output = implementation(parameters={})
+    output = implementation(parameters={}, resource_root=Path(__file__).parent)
     assert output.teardown() is None
     with pytest.raises(RuntimeError, match='Windows'):
         output.setup()
@@ -26,7 +27,7 @@ def test_driver_is_acquired_only_in_setup_and_cannot_send_after_teardown(impleme
     monkeypatch.setattr('sys.platform', 'win32')
     monkeypatch.setattr(ctypes, 'WinDLL', load, raising=False)
     monkeypatch.setattr(Scan45Trigger, '_set_parallel_port', load)
-    output = implementation(parameters={})
+    output = implementation(parameters={}, resource_root=Path(__file__).parent)
     load.assert_not_called()
     assert output.setup() is None
     assert load.call_count == 1
@@ -42,7 +43,7 @@ def test_scan45_invalid_markers_never_reach_driver(event, monkeypatch):
     driver = Mock()
     monkeypatch.setattr('sys.platform', 'win32')
     monkeypatch.setattr(Scan45Trigger, '_set_parallel_port', lambda *args: driver)
-    output = Scan45Trigger(parameters={})
+    output = Scan45Trigger(parameters={}, resource_root=Path(__file__).parent)
     output.setup()
     driver.setData.reset_mock()
     with pytest.raises(ValueError, match='0.*255'):

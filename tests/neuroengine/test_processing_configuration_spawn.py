@@ -48,7 +48,7 @@ def test_spawned_worker_preserves_old_trial_then_acknowledges_new_pipeline(tmp_p
 id = "trial_fixture"
 publisher = "Tests"
 version = "1.0.0"
-api_version = "2"
+api_version = "1"
 domain = "processing"
 [[contributions]]
 id = "default"
@@ -71,9 +71,9 @@ class ValueDecoder(Decoder):
         pass
     def teardown(self):
         pass
-    def __init__(self, *, parameters, context):
+    def __init__(self, *, parameters, resource_root, input_signal):
         self.target = parameters["target"]
-        self.root = Path(context.resource_root)
+        self.root = Path(resource_root)
         (self.root / f"constructed-{self.target}").write_text("ready")
     def should_decode(self, data):
         return False

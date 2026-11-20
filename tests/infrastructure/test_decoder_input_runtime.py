@@ -1,4 +1,5 @@
 """Decoder requirements are checked against prepared input before plugin code runs."""
+from pathlib import Path
 from tests.plugin_configuration_helpers import builtin_selection
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -13,12 +14,11 @@ from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.signal_processing.signal_configuration import signal_context
+from omnibci.infrastructure.signal_processing.signal_configuration import mapped_input
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import Curry8DataReader, Curry8Metadata
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
-from omnibci.sdk import PluginContext
 
 
 def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
@@ -34,10 +34,10 @@ def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
     snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
     plan = compile_processing_plan(source, inputs)
     descriptor = SimpleNamespace(signal_input_contract=2, channel_requirements=requirements,
-                                 api_version="2", configuration_version=1)
+                                 api_version="1", configuration_version=1)
     catalog = Mock()
     catalog.resolve_selection.return_value = descriptor
-    return snapshot, signal_context(snapshot, plan), catalog
+    return snapshot, mapped_input(plan), catalog
 
 
 @pytest.mark.parametrize("requirements, fields", [
@@ -51,7 +51,7 @@ def test_invalid_final_input_never_constructs_decoder(requirements, fields):
     loader = Mock()
     with pytest.raises(PluginLoadError):
         load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                               context=context, catalog=catalog, loader=loader)
+                               input_signal=context, catalog=catalog, loader=loader)
     loader.instantiate.assert_not_called()
 
 
@@ -60,9 +60,9 @@ def test_required_names_allow_extra_channels_and_profile_order():
     snapshot, context, catalog = configured(requirements, outputs=("Oz", "O1"))
     loader = Mock()
     result = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                                    context=context, catalog=catalog, loader=loader)
+                                    input_signal=context, catalog=catalog, loader=loader)
     assert result is loader.instantiate.return_value
-    assert [channel.name for channel in loader.instantiate.call_args.kwargs["context"].input_signal.channels] == ["Oz", "O1"]
+    assert [channel.name for channel in loader.instantiate.call_args.kwargs["input_signal"].channels] == ["Oz", "O1"]
 
 
 def test_declared_requirements_cannot_run_without_verified_channel_metadata():
@@ -70,22 +70,21 @@ def test_declared_requirements_cannot_run_without_verified_channel_metadata():
     loader = Mock()
     with pytest.raises(PluginLoadError, match="prepared input"):
         load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                               context=PluginContext(sample_rate=250), catalog=catalog, loader=loader)
+                               input_signal=None, catalog=catalog, loader=loader)
     loader.instantiate.assert_not_called()
 
 
-def test_plugin_without_channel_requirements_accepts_prepared_context():
-    snapshot, _, catalog = configured(None)
-    catalog.resolve_selection.return_value.signal_input_contract = 1
+def test_processing_plugin_receives_its_prepared_signal():
+    snapshot, signal, catalog = configured(None)
     loader = Mock()
     load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                           context=PluginContext(sample_rate=250), catalog=catalog, loader=loader)
+                           input_signal=signal, catalog=catalog, loader=loader)
     loader.instantiate.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_curry_unknown_types_require_processing_declaration_before_builtin_cca():
-    reader = Curry8DataReader(parameters={}, context=PluginContext())
+    reader = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     reader._is_connected = True
     reader._metadata = Curry8Metadata(803, 3, 500, 4, False, False, ("C3", "C4", "Trigger"))
     from unittest.mock import AsyncMock
@@ -103,7 +102,7 @@ async def test_curry_unknown_types_require_processing_declaration_before_builtin
     snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
     with pytest.raises(PluginLoadError, match="eeg"):
         load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder, catalog=catalog,
-                               context=signal_context(snapshot, compile_processing_plan(source, undeclared)))
+                               input_signal=mapped_input(compile_processing_plan(source, undeclared)))
 
     declared = ProcessingInput(outputs=(ChannelBinding("Right", "channel-1", "eeg"),))
     binding = ProfileBinding("processing.decoder", "decoder", None, definition.selection,
@@ -111,7 +110,7 @@ async def test_curry_unknown_types_require_processing_declaration_before_builtin
     snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
     plan = compile_processing_plan(source, declared)
     decoder = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                                     catalog=catalog, context=signal_context(snapshot, plan))
+                                     catalog=catalog, input_signal=mapped_input(plan))
     decoder.setup()
     decoder.begin_epoch()
     times = np.arange(501) / source.sample_rate

@@ -1,6 +1,7 @@
 """Pinned runtime resolution rejects stale or incomplete selections."""
 from tests.plugin_configuration_helpers import builtin_selection
 from dataclasses import replace
+from unittest.mock import Mock
 
 import pytest
 
@@ -8,18 +9,24 @@ from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginNotFoundError
 from omnibci.infrastructure.plugins.runtime_configuration import (
-    configured_bindings, load_configured_plugin, plugin_context,
+    configured_bindings, load_configured_plugin,
 )
 from omnibci.sdk import SignalSource
 
 
-@pytest.mark.parametrize("module", ["stimulation", "actuation"])
+@pytest.mark.parametrize("module,kind", [("stimulation", "paradigm"), ("actuation", "effector")])
 @pytest.mark.parametrize("sample_rate", [0, "invalid", None])
-def test_output_context_does_not_depend_on_acquisition(module, sample_rate):
-    context = plugin_context({"ACQUISITION.sample_rate": sample_rate,
-                              "CONFIG.module_revisions": {module: "output-revision"}}, module)
-    assert context.sample_rate is None
-    assert context.module_revision == "output-revision"
+def test_output_inputs_do_not_depend_on_acquisition(module, kind, sample_rate):
+    from omnibci.sdk import Effector, Paradigm
+    alias = "logger" if kind == "effector" else "STIMULATION_THUBCI_SSVEP_classic40"
+    binding = ProfileBinding(f"{module}.{kind}", kind, None, builtin_selection(kind, alias), {})
+    loader = Mock()
+    load_configured_plugin({"PLUGINS.bindings": [binding.to_dict()],
+                            "ACQUISITION.sample_rate": sample_rate,
+                            "CONFIG.module_revisions": {module: "output-revision"}},
+                           binding.slot, kind, Effector if kind == "effector" else Paradigm,
+                           loader=loader)
+    assert loader.instantiate.call_args.kwargs == {"parameters": {}}
 
 
 def source_binding():
@@ -28,18 +35,15 @@ def source_binding():
 
 
 @pytest.mark.parametrize("names", [["obsolete", "names"], None, 42])
-def test_runtime_context_ignores_retired_flat_channel_names(names):
-    context = plugin_context({
-        "ACQUISITION.sample_rate": 500,
-        "ACQUISITION.channel_names": names,
-        "ACQUISITION.channel_labels": ["C3", "Trigger"],
-        "CONFIG.module_revisions": {"acquisition": "current-revision"},
-    }, "acquisition")
-
-    assert context.sample_rate == 500
-    assert context.module_revision == "current-revision"
-    assert context.acquired_signal is None
-    assert context.input_signal is None
+def test_source_inputs_ignore_retired_flat_channel_names(names):
+    binding = replace(source_binding(), parameters={"data_file_path": "selected.cnt"})
+    loader = Mock()
+    load_configured_plugin({"PLUGINS.bindings": [binding.to_dict()],
+                            "ACQUISITION.channel_names": names,
+                            "ACQUISITION.channel_labels": ["C3", "Trigger"],
+                            "CONFIG.module_revisions": {"acquisition": "current-revision"}},
+                           binding.slot, binding.kind, SignalSource, loader=loader)
+    assert loader.instantiate.call_args.kwargs == {"parameters": {"data_file_path": "selected.cnt"}}
 
 
 def test_missing_selected_version_never_falls_back_to_alias():

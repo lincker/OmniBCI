@@ -1,10 +1,11 @@
 """Algorithm parameters and host metadata remain independent of global settings."""
 
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from tests.processing_helpers import prepared_context
+from tests.processing_helpers import prepared_signal
 
 import numpy as np
 import pytest
@@ -13,7 +14,8 @@ from omnibci.infrastructure.plugins.algorithms.decoders.classic40_cca import cla
 from omnibci.infrastructure.plugins.algorithms.decoders.classic40_fbcca import classic_40_fbcca
 from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
 from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import BaselineCorrection
-from omnibci.sdk import EpochBoundary, PluginContext, SignalChunk
+from omnibci.sdk import EpochBoundary
+from omnibci.domain.signal import SignalChunk
 
 
 DECODERS = (classic_40_cca.Classic40CCA, classic_40_fbcca.Classic40FBCCA)
@@ -22,7 +24,7 @@ DECODERS = (classic_40_cca.Classic40CCA, classic_40_fbcca.Classic40FBCCA)
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_window_requires_at_least_two_host_samples(decoder_class):
     with pytest.raises(ValueError, match="at least two samples"):
-        decoder_class(parameters={"window_duration": 0.001}, context=prepared_context(1))
+        decoder_class(parameters={'window_duration': 0.001}, input_signal=prepared_signal(1), resource_root=Path(__file__).parent)
 
 
 @pytest.fixture(autouse=True)
@@ -34,31 +36,31 @@ def forbid_settings_reads(monkeypatch):
 
 
 @pytest.mark.parametrize("decoder_class", DECODERS)
-@pytest.mark.parametrize("context", [None, PluginContext()])
-def test_explicit_decoder_requires_host_sample_rate(decoder_class, context):
-    with pytest.raises(ValueError, match=r"requires context\.input_signal"):
-        decoder_class(parameters={}, context=context)
+@pytest.mark.parametrize("input_signal", [None, {}])
+def test_explicit_decoder_requires_prepared_input(decoder_class, input_signal):
+    with pytest.raises(ValueError, match=r"requires input_signal"):
+        decoder_class(parameters={}, input_signal=input_signal, resource_root=Path(__file__).parent)
 
 
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_decoder_defaults_use_host_sample_rate(decoder_class):
-    decoder = decoder_class(parameters={}, context=prepared_context(250))
+    decoder = decoder_class(parameters={}, input_signal=prepared_signal(250), resource_root=Path(__file__).parent)
     decoder.setup()
-    context_only_decoder = decoder_class(parameters={}, context=prepared_context(500))
-    context_only_decoder.setup()
+    higher_rate_decoder = decoder_class(parameters={}, input_signal=prepared_signal(500), resource_root=Path(__file__).parent)
+    higher_rate_decoder.setup()
 
     assert (decoder.SAMPLE_RATE, decoder.SAMPLE_COUNT, decoder.OFFSET_LENGTH) == (250, 750, 35)
-    assert context_only_decoder.SAMPLE_COUNT == 1500
-    assert context_only_decoder.OFFSET_LENGTH == 70
+    assert higher_rate_decoder.SAMPLE_COUNT == 1500
+    assert higher_rate_decoder.OFFSET_LENGTH == 70
 
 
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_decoder_instances_keep_independent_windows(decoder_class):
     parameters = {"window_duration": 0.5, "offset_time": 0.1}
-    first = decoder_class(parameters=parameters, context=prepared_context(200))
+    first = decoder_class(parameters=parameters, input_signal=prepared_signal(200), resource_root=Path(__file__).parent)
     first.setup()
     parameters["window_duration"] = 1.0
-    second = decoder_class(parameters=parameters, context=prepared_context(200))
+    second = decoder_class(parameters=parameters, input_signal=prepared_signal(200), resource_root=Path(__file__).parent)
     second.setup()
     window = np.zeros((2, 121))
 
@@ -70,10 +72,7 @@ def test_decoder_instances_keep_independent_windows(decoder_class):
 
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_decoder_uses_explicit_window_slice(monkeypatch, decoder_class):
-    decoder = decoder_class(
-        parameters={"window_duration": 0.5, "offset_time": 0.1},
-        context=prepared_context(200),
-    )
+    decoder = decoder_class(parameters={'window_duration': 0.5, 'offset_time': 0.1}, input_signal=prepared_signal(200), resource_root=Path(__file__).parent)
     decoder.setup()
     window = np.arange(300).reshape(2, 150)
     if isinstance(decoder, classic_40_cca.Classic40CCA):
@@ -96,7 +95,7 @@ def test_implicit_decoder_configuration_is_rejected(decoder_class):
 
 
 def test_detector_accepts_explicit_empty_configuration():
-    detector = DefaultEpochDetector(parameters={}, context=prepared_context(250))
+    detector = DefaultEpochDetector(parameters={}, input_signal=prepared_signal(250), resource_root=Path(__file__).parent)
     chunk = SignalChunk(
         timestamp=0, sequence_id=0,
         raw_data=np.array([[1.0, 2.0, 3.0], [0.0, 9.0, 0.0]]),
@@ -106,8 +105,8 @@ def test_detector_accepts_explicit_empty_configuration():
 
 
 def test_parallel_filter_instances_do_not_share_inputs_or_runtime_state():
-    first = BaselineCorrection(parameters={}, context=prepared_context(250))
-    second = BaselineCorrection(parameters={}, context=prepared_context(500))
+    first = BaselineCorrection(parameters={}, input_signal=prepared_signal(250), resource_root=Path(__file__).parent)
+    second = BaselineCorrection(parameters={}, input_signal=prepared_signal(500), resource_root=Path(__file__).parent)
     data = np.array([[10.0, 20.0], [30.0, 40.0]])
     before = data.copy()
     contexts = (

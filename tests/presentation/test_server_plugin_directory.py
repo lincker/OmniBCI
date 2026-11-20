@@ -22,7 +22,7 @@ def _plugin(directory):
     (package / "manifest.toml").write_text(tomlkit.dumps({
         "manifest_version": 2,
         "package": {"id": "directory", "publisher": "test", "version": SELECTION.version,
-                    "domain": "actuation", "api_version": "2"},
+                    "domain": "actuation", "api_version": "1"},
         "contributions": [{"id": "default", "kind": "effector", "plugin_type": "directory_probe",
                            "display_name": "Directory probe", "entrypoint": "driver:Probe"}],
     }), encoding="utf-8")

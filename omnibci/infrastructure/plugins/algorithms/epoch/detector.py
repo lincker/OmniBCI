@@ -2,18 +2,20 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-15 13:59
+from pathlib import Path
+from collections.abc import Mapping
 import numpy as np
 
+from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.algorithm import EpochDetector, EpochBoundary
-from omnibci.sdk import PluginContext, PluginParameters
 
 
 class DefaultEpochDetector(EpochDetector):
     plugin_type = 'DEFAULT_EPOCH_DETECTOR'
     def __init__(
-        self, *, parameters: PluginParameters | None = None,
-        context: PluginContext | None = None,
-    ):
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+        input_signal: SignalInfo,
+    ) -> None:
         pass
 
     def detect(self, raw_data: np.ndarray) -> tuple[EpochBoundary, ...]:

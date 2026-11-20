@@ -11,7 +11,7 @@ from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
 from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
-from omnibci.sdk import Decoder, PluginContext
+from omnibci.sdk import Decoder
 
 
 STARTER = Path(__file__).resolve().parents[2] / "examples" / "decoder_plugin"
@@ -41,7 +41,7 @@ def context(*names):
         replace(next(channel for channel in source.channels if channel.name == name), index=index)
         for index, name in enumerate(names)
     ))
-    return PluginContext(input_signal=mapped)
+    return mapped
 
 
 def test_starter_installs_and_decodes_mapped_named_input(descriptor):
@@ -49,8 +49,8 @@ def test_starter_installs_and_decodes_mapped_named_input(descriptor):
     assert descriptor.channel_requirements.required_names == ("Oz",)
     assert descriptor.channel_requirements.default_names == ("Oz",)
     prepared = context("O2", "Oz")
-    assert tuple(channel.channel_id for channel in prepared.input_signal.channels) == ("channel-1", "channel-0")
-    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=prepared)
+    assert tuple(channel.channel_id for channel in prepared.channels) == ("channel-1", "channel-0")
+    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, input_signal=prepared)
     decoder.setup()
     decoder.begin_epoch()
     # Oz was source row 0 and is mapped row 1. The unrelated row has the opposite sign.
@@ -62,7 +62,7 @@ def test_starter_installs_and_decodes_mapped_named_input(descriptor):
 
 
 def test_starter_declines_forced_short_and_nonfinite_windows(descriptor):
-    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=context("Oz"))
+    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, input_signal=context("Oz"))
     decoder.setup()
     decoder.begin_epoch()
     short = np.ones((1, 3))
@@ -74,7 +74,7 @@ def test_starter_declines_forced_short_and_nonfinite_windows(descriptor):
 
 
 def test_starter_rejects_unprepared_or_missing_named_input(descriptor):
-    with pytest.raises(PluginLoadError, match="prepared input metadata"):
-        PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=PluginContext(sample_rate=4))
+    with pytest.raises(PluginLoadError, match="prepared input_signal"):
+        PluginLoader.instantiate(descriptor, Decoder, parameters={}, input_signal=None)
     with pytest.raises(PluginLoadError, match="Oz"):
-        PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=context("O2"))
+        PluginLoader.instantiate(descriptor, Decoder, parameters={}, input_signal=context("O2"))

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from collections.abc import Mapping
 import ctypes
 from numbers import Integral
 import sys
 import time
 
-from omnibci.sdk import PluginContext, PluginParameters, TriggerEmitter
+from omnibci.sdk import TriggerEmitter
 
 
 class Curry8Trigger(TriggerEmitter):
@@ -20,8 +22,8 @@ class Curry8Trigger(TriggerEmitter):
     plugin_type = "neuroscan_curry8_trigger"
 
     def __init__(
-        self, *, parameters: PluginParameters, context: PluginContext | None = None,
-    ):
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+    ) -> None:
         self.address = int(parameters.get("parallel_port_address", "0x3100"), 16)
         self._driver = None
         self._ready = False

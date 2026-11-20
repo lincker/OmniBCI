@@ -8,6 +8,8 @@ Description:
 
 Copyright (c) 2025 by lincker, All Rights Reserved.
 '''
+from pathlib import Path
+from collections.abc import Mapping
 import math
 from typing import Optional
 
@@ -20,8 +22,8 @@ import numpy as np
 from numpy import typing as npt
 from sklearn.cross_decomposition import CCA as skCCA
 
+from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.algorithm import Decoder, Prediction
-from omnibci.sdk import PluginContext, PluginParameters
 
 
 class Classic40CCA(Decoder):
@@ -57,13 +59,13 @@ class Classic40CCA(Decoder):
             return template_set
 
     def __init__(
-        self, *, parameters: PluginParameters,
-        context: PluginContext,
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+        input_signal: SignalInfo,
     ) -> None:
         super().__init__()
-        if context is None or context.input_signal is None:
-            raise ValueError("Classic40CCA requires context.input_signal.sample_rate")
-        self.SAMPLE_RATE = context.input_signal.sample_rate
+        if not isinstance(input_signal, SignalInfo):
+            raise ValueError("Classic40CCA requires input_signal.sample_rate")
+        self.SAMPLE_RATE = input_signal.sample_rate
         window_duration = parameters.get('window_duration', 3.0)
         offset_time = parameters.get('offset_time', 0.14)
         self.SAMPLE_COUNT = int(window_duration * self.SAMPLE_RATE)

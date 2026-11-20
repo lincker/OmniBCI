@@ -281,22 +281,21 @@ async def test_matching_physical_channels_reuse_chunk_with_effective_input_conte
     assert observed.timestamp == 12345
     assert observed.sequence_id == 42
     assert processor._last_sequence == 42
-    context = signal_configuration.signal_context(_snapshot(plan), plan)
-    assert context.acquired_signal is None
-    assert context.input_signal.channels == plan.output_channels
+    context = signal_configuration.mapped_input(plan)
+    assert context.channels == plan.output_channels
     if mapping in {"renamed", "typed"}:
         assert not plan.is_identity
-        assert context.input_signal is not source
+        assert context is not source
         if mapping == "renamed":
-            assert tuple(channel.name for channel in context.input_signal.channels) == (
+            assert tuple(channel.name for channel in context.channels) == (
                 "Input O1", "Input O2", "Input M1")
             assert tuple(channel.name for channel in source.channels) == ("O1", "O2", "M1")
         else:
-            assert all(channel.signal_type == "eeg" for channel in context.input_signal.channels)
+            assert all(channel.signal_type == "eeg" for channel in context.channels)
             assert all(channel.signal_type == "unknown" for channel in source.channels)
     else:
         assert plan.is_identity
-        assert context.input_signal is source
+        assert context is source
 
 
 @pytest.mark.asyncio
@@ -424,18 +423,15 @@ def test_input_context_preserves_live_channels_and_describes_ordered_aliases(dup
     plan = compile_processing_plan(source, ProcessingInput(outputs=(
         ChannelBinding("posterior-right", "channel-1"), ChannelBinding("posterior-left", "channel-0"))),
         acquisition_revision=plan.acquisition_revision)
-    snapshot = {**_snapshot(plan), "ACQUISITION.channel_labels": ["stale-1", "stale-2", "stale-3", "Trigger"],
-                "ACQUISITION.channel_names": ["legacy-1", "legacy-2", "legacy-3"]}
-    context = signal_configuration.signal_context(snapshot, plan)
-    assert tuple(c.name for c in context.input_signal.channels) == ("posterior-right", "posterior-left")
-    assert tuple(c.channel_id for c in context.input_signal.channels) == ("channel-1", "channel-0")
-    assert tuple(c.index for c in context.input_signal.channels) == (0, 1)
-    assert not hasattr(context.input_signal, "source_id")
-    assert not hasattr(context.acquired_signal, "connection_id")
-    assert context.input_signal.signal_channel_count == 2
-    assert context.input_signal.trigger_row_index == 2
-    assert context.acquired_signal is None
-    assert context.sample_rate is None
+    context = signal_configuration.mapped_input(plan)
+    assert tuple(c.name for c in context.channels) == ("posterior-right", "posterior-left")
+    assert tuple(c.channel_id for c in context.channels) == ("channel-1", "channel-0")
+    assert tuple(c.index for c in context.channels) == (0, 1)
+    assert not hasattr(context, "source_id")
+    assert not hasattr(context, "connection_id")
+    assert context.signal_channel_count == 2
+    assert context.trigger_row_index == 2
+    assert context.sample_rate == source.sample_rate
 
 
 
@@ -459,10 +455,8 @@ def test_trial_pipeline_replacement_receives_current_transformed_context(monkeyp
     load = MagicMock(return_value=_Decoder())
     monkeypatch.setattr(pipeline_configuration, "load_configured_plugin", load)
     pipeline_configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.008, signal_plan=plan)
-    context = load.call_args.kwargs["context"]
-    assert context.module_revision is None
-    assert context.acquired_signal is None
-    assert context.input_signal.channels == plan.output_channels
+    context = load.call_args.kwargs["input_signal"]
+    assert context.channels == plan.output_channels
 
 
 def test_processing_update_preserves_source_identity_and_reprepare_buffers(monkeypatch):

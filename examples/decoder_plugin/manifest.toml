@@ -11,8 +11,8 @@ id = "oz-polarity-demo"
 publisher = "example"
 # Package release version. Change this when distributing changed package contents.
 version = "0.1.0"
-# Constructor API: __init__(self, *, parameters, context).
-api_version = "2"
+# Constructor API: __init__(self, *, parameters, resource_root, input_signal).
+api_version = "1"
 # Optional OS restriction; omit to allow every supported OS.
 # platforms = ["darwin", "linux", "win32"]
 # Optional exact OmniBCI version requirement; ranges are not supported.

@@ -1,6 +1,7 @@
 """Level triggers become single-sample events without changing source data."""
 
 import logging
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -109,7 +110,7 @@ def test_unchanged_input_is_reused():
 def test_sources_declare_level_triggers_separately_from_discrete_file_events(
     source_type, parameters, expected,
 ):
-    assert source_type(parameters=parameters).trigger_mode == ("level" if expected else "events")
+    assert source_type(parameters=parameters, resource_root=Path(__file__).parent).trigger_mode == ("level" if expected else "events")
 
 
 def test_trigger_logs_explain_suppression_across_packet_boundaries(caplog):

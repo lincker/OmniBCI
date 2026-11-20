@@ -1,5 +1,6 @@
 """Tests for SignalProcessingWorker plugin loading and processor wiring."""
 from __future__ import annotations
+from pathlib import Path
 from tests.plugin_configuration_helpers import builtin_selection
 
 from queue import Queue
@@ -7,6 +8,8 @@ from traceback import format_exception
 from unittest.mock import MagicMock, call, patch
 
 import numpy as np
+from tests.processing_helpers import prepared_signal
+
 import pytest
 
 import omnibci.infrastructure.signal_processing.worker as worker_module
@@ -26,7 +29,6 @@ from omnibci.infrastructure.signal_processing.worker import (
 from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
 from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.infrastructure.signal_processing.pipeline_configuration import load_filters
-from omnibci.sdk import PluginContext
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.shared.events import EventType
 
@@ -57,15 +59,15 @@ class TestFilterLoading:
         ).to_dict() for _ in range(count)]}
 
     def test_empty_configuration_returns_no_filters(self):
-        assert load_filters(self.snapshot(0), PluginContext()) == []
+        assert load_filters(self.snapshot(0), prepared_signal(250)) == []
 
     def test_unknown_filter_blocks_pipeline(self):
         from omnibci.infrastructure.plugins.plugin_catalog import PluginNotFoundError
         with pytest.raises(PluginNotFoundError):
-            load_filters(self.snapshot(missing=True), PluginContext())
+            load_filters(self.snapshot(missing=True), prepared_signal(250))
 
     def test_repeated_filters_construct_separate_instances_in_order(self):
-        filters = load_filters(self.snapshot(2), PluginContext())
+        filters = load_filters(self.snapshot(2), prepared_signal(250))
         assert len(filters) == 2
         assert filters[0] is not filters[1]
         assert all(item.plugin_type == "BASELINE_CORRECTION" for item in filters)
@@ -187,7 +189,7 @@ class TestProcessorWiring:
             return item
         data_manager.get_data = stop_after_sample
         monkeypatch.setattr(signal_configuration, "load_signal_pipeline", lambda snapshot, plan: (
-            InvalidTargetDecoder(), DefaultEpochDetector(parameters={}, context=PluginContext(sample_rate=250)), [],
+            InvalidTargetDecoder(), DefaultEpochDetector(parameters={}, input_signal=prepared_signal(250), resource_root=Path(__file__).parent), [],
         ))
 
         with pytest.raises(TypeError) as raised:

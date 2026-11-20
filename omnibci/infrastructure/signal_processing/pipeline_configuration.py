@@ -10,7 +10,7 @@ from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigur
 from omnibci.infrastructure.plugins.runtime_configuration import (
     configured_bindings, load_configured_plugin,
 )
-from omnibci.sdk import PluginContext
+from omnibci.domain.signal_info import SignalInfo
 
 
 @dataclass(frozen=True)
@@ -20,10 +20,10 @@ class ConfiguredPipeline:
     settings_snapshot: dict
 
 
-def load_filters(snapshot: dict, context: PluginContext) -> list[Filter]:
+def load_filters(snapshot: dict, input_signal: SignalInfo) -> list[Filter]:
     """Each ordered filter slot owns a fresh plugin instance."""
     bindings = configured_bindings(snapshot)
-    return [load_configured_plugin(snapshot, binding.slot, "filter", Filter, context=context)
+    return [load_configured_plugin(snapshot, binding.slot, "filter", Filter, input_signal=input_signal)
             for binding in bindings if binding.kind == "filter"]
 
 
@@ -121,8 +121,8 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | 
     if signal_plan is None:
         return ConfiguredPipeline(None, (), snapshot)
 
-    from .signal_configuration import signal_context
-    context = signal_context(snapshot, signal_plan)
-    decoder = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder, context=context)
-    filters = load_filters(snapshot, context)
+    from .signal_configuration import mapped_input
+    input_signal = mapped_input(signal_plan)
+    decoder = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder, input_signal=input_signal)
+    filters = load_filters(snapshot, input_signal)
     return ConfiguredPipeline(decoder, tuple(filters), snapshot)

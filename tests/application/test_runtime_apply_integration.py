@@ -34,7 +34,7 @@ from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 class Replay(SignalSource):
     trigger_mode = "events"
     resume_mode = "checkpoint"
-    def __init__(self, *, parameters, context):
+    def __init__(self, *, parameters, resource_root):
         super().__init__()
         self.size = parameters['size']
         self.sample_rate = parameters['sample_rate']
@@ -77,7 +77,7 @@ id="replay"
 domain="acquisition"
 publisher="test"
 version="1.0.0"
-api_version="2"
+api_version="1"
 [[contributions]]
 id="default"
 kind="acquisition"

@@ -1,4 +1,5 @@
 """Only explicitly declared live sources resume without replay checkpoints."""
+from pathlib import Path
 from queue import Queue
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -18,7 +19,7 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import S
                                              (Curry8DataReader, "live-current")])
 def test_builtin_sources_declare_one_resume_mode(source_type, mode):
     parameters = {"data_file_path": "sample.cnt"} if source_type is FileReader else {}
-    assert source_type(parameters=parameters).resume_mode == mode
+    assert source_type(parameters=parameters, resource_root=Path(__file__).parent).resume_mode == mode
 
 
 @pytest.mark.parametrize("mode,checkpoint,ok", [
@@ -48,7 +49,7 @@ def test_checkpoint_receipt_validates_the_declared_mode(mode, checkpoint, ok):
 
 @pytest.mark.asyncio
 async def test_scan45_restart_requests_live_delivery_without_resetting_sample_state():
-    source = Scan45DataReader(parameters={})
+    source = Scan45DataReader(parameters={}, resource_root=Path(__file__).parent)
     source.writer = SimpleNamespace(write=MagicMock(), drain=AsyncMock())
     source._is_connected = True
     source._packets_counter = 12
@@ -66,7 +67,7 @@ async def test_scan45_restart_requests_live_delivery_without_resetting_sample_st
 
 @pytest.mark.asyncio
 async def test_curry8_restart_only_requests_live_delivery():
-    source = Curry8DataReader(parameters={})
+    source = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     source._is_connected = True
     source._metadata = object()
     source.writer = object()

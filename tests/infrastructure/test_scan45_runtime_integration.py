@@ -1,4 +1,5 @@
 """Scan45 events survive numeric input aliases and reach direct web results."""
+from pathlib import Path
 from tests.plugin_configuration_helpers import builtin_selection
 
 import asyncio
@@ -32,7 +33,7 @@ from omnibci.shared.events import EventType
 async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session_commands(monkeypatch):
     sample_rate = 500
     generation, revision = "scan45-generation", "scan45-revision"
-    reader = Scan45DataReader(parameters={"channel_count": 10, "sample_rate": sample_rate})
+    reader = Scan45DataReader(parameters={'channel_count': 10, 'sample_rate': sample_rate}, resource_root=Path(__file__).parent)
     reader._is_connected = True
     observation = await reader.observe()
     source = observation.signal_info

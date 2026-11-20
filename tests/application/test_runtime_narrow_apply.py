@@ -595,7 +595,7 @@ id="alternate_logger"
 domain="actuation"
 publisher="test"
 version="1.0.0"
-api_version="2"
+api_version="1"
 [[contributions]]
 id="default"
 kind="effector"

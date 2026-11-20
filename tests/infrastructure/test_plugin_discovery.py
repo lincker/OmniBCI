@@ -9,7 +9,6 @@ from textwrap import dedent
 
 import pytest
 import tomlkit
-from omnibci.sdk import PluginContext
 from omnibci.application.plugin_identity import PluginSelection
 
 from omnibci.domain.ports.effector import Effector
@@ -40,7 +39,7 @@ def _write_effector_manifest(
     (package_dir / "manifest.toml").write_text(tomlkit.dumps({
         "manifest_version": 2,
         "package": {"id": plugin_id, "publisher": publisher, "version": "1.0.0",
-                    "domain": "actuation", "api_version": "2", "source": claimed_source},
+                    "domain": "actuation", "api_version": "1", "source": claimed_source},
         "contributions": [contribution],
     }), encoding="utf-8")
     return package_dir
@@ -65,11 +64,10 @@ def test_builtin_descriptor_retains_exact_location_and_publisher(monkeypatch, tm
 
 
 def test_builtin_logger_descriptor_is_directly_loadable(monkeypatch, tmp_path):
-    from omnibci.sdk import PluginContext
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
     descriptor = PluginCatalog().resolve_selection("effector", PluginSelection('omnibci.logger', "default", '0.1.0'))
 
-    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+    instance = PluginLoader.instantiate(descriptor, Effector, parameters={})
 
     assert type(instance).__name__ == "LogEffector"
     assert instance.plugin_type == "logger"
@@ -242,10 +240,10 @@ def test_selected_entrypoint_supports_relative_imports_without_sys_path_pollutio
             from .helpers import ORIGIN
 
             class TestEffector(Effector):
-                def __init__(self, *, parameters, context): pass
+                def __init__(self, *, parameters, resource_root): pass
                 plugin_type = "relative"
 
-                def __init__(self, *, parameters, context):
+                def __init__(self, *, parameters, resource_root):
                     self.origin = ORIGIN
 
                 def setup(self):
@@ -273,7 +271,7 @@ def test_selected_entrypoint_supports_relative_imports_without_sys_path_pollutio
     )
     path_before = list(sys.path)
 
-    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+    instance = PluginLoader.instantiate(descriptor, Effector, parameters={})
 
     assert instance.origin == "user-relative"
     assert sys.path == path_before
@@ -292,7 +290,7 @@ def test_selected_entrypoint_executes_validated_source_path(tmp_path):
             from omnibci.domain.ports.effector import Effector
 
             class TestEffector(Effector):
-                def __init__(self, *, parameters, context): pass
+                def __init__(self, *, parameters, resource_root): pass
                 plugin_type = "exact_source"
                 origin = "validated-python-source"
                 def setup(self): pass
@@ -313,7 +311,7 @@ def test_selected_entrypoint_executes_validated_source_path(tmp_path):
         "effector", PluginSelection('acme.exact-source', "default", '1.0.0')
     )
 
-    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+    instance = PluginLoader.instantiate(descriptor, Effector, parameters={})
 
     assert instance.origin == "validated-python-source"
 
@@ -338,7 +336,7 @@ def test_nested_entrypoint_supports_parent_relative_import(tmp_path):
 
             class NestedEffector(Effector):
                 plugin_type = "nested"
-                def __init__(self, *, parameters, context): self.origin = ORIGIN
+                def __init__(self, *, parameters, resource_root): self.origin = ORIGIN
                 def setup(self): pass
                 def execute(self, command): pass
                 def quiesce(self): pass
@@ -351,7 +349,7 @@ def test_nested_entrypoint_supports_parent_relative_import(tmp_path):
         "effector", PluginSelection('acme.nested', "default", '1.0.0')
     )
 
-    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+    instance = PluginLoader.instantiate(descriptor, Effector, parameters={})
 
     assert instance.origin == "parent"
 
@@ -369,7 +367,7 @@ def test_loader_rejects_ambiguous_module_and_package(tmp_path):
     )
 
     with pytest.raises(PluginLoadError, match="ambiguous"):
-        PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+        PluginLoader.instantiate(descriptor, Effector, parameters={})
 
 
 def test_loader_rejects_symlink_anywhere_in_plugin_tree(tmp_path):
@@ -389,7 +387,7 @@ def test_loader_rejects_symlink_anywhere_in_plugin_tree(tmp_path):
     )
 
     with pytest.raises(PluginLoadError, match="contains symlink"):
-        PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+        PluginLoader.instantiate(descriptor, Effector, parameters={})
 
 
 def test_removed_registration_api_is_rejected(tmp_path):
@@ -408,7 +406,7 @@ def test_removed_registration_api_is_rejected(tmp_path):
 
             @register_plugin(Effector)
             class TestEffector(Effector):
-                def __init__(self, *, parameters, context): pass
+                def __init__(self, *, parameters, resource_root): pass
                 plugin_type = "decorated_override"
                 def setup(self): pass
                 def execute(self, command): pass
@@ -423,7 +421,7 @@ def test_removed_registration_api_is_rejected(tmp_path):
     )
 
     with pytest.raises(PluginLoadError, match="omnibci.infrastructure.plugins.registry") as error:
-        PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+        PluginLoader.instantiate(descriptor, Effector, parameters={})
     assert isinstance(error.value.__cause__, ModuleNotFoundError)
 
 
@@ -439,7 +437,7 @@ def test_system_exit_cleans_synthetic_modules(tmp_path):
     prefix = PluginLoader._module_prefix(descriptor)
 
     with pytest.raises(SystemExit):
-        PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+        PluginLoader.instantiate(descriptor, Effector, parameters={})
 
     assert not any(
         name == prefix or name.startswith(f"{prefix}.") for name in sys.modules
@@ -457,9 +455,9 @@ def test_constructor_failure_cleans_new_synthetic_modules(tmp_path):
             from omnibci.domain.ports.effector import Effector
 
             class TestEffector(Effector):
-                def __init__(self, *, parameters, context): pass
+                def __init__(self, *, parameters, resource_root): pass
                 plugin_type = "constructor"
-                def __init__(self, *, parameters, context): raise RuntimeError("constructor failed")
+                def __init__(self, *, parameters, resource_root): raise RuntimeError("constructor failed")
                 def setup(self): pass
                 def execute(self, command): pass
                 def quiesce(self): pass
@@ -474,7 +472,7 @@ def test_constructor_failure_cleans_new_synthetic_modules(tmp_path):
     prefix = PluginLoader._module_prefix(descriptor)
 
     with pytest.raises(PluginLoadError, match="constructor failed"):
-        PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+        PluginLoader.instantiate(descriptor, Effector, parameters={})
 
     assert not any(
         name == prefix or name.startswith(f"{prefix}.") for name in sys.modules

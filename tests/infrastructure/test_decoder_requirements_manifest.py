@@ -12,7 +12,7 @@ from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 def package(tmp_path, *, kind="decoder", **fields):
     document = {"manifest_version": 2, "package": {
-        "id": "example", "publisher": "test", "version": "1", "api_version": "2", "domain": {"decoder": "processing", "filter": "processing", "epoch_detector": "processing", "acquisition": "acquisition", "effector": "actuation"}[kind],
+        "id": "example", "publisher": "test", "version": "1", "api_version": "1", "domain": {"decoder": "processing", "filter": "processing", "epoch_detector": "processing", "acquisition": "acquisition", "effector": "actuation"}[kind],
     }, "contributions": [{"id": "default", "kind": kind, "entrypoint": "decoder:Decoder", **fields}]}
     (tmp_path / "manifest.toml").write_text(tomlkit.dumps(document), encoding="utf-8")
     return PluginCatalog({kind: lambda: [PluginRoot(tmp_path, "user", 0)]})

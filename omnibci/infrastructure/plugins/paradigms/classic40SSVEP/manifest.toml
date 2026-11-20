@@ -9,7 +9,7 @@ manifest_version = 2
 domain = "stimulation"
 id = "classic40SSVEP"
 version = "0.1.0"
-api_version = "2"
+api_version = "1"
 publisher = "OmniBCI"
 
 [[contributions]]

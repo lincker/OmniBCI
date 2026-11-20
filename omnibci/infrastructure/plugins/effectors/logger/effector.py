@@ -5,11 +5,11 @@ With ``ACTUATION.effector = 'logger'`` the full closed loop
 (TrialCompleted → ActuationCommand → execute → ActuationAck) can be exercised
 without any device attached: each command is simply logged.
 """
+from pathlib import Path
 import logging
 from typing import Mapping
 
 from omnibci.domain.ports.effector import Effector
-from omnibci.sdk import PluginContext, PluginParameters
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 class LogEffector(Effector):
     plugin_type = "logger"
 
-    def __init__(self, *, parameters: PluginParameters | None = None,
-                 context: PluginContext | None = None):
-        self.module_revision = context.module_revision if context is not None else None
+    def __init__(
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+    ) -> None:
+        pass
 
     def setup(self) -> None:
         logger.info("[LogEffector] setup — ready (no hardware)")

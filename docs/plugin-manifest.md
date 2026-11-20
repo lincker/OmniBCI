@@ -1,8 +1,10 @@
 # Plugin packages and contributions
 
-This guide describes the current API 2 implementation. The proposed API v1 is
-defined separately in [Plugin API v1](plugin-api-v1.md); terminology updates do
-not change the manifest or constructor supported by current code.
+This guide is a historical API 2 snapshot, not current developer guidance.
+The implementation now selects API 1 and uses explicit constructor inputs;
+remaining manifest and payload changes are tracked in the [implementation plan](plugin-implementation-plan.md).
+The complete guide will be rewritten after the coordinated refactor.
+See [Plugin API v1](plugin-api-v1.md) for the target contract.
 
 Use the [canonical plugin terminology](plugin-marketplace-design.md#31-canonical-plugin-terminology):
 a Plugin Package is the installation unit, a Contribution is a static declaration

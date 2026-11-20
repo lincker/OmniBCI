@@ -7,7 +7,6 @@ import pytest
 import tomlkit
 
 from omnibci.domain.ports.effector import Effector
-from omnibci.sdk import PluginContext
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import (
@@ -30,7 +29,7 @@ def _write_package(root: Path, directory="device", *, publisher="acme",
     location.mkdir(parents=True)
     package = {
         "id": "device", "publisher": publisher, "version": version,
-        "api_version": "2", "domain": {"acquisition": "acquisition", "trigger": "stimulation",
+        "api_version": "1", "domain": {"acquisition": "acquisition", "trigger": "stimulation",
             "filter": "processing", "epoch_detector": "processing", "decoder": "processing",
             "effector": "actuation", "paradigm": "stimulation"}[(contributions or [_contribution()])[0]["kind"]],
         **(package_fields or {}),
@@ -227,7 +226,7 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
         "from omnibci.domain.ports.effector import Effector\n"
         "class Driver(Effector):\n"
         "    plugin_type = 'output'\n"
-        "    def __init__(self, *, parameters, context): pass\n"
+        "    def __init__(self, *, parameters, resource_root): pass\n"
         "    def setup(self): pass\n"
         "    def teardown(self): pass\n"
         "    def execute(self, command): self.command = command\n"
@@ -238,7 +237,7 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
         "effector", _selection("output"),
     )
 
-    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
+    instance = PluginLoader.instantiate(descriptor, Effector, parameters={})
     instance.execute({"target_id": 2})
 
     assert isinstance(instance, Effector)

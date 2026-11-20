@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-11-12 10:47
+from pathlib import Path
+from collections.abc import Mapping
 import math
 from typing import Optional
 
@@ -9,8 +11,8 @@ import numpy as np
 from numpy import typing as npt
 from scipy.signal import cheby1, filtfilt
 
+from omnibci.domain.signal_info import SignalInfo
 from omnibci.domain.ports.algorithm import Decoder, Prediction
-from omnibci.sdk import PluginContext, PluginParameters
 
 
 class Classic40FBCCA(Decoder):
@@ -44,8 +46,8 @@ class Classic40FBCCA(Decoder):
     #         return template_set
 
     def __init__(
-        self, *, parameters: PluginParameters,
-        context: PluginContext,
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+        input_signal: SignalInfo,
     ) -> None:
         super().__init__()
         self.FREQUENCY_SET = [8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
@@ -53,9 +55,9 @@ class Classic40FBCCA(Decoder):
                               8.4, 9.4, 10.4, 11.4, 12.4, 13.4, 14.4, 15.4,
                               8.6, 9.6, 10.6, 11.6, 12.6, 13.6, 14.6, 15.6,
                               8.8, 9.8, 10.8, 11.8, 12.8, 13.8, 14.8, 15.8]
-        if context is None or context.input_signal is None:
-            raise ValueError("Classic40FBCCA requires context.input_signal.sample_rate")
-        self.SAMPLE_RATE = context.input_signal.sample_rate
+        if not isinstance(input_signal, SignalInfo):
+            raise ValueError("Classic40FBCCA requires input_signal.sample_rate")
+        self.SAMPLE_RATE = input_signal.sample_rate
         window_duration = parameters.get('window_duration', 3.0)
         offset_time = parameters.get('offset_time', 0.14)
         self.SAMPLE_COUNT = int(window_duration * self.SAMPLE_RATE)

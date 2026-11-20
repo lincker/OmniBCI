@@ -2,26 +2,28 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
+from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 
-from omnibci.sdk import Decoder, PluginContext, PluginParameters, Prediction
+from omnibci.sdk import Decoder, SignalInfo, Prediction
 
 
 class OzPolarityDemo(Decoder):
     """Stateless whole-window demonstration of named, mapped channel input."""
 
-    def __init__(self, *, parameters: PluginParameters, context: PluginContext) -> None:
-        if context.input_signal is None:
+    def __init__(self, *, parameters: Mapping[str, object], resource_root: Path, input_signal: SignalInfo) -> None:
+        if not isinstance(input_signal, SignalInfo):
             raise ValueError("Oz Polarity Demo requires prepared input metadata")
         # These names describe matrix rows after channel selection and ordering.
-        names = [channel.name for channel in context.input_signal.channels]
+        names = [channel.name for channel in input_signal.channels]
         if "Oz" not in names:
             raise ValueError("Oz Polarity Demo requires an Oz input channel")
         self.oz_index = names.index("Oz")
         self.sample_count = max(
-            2, math.ceil(parameters["window_duration"] * context.input_signal.sample_rate),
+            2, math.ceil(parameters["window_duration"] * input_signal.sample_rate),
         )
 
     def setup(self) -> None:

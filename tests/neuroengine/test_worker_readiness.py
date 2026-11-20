@@ -224,7 +224,7 @@ def prepared_input_decoder(tmp_path, monkeypatch):
         id = "readiness"
         publisher = "test"
         version = "1"
-        api_version = "2"
+        api_version = "1"
 domain = "processing"
         [[contributions]]
         id = "default"
@@ -250,11 +250,11 @@ domain = "processing"
                 pass
             def teardown(self):
                 pass
-            def __init__(self, *, parameters, context):
-                if context.input_signal is None:
+            def __init__(self, *, parameters, resource_root, input_signal):
+                if input_signal is None:
                     raise ValueError("ReadinessDecoder requires prepared input")
-                self.sample_rate = context.input_signal.sample_rate
-                Path(context.resource_root, "constructed").write_text("ready", encoding="utf-8")
+                self.sample_rate = input_signal.sample_rate
+                Path(resource_root, "constructed").write_text("ready", encoding="utf-8")
 
             def should_decode(self, window):
                 return False

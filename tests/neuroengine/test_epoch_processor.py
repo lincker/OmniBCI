@@ -1,6 +1,7 @@
 """Unit tests for EpochProcessor buffering, epoch construction, and decoding."""
 from __future__ import annotations
-from tests.processing_helpers import prepared_context
+from pathlib import Path
+from tests.processing_helpers import prepared_signal
 
 from traceback import format_exception
 from types import SimpleNamespace
@@ -411,9 +412,9 @@ def test_classic40_prediction_matches_numpy_append_reference(algorithm):
     from omnibci.infrastructure.plugins.algorithms.decoders.classic40_fbcca.classic_40_fbcca import Classic40FBCCA
 
     decoder_class = Classic40CCA if algorithm == "cca" else Classic40FBCCA
-    context = prepared_context(250)
-    decoder = decoder_class(parameters={}, context=context)
-    reference_decoder = decoder_class(parameters={}, context=context)
+    context = prepared_signal(250)
+    decoder = decoder_class(parameters={}, input_signal=context, resource_root=Path(__file__).parent)
+    reference_decoder = decoder_class(parameters={}, input_signal=context, resource_root=Path(__file__).parent)
     decoder.setup()
     reference_decoder.setup()
     reference_decoder.begin_epoch()

@@ -1,4 +1,5 @@
 """Output settlement requires joined execution and explicit driver confirmation."""
+from pathlib import Path
 import asyncio
 import threading
 from queue import Queue
@@ -114,7 +115,7 @@ def test_failed_quiescence_cannot_claim_physical_completion():
 def test_logger_explicitly_confirms_quiescence():
     async def scenario():
         actuator = Actuator(settings_snapshot={})
-        actuator.effector = LogEffector(parameters={})
+        actuator.effector = LogEffector(parameters={}, resource_root=Path(__file__).parent)
         instance = app(actuator)
         await instance._settle_actuation(Event(EventType.SettleActuation, CommandRequest("settle")))
         assert receipts(instance)[0].ok

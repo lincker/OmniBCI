@@ -1,5 +1,6 @@
 """Terminal transport failures invalidate CURRY state without hiding their cause."""
 
+from pathlib import Path
 import asyncio
 import errno
 from unittest.mock import AsyncMock, Mock
@@ -18,7 +19,7 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import (
 
 
 def connected_driver(*, streaming=True):
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver.reader = asyncio.StreamReader()
     driver.writer = Mock(spec=asyncio.StreamWriter)
     driver.writer.drain = AsyncMock()

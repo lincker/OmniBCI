@@ -44,10 +44,12 @@ select the Decoder profile, and apply the configuration. Use a suitable epoch
 detector. Targets `1` and `2` must also agree with your paradigm and effector if
 those modules are used. The example adds no paradigm, detector, or filter.
 
-The host must support Plugin API `2` and signal input contract `2`. NumPy is
+The host must support Plugin API `1`; the remaining signal-contract declaration
+is removed in the next S1f batch. NumPy is
 already a host dependency; package installation never runs pip or installs
 additional dependencies. The decoder uses no external assets or model files.
 
 The existing authoring guide is deferred until the coordinated API v1 switch.
-This executable example follows the current S1c processing methods while its
-constructor and manifest retain the existing contract until S1f.
+This executable example follows the implemented processing methods and explicit
+API v1 constructor. Manifest rules and the complete author guide are still being
+updated as part of the coordinated refactor.

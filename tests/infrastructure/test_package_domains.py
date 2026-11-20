@@ -98,7 +98,7 @@ def test_signed_domain_must_match_archive_domain(tmp_path):
         _installer(tmp_path).install(_archive(tmp_path), expected_domain="processing")
 
 
-@pytest.mark.parametrize("field,value", [("api_version", "1"), ("version", ">=1"), ("version", "*")])
+@pytest.mark.parametrize("field,value", [("api_version", "2"), ("version", ">=1"), ("version", "*")])
 def test_catalog_rejects_legacy_api_and_non_exact_version(tmp_path, field, value):
     _write_package(tmp_path, package_fields={field: value})
     catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(tmp_path, "user", 0)]})

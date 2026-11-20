@@ -5,7 +5,6 @@ import numpy as np
 
 from omnibci.domain.ports.algorithm import EpochBoundary
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
-from omnibci.sdk import PluginContext
 
 
 def marker_boundaries(raw_data):
@@ -16,11 +15,11 @@ def marker_boundaries(raw_data):
                  for index in np.flatnonzero((events > 0) & (events <= 255)))
 
 
-def prepared_context(sample_rate):
-    return PluginContext(input_signal=SignalInfo(sample_rate=sample_rate, channels=(
+def prepared_signal(sample_rate):
+    return SignalInfo(sample_rate=sample_rate, channels=(
         ChannelDescriptor(0, "C3", channel_id="c3", signal_type="eeg"),
         ChannelDescriptor(1, "C4", channel_id="c4", signal_type="eeg"),
-    )))
+    ))
 
 
 def make_processor(*args, **kwargs):

@@ -1,9 +1,10 @@
 """Forced short epochs must not interrupt subsequent SSVEP decoding."""
 
+from pathlib import Path
 from queue import Queue
 from types import SimpleNamespace
 
-from tests.processing_helpers import prepared_context
+from tests.processing_helpers import prepared_signal
 
 import numpy as np
 import pytest
@@ -25,7 +26,7 @@ from omnibci.shared.events import EventType
     (Classic40FBCCA, 27),
 ])
 def test_forced_window_declines_below_numerical_minimum(decoder_class, usable_samples):
-    decoder = decoder_class(parameters={}, context=prepared_context(500))
+    decoder = decoder_class(parameters={}, input_signal=prepared_signal(500), resource_root=Path(__file__).parent)
     decoder.setup()
     times = np.arange(decoder.OFFSET_LENGTH + usable_samples) / decoder.SAMPLE_RATE
     window = np.sin(2 * np.pi * 8 * times)[None, :]
@@ -39,7 +40,7 @@ def test_forced_window_declines_below_numerical_minimum(decoder_class, usable_sa
     (Classic40FBCCA, 28),
 ])
 def test_forced_window_at_numerical_minimum_still_decodes(decoder_class, usable_samples):
-    decoder = decoder_class(parameters={}, context=prepared_context(500))
+    decoder = decoder_class(parameters={}, input_signal=prepared_signal(500), resource_root=Path(__file__).parent)
     decoder.setup()
     times = np.arange(decoder.OFFSET_LENGTH + usable_samples) / decoder.SAMPLE_RATE
     window = np.sin(2 * np.pi * 8 * times)[None, :]
@@ -53,10 +54,10 @@ def test_forced_window_at_numerical_minimum_still_decodes(decoder_class, usable_
 @pytest.mark.parametrize("first_chunk_size", [1, 64])
 @pytest.mark.parametrize("second_event", [7, 9])
 async def test_early_marker_keeps_processor_running_for_next_valid_epoch(decoder_class, first_chunk_size, second_event):
-    decoder = decoder_class(parameters={"window_duration": 1.0}, context=prepared_context(500))
+    decoder = decoder_class(parameters={'window_duration': 1.0}, input_signal=prepared_signal(500), resource_root=Path(__file__).parent)
     events = []
     processor = make_processor(
-        detector=DefaultEpochDetector(), decoder=decoder, command_queue=Queue(),
+        detector=DefaultEpochDetector(resource_root=Path(__file__).parent, parameters={}, input_signal=prepared_signal(250)), decoder=decoder, command_queue=Queue(),
         data_manager=DataManager(buffer=Queue()), event_bus=SimpleNamespace(put_event=events.append),
         sample_rate=500,
     )
@@ -79,7 +80,7 @@ async def test_early_marker_keeps_processor_running_for_next_valid_epoch(decoder
 
 @pytest.mark.parametrize("filter_length", [3, 11])
 def test_fbcca_short_window_limit_follows_filter_coefficients(monkeypatch, filter_length):
-    decoder = Classic40FBCCA(parameters={}, context=prepared_context(500))
+    decoder = Classic40FBCCA(parameters={}, input_signal=prepared_signal(500), resource_root=Path(__file__).parent)
     coefficients = np.zeros(filter_length)
     coefficients[0] = 1
     monkeypatch.setattr(decoder, "get_filter_bank", lambda: [(coefficients, np.ones(1))])

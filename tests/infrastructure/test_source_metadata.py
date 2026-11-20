@@ -1,4 +1,5 @@
 """Source metadata stays opaque text; processing receives a typed description."""
+from pathlib import Path
 from copy import deepcopy
 from dataclasses import replace
 from omnibci.domain.ports.acquisition import SourceObservation
@@ -331,7 +332,7 @@ async def test_disconnect_clears_metadata_and_reconnect_invalidates_old_receipt(
 @pytest.mark.asyncio
 async def test_scan45_metadata_reports_unsupported_query_separately_from_configured_output():
     from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import Scan45DataReader
-    source = Scan45DataReader(parameters={"sample_rate": 250, "channel_count": 3})
+    source = Scan45DataReader(parameters={'sample_rate': 250, 'channel_count': 3}, resource_root=Path(__file__).parent)
     source.request_basic_info = AsyncMock(side_effect=AssertionError("must not read unimplemented header"))
     source._is_connected = True
     metadata = await source.observe()

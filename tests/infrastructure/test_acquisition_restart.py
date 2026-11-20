@@ -1,5 +1,6 @@
 """A new file read cannot reuse queued samples or epochs from its previous read."""
 
+from pathlib import Path
 import asyncio
 from queue import Queue
 from threading import Event as ThreadEvent
@@ -21,7 +22,7 @@ from tests.infrastructure.test_stream_drain import _Decoder, _processor
 @pytest.mark.parametrize("reconnect", [False, True])
 async def test_eof_boundary_separates_reads_without_waiting_for_processing(reconnect, monkeypatch):
     raw = np.array([[10, 11, 12, 13], [1, 0, 0, 0]])
-    source = FileReader(parameters={"data_file_path": "test.cnt", "file_reader_chunk_size": 2})
+    source = FileReader(parameters={'data_file_path': 'test.cnt', 'file_reader_chunk_size': 2}, resource_root=Path(__file__).parent)
 
     async def read_chunk(*, start, end):
         return raw[:, start:end] if start < raw.shape[1] else None

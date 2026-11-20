@@ -10,6 +10,8 @@ Covers:
 """
 from __future__ import annotations
 
+from pathlib import Path
+from tests.processing_helpers import prepared_signal
 import numpy as np
 import pytest
 
@@ -213,7 +215,7 @@ class TestBaselineCorrectionFilter:
         from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import (
             BaselineCorrection,
         )
-        return BaselineCorrection()
+        return BaselineCorrection(resource_root=Path(__file__).parent, parameters={}, input_signal=prepared_signal(250))
 
     def test_subtracts_per_channel_baseline_mean(self):
         flt = self._filter()
@@ -252,7 +254,7 @@ class TestBaselineCorrectionInPipeline:
         from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import (
             BaselineCorrection,
         )
-        return BaselineCorrection()
+        return BaselineCorrection(resource_root=Path(__file__).parent, parameters={}, input_signal=prepared_signal(250))
 
 
 if __name__ == "__main__":

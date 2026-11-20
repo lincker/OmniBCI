@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from collections.abc import Mapping
 import asyncio
+import math
 import errno
 import json
 import logging
@@ -18,7 +21,6 @@ import numpy as np
 
 from omnibci.domain.ports.acquisition import SignalSource, SourceObservation
 from omnibci.infrastructure.acquisition.metadata import signal_info
-from omnibci.sdk import PluginContext, PluginParameters
 
 logger = logging.getLogger(__name__)
 
@@ -171,23 +173,17 @@ class Curry8DataReader(SignalSource):
     SUPPORTED_PROTOCOL_VERSIONS = frozenset((802, 803))
 
     def __init__(
-        self,
-        host: str | None = None,
-        port: int | None = None,
-        timeout: float = 5.0,
-        *,
-        parameters: PluginParameters,
-        context: PluginContext | None = None,
+        self, *, parameters: Mapping[str, object], resource_root: Path,
     ) -> None:
         super().__init__()
         self._is_connected = False
         self._is_streaming = False
-        self.data_provider_ip = host or parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
+        self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
         self.data_provider_port = int(
-            port if port is not None
-            else parameters.get("DATA_PROVIDER_PORT", self.DEFAULT_PORT)
+            parameters.get("DATA_PROVIDER_PORT", self.DEFAULT_PORT)
         )
-        if timeout <= 0:
+        timeout = parameters.get("timeout", 5.0)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive")
         self.timeout = timeout
         self.reader: asyncio.StreamReader | None = None

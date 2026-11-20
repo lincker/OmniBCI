@@ -1,8 +1,9 @@
 # Write a Decoder plugin
 
 This guide is a historical API 2 snapshot and is not current developer guidance.
-S1c has changed processing methods; constructor/manifest changes remain scheduled
-for S1f. The developer guide is deferred until the coordinated refactor. Use
+S1c has changed processing methods and the first S1f batch replaces constructors
+and API selection. Remaining declarations and the developer guide are deferred
+until the coordinated refactor is complete. Use
 the [canonical plugin terminology](plugin-marketplace-design.md#31-canonical-plugin-terminology):
 install a Plugin Package, configure its decoder Contribution, and let Processing
 Host construct and run the decoder Instance.

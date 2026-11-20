@@ -3,13 +3,13 @@
 # @File     : data_source.py
 # @Author   : lincker
 # @Date     : 2025-04-17 07:05
+from collections.abc import Mapping
 import asyncio
 from copy import deepcopy
 from pathlib import Path
 
 from omnibci.infrastructure.config_paths import resolve_config_path
 from omnibci.domain.ports.acquisition import SignalSource, SourceObservation, SourceCheckpoint
-from omnibci.sdk import PluginContext, PluginParameters
 
 
 class FileReader(SignalSource):
@@ -18,9 +18,8 @@ class FileReader(SignalSource):
     resume_mode = 'checkpoint'
 
     def __init__(
-        self, *, parameters: PluginParameters,
-        context: PluginContext | None = None,
-    ):
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+    ) -> None:
         super().__init__()
         self.reader_adapter = None
         self._is_streaming = False

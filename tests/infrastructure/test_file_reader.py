@@ -1,6 +1,7 @@
 """Unit tests for FileReader lifecycle."""
 from __future__ import annotations
 
+from pathlib import Path
 import asyncio
 
 import mne
@@ -47,13 +48,13 @@ class _FakeAdapter:
 
 class TestFileReaderLifecycle:
     def _reader(self, chunk_size: int = 100) -> FileReader:
-        r = FileReader(parameters={"data_file_path": "sample.cnt"})
+        r = FileReader(parameters={'data_file_path': 'sample.cnt'}, resource_root=Path(__file__).parent)
         r.reader_adapter = _FakeAdapter()
         r._chunk_size = chunk_size
         return r
 
     def test_initial_flags(self):
-        r = FileReader(parameters={"data_file_path": "sample.cnt"})
+        r = FileReader(parameters={'data_file_path': 'sample.cnt'}, resource_root=Path(__file__).parent)
         assert r.reader_adapter is None
         assert r._is_streaming is False
         assert r.file_pointer == 0
@@ -67,7 +68,7 @@ class TestFileReaderLifecycle:
         file_path = tmp_path / "sample.cnt"
         file_path.touch()
 
-        r = FileReader(parameters={"data_file_path": str(file_path)})
+        r = FileReader(parameters={'data_file_path': str(file_path)}, resource_root=Path(__file__).parent)
         r.set_file_path(str(file_path))
 
         assert _run(r.connect()) is None
@@ -83,7 +84,7 @@ class TestFileReaderLifecycle:
         assert r._is_streaming is True
 
     def test_start_stream_requires_adapter(self):
-        r = FileReader(parameters={"data_file_path": "sample.cnt"})
+        r = FileReader(parameters={'data_file_path': 'sample.cnt'}, resource_root=Path(__file__).parent)
         r.reader_adapter = None
         with pytest.raises(ValueError):
             _run(r.start_stream())

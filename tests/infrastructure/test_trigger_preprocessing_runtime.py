@@ -1,5 +1,6 @@
 """Trigger preprocessing belongs to the source stream, before delivery and preview."""
 
+from pathlib import Path
 import asyncio
 import logging
 import pickle
@@ -153,7 +154,7 @@ async def test_a_new_stream_keeps_its_first_nonzero_trigger(restart):
 async def test_discrete_file_events_and_cached_views_survive_replay_unchanged():
     original = samples([7, 7, 8, 8, 0, 7])
     snapshot = original.copy()
-    source = FileReader(parameters={"data_file_path": "events.cnt", "file_reader_chunk_size": 2})
+    source = FileReader(parameters={'data_file_path': 'events.cnt', 'file_reader_chunk_size': 2}, resource_root=Path(__file__).parent)
 
     async def read_chunk(*, start, end):
         return original[:, start:end] if start < original.shape[1] else None

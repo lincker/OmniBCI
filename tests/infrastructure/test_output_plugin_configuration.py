@@ -87,18 +87,19 @@ def test_selected_trigger_loading_errors_are_not_replaced_by_empty_output(monkey
         Stimulator(settings_snapshot=snapshot)._load_trigger()
 
 
-def test_selected_effector_keeps_revision_and_ignores_legacy_alias():
+def test_selected_effector_keeps_host_revision_private_and_ignores_legacy_alias():
     snapshot = {"PLUGINS.bindings": [binding("actuation.effector", "effector", "logger")],
                 "CONFIG.module_revisions": {"actuation": "selected-revision"}, "ACTUATION.effector": "wrong-alias"}
     actuator = Actuator(settings_snapshot=snapshot)
     actuator.setup()
-    assert actuator.effector.module_revision == "selected-revision"
+    assert not hasattr(actuator.effector, "module_revision")
+    assert actuator._settings_snapshot["CONFIG.module_revisions"]["actuation"] == "selected-revision"
     actuator.execute({"target_id": 1})
     actuator.teardown()
     assert actuator.effector is None
 
 
-def test_trigger_context_uses_consuming_stimulation_revision():
+def test_trigger_constructor_does_not_receive_host_revision():
     from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
 
     selected = binding("stimulation.trigger", "trigger", "neuroscan_scan45_trigger")
@@ -110,4 +111,4 @@ def test_trigger_context_uses_consuming_stimulation_revision():
     load_configured_plugin({"PLUGINS.bindings": [selected], "CONFIG.module_revisions": {
         "acquisition": "source-revision", "stimulation": "stimulation-revision",
     }}, "stimulation.trigger", "trigger", TriggerEmitter, catalog=catalog, loader=loader)
-    assert loader.instantiate.call_args.kwargs["context"].module_revision == "stimulation-revision"
+    assert set(loader.instantiate.call_args.kwargs) == {"parameters"}

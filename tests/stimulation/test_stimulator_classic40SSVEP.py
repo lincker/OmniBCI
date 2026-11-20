@@ -9,7 +9,7 @@ All OpenGL / filesystem dependencies are mocked:
 """
 from __future__ import annotations
 
-from contextlib import nullcontext
+from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import numpy as np
@@ -66,7 +66,7 @@ def renderer():
 
 @pytest.fixture()
 def paradigm(trigger):
-    return Classic40SSVEP_2()
+    return Classic40SSVEP_2(resource_root=Path(__file__).parent, parameters={})
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +74,7 @@ def _mock_frame_pack():
     """Provide small frames without opening the bundled frame pack."""
     with patch(
         "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep._frame_pack_path",
-        side_effect=lambda: nullcontext("classic40_ssvep.ofp"),
+        side_effect=lambda root: "classic40_ssvep.ofp",
     ), patch(
         "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep.FramePack",
         autospec=True,

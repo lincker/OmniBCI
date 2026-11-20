@@ -9,14 +9,15 @@ once per VSync.  Trial control methods (``trial_stimulus_present``,
 """
 from __future__ import annotations
 
+from pathlib import Path
+from collections.abc import Mapping
 import logging
 import string
 import threading
 from enum import Enum, auto
-from importlib import resources
 
 from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.sdk import PluginContext, PluginParameters, Rect, RenderSurface, TextureHandle, TriggerOutput
+from omnibci.sdk import Rect, RenderSurface, TextureHandle, TriggerOutput
 from .feedback_display import FeedbackDisplay
 from .frame_pack import FramePack
 
@@ -38,11 +39,11 @@ _CUE_FRAMES    = 60   # ~1 s at 60 Hz
 _RESULT_FRAMES = 90   # ~1.5 s feedback display
 
 
-def _frame_pack_path():
-    pack = resources.files(__package__).joinpath("resource").joinpath(_PACK_NAME)
+def _frame_pack_path(resource_root: Path) -> Path:
+    pack = resource_root / "resource" / _PACK_NAME
     if not pack.is_file():
         raise FileNotFoundError(f"Missing classic40SSVEP frame pack: {_PACK_NAME}")
-    return resources.as_file(pack)
+    return pack
 
 
 def _center_rect(cx_px: int, cy_px: int, w_px: int, h_px: int) -> Rect:
@@ -76,8 +77,10 @@ class _State(Enum):
 class Classic40SSVEP_2(Paradigm):
     plugin_type = 'STIMULATION_THUBCI_SSVEP_classic40'
 
-    def __init__(self, *, parameters: PluginParameters | None = None,
-                 context: PluginContext | None = None):
+    def __init__(
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+    ) -> None:
+        self._resource_root = resource_root
         self.trigger: TriggerOutput | None = None
         self._renderer: RenderSurface | None = None
 
@@ -111,7 +114,7 @@ class Classic40SSVEP_2(Paradigm):
         self._renderer = renderer
         self.trigger = trigger
 
-        with _frame_pack_path() as pack_path, FramePack(pack_path) as pack:
+        with FramePack(_frame_pack_path(self._resource_root)) as pack:
             self._init_tex = renderer.upload_texture(pack.idle_frame)
             for frame in pack.iter_stimulation_frames():
                 self._stim_textures.append(renderer.upload_texture(frame))

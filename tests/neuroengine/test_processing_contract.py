@@ -1,4 +1,6 @@
 """Batch boundaries and borrowed arrays are checked before plugin effects escape."""
+from pathlib import Path
+from tests.processing_helpers import prepared_signal
 from types import SimpleNamespace
 
 import numpy as np
@@ -44,7 +46,7 @@ def boundary(offset=0, kind="start", event_id=7):
 
 def test_default_detector_returns_every_nonzero_marker_without_host_metadata():
     raw = np.array([[10., 11., 12., 13.], [7., 0., 9., 9.]])
-    detector = DefaultEpochDetector()
+    detector = DefaultEpochDetector(resource_root=Path(__file__).parent, parameters={}, input_signal=prepared_signal(250))
     result = detector.detect(raw)
     assert [(b.offset, b.kind, b.event_id) for b in result] == [(0, "start", 7), (2, "start", 9), (3, "start", 9)]
     assert detector.detect(raw[:, 1:2]) == ()

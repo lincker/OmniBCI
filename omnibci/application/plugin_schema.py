@@ -6,6 +6,7 @@ coerces parameter types. Supported keywords and constraints are defined below.
 from __future__ import annotations
 
 import math
+import json
 from typing import Any
 
 
@@ -15,6 +16,7 @@ class PluginSchemaError(ValueError):
 
 _MAX_SCHEMA_DEPTH = 16
 _MAX_JSON_DEPTH = 64
+_MAX_PARAMETER_BYTES = 1024 * 1024
 _COMMON = {"type", "title", "description", "default", "enum", "x-scope", "x-apply", "x-widget"}
 _KEYWORDS = {
     "object": {"properties", "required", "additionalProperties"},
@@ -187,12 +189,20 @@ def validate_schema(schema: dict) -> dict:
     return result
 
 
-def validate_parameters(schema: dict, parameters: dict, *, apply_defaults: bool = True) -> dict:
+def validate_parameters(schema: dict | None, parameters: dict, *, apply_defaults: bool = True) -> dict:
     """Return independent parameters, with explicit defaults optionally applied.
 
     Optional objects without their own default are left absent. Nested defaults
     are applied only when that object is present or has an explicit default.
+    Without a schema, only the JSON object contract is enforced. The resulting
+    object, including defaults, is limited to 1 MiB of encoded JSON.
     """
-    validated_schema = validate_schema(schema)
     values = _copy_json(parameters, "$")
-    return _validate_value(validated_schema, values, "$", apply_defaults=apply_defaults)
+    if not isinstance(values, dict):
+        _fail("$", "parameters must be an object")
+    if schema is not None:
+        validated_schema = validate_schema(schema)
+        values = _validate_value(validated_schema, values, "$", apply_defaults=apply_defaults)
+    if len(json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > _MAX_PARAMETER_BYTES:
+        _fail("$", "parameters exceed 1 MiB")
+    return values

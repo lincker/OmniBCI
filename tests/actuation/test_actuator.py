@@ -92,7 +92,7 @@ class TestLifecycle:
                 publisher = "alice"
                 version = "1.0.0"
                 domain = "actuation"
-                api_version = "2"
+                api_version = "1"
                 [[contributions]]
                 id = "default"
                 kind = "effector"
@@ -115,7 +115,7 @@ class TestLifecycle:
                 class UserDevice(Effector):
                     plugin_type = "user_device"
 
-                    def __init__(self, *, parameters, context):
+                    def __init__(self, *, parameters, resource_root):
                         self.calls = []
 
                     def setup(self):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import asyncio
 import json
 import struct
@@ -166,7 +167,7 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    driver = Curry8DataReader(host="127.0.0.1", port=port, timeout=1.0, parameters={})
+    driver = Curry8DataReader(parameters={'DATA_PROVIDER_IP': '127.0.0.1', 'DATA_PROVIDER_PORT': port, 'timeout': 1.0}, resource_root=Path(__file__).parent)
 
     try:
         assert await driver.connect() is None
@@ -235,7 +236,7 @@ def test_header_uses_the_20_byte_network_order_layout():
 async def test_single_data_packet_extracts_low_byte_triggers_without_waiting_for_next_block(
     protocol_version, data_size, dtype, raw_events,
 ):
-    driver = Curry8DataReader(host="127.0.0.1", port=4455, parameters={})
+    driver = Curry8DataReader(parameters={'DATA_PROVIDER_IP': '127.0.0.1', 'DATA_PROVIDER_PORT': 4455}, resource_root=Path(__file__).parent)
     driver._is_connected = driver._is_streaming = True
     driver._metadata = Curry8Metadata(
         protocol_version=protocol_version,
@@ -265,7 +266,7 @@ async def test_single_data_packet_extracts_low_byte_triggers_without_waiting_for
 
 @pytest.mark.asyncio
 async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separate():
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver._is_connected = True
     driver._protocol_version = 803
     driver._request_info = AsyncMock(side_effect=[
@@ -305,7 +306,7 @@ async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separa
 
 @pytest.mark.asyncio
 async def test_failed_observation_clears_previous_device_metadata():
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver._is_connected = True
     driver._protocol_version = 803
     driver._request_info = AsyncMock(side_effect=[
@@ -326,7 +327,7 @@ async def test_failed_observation_clears_previous_device_metadata():
 
 @pytest.mark.asyncio
 async def test_metadata_without_a_streaming_cache_never_reads_the_stream_socket():
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver._is_connected = driver._is_streaming = True
     driver._request_info = AsyncMock()
 
@@ -338,7 +339,7 @@ async def test_metadata_without_a_streaming_cache_never_reads_the_stream_socket(
 
 @pytest.mark.asyncio
 async def test_stopped_metadata_skips_queued_stream_packets():
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver._is_connected = driver._is_streaming = True
     driver._protocol_version = 803
     driver.reader = asyncio.StreamReader()
@@ -363,7 +364,7 @@ async def test_stopped_metadata_skips_queued_stream_packets():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code,message", [(99, "Unexpected packet"), (DataCode.EEG, "Timed out")])
 async def test_stopped_metadata_rejects_unexpected_or_missing_reply(code, message):
-    driver = Curry8DataReader(parameters={}, timeout=0.01)
+    driver = Curry8DataReader(parameters={'timeout': 0.01}, resource_root=Path(__file__).parent)
     driver._is_connected = True
     driver.reader = asyncio.StreamReader()
     driver.writer = MagicMock(drain=AsyncMock())

@@ -1,80 +1,21 @@
-"""Stable public contracts for OmniBCI plugins.
+"""Canonical public contracts for OmniBCI Plugin API v1.
 
-Plugins accept keyword constructor inputs ``parameters: PluginParameters``
-and ``context: PluginContext``. The host validates and copies the JSON-compatible
-parameter mapping before construction. Plugins should keep runtime state separate
-from those inputs.
-
-The context contains host-provided metadata only; devices, renderers and services
-are supplied through their existing lifecycle contracts, never serialized here.
+Constructors receive keyword-only parameters and their own resource_root.
+Processing roles also require the actual mapped input_signal. Runtime capabilities
+arrive through role lifecycle methods; host identities and services stay private.
 """
-from __future__ import annotations
-
-from collections.abc import Mapping
-from dataclasses import dataclass
-from math import isfinite
-from typing import Any
-
-from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter, TriggerOutput
-from omnibci.domain.ports.algorithm import (
-    Decoder,
-    EpochDetector,
-    Filter,
-    EpochBoundary,
-    Prediction,
+from omnibci.domain.ports.acquisition import (
+    SignalSource, SourceCheckpoint, SourceObservation, TriggerEmitter, TriggerOutput,
 )
+from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, EpochBoundary, Prediction
 from omnibci.domain.ports.effector import Effector
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.domain.ports.renderer import Color, Rect, RenderSurface, TextureHandle
-from omnibci.domain.signal import SignalChunk
-from omnibci.domain.signal_info import SignalInfo
-
-
-PluginParameters = Mapping[str, Any]
-
-@dataclass(frozen=True, slots=True)
-class PluginContext:
-    """Immutable metadata that can cross a multiprocessing spawn boundary.
-
-    ``sample_rate`` describes the acquired signal and can be absent before a
-    source connects. ``module_revision`` identifies the module that loaded the plugin.
-    ``resource_root`` is the trusted asset directory of the selected package,
-    supplied as an absolute string path by the host; no filesystem access occurs
-    while creating this context.
-
-    ``acquired_signal`` describes normalized acquisition rows. ``input_signal``
-    describes the channel IDs, names, types and units supplied to this processing
-    plugin after channel selection and ordering. Their ``channels`` exclude the
-    event/trigger row. These values are supplied when Processing prepares its
-    input; acquisition and output plugins can run without prepared signal metadata.
-    """
-
-    sample_rate: float | None = None
-    module_revision: str | None = None
-    resource_root: str | None = None
-    acquired_signal: SignalInfo | None = None
-    input_signal: SignalInfo | None = None
-
-    def __post_init__(self) -> None:
-        for field in ("acquired_signal", "input_signal"):
-            value = getattr(self, field)
-            if value is not None and not isinstance(value, SignalInfo):
-                raise ValueError(f"{field} must be SignalInfo or None")
-        if self.sample_rate is not None and (
-            isinstance(self.sample_rate, bool)
-            or not isinstance(self.sample_rate, (int, float))
-            or not isfinite(self.sample_rate)
-            or self.sample_rate <= 0
-        ):
-            raise ValueError("sample_rate must be a positive finite number")
-        for field in ("module_revision", "resource_root"):
-            value = getattr(self, field)
-            if value is not None and (not isinstance(value, str) or not value.strip()):
-                raise ValueError(f"{field} must be a non-empty string or None")
-
+from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 
 __all__ = [
     "Color", "Decoder", "Effector", "EpochDetector", "Filter", "EpochBoundary",
-    "Paradigm", "PluginContext", "PluginParameters", "Prediction", "Rect",
-    "RenderSurface", "SignalChunk", "SignalSource", "SignalInfo", "TextureHandle", "TriggerEmitter", "TriggerOutput",
+    "Paradigm", "Prediction", "Rect", "RenderSurface", "SignalSource", "SignalInfo",
+    "ChannelDescriptor", "SourceObservation", "SourceCheckpoint", "TextureHandle",
+    "TriggerEmitter", "TriggerOutput",
 ]

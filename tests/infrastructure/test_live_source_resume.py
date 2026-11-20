@@ -1,6 +1,7 @@
 """Live packet framing survives a cancelled read without losing its header."""
 import asyncio
 import struct
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -41,7 +42,7 @@ def stream_writer():
 def test_resume_completes_interrupted_body_before_reading_next_header(protocol, partial_body_size, restart_stream):
     async def scenario():
         source_type, method, make_header = protocol
-        source = source_type(parameters={})
+        source = source_type(parameters={}, resource_root=Path(__file__).parent)
         source.reader = asyncio.StreamReader()
         read = getattr(source, method)
         first_body, next_body = bytes(40), bytes([17]) * 20
@@ -70,7 +71,7 @@ def test_resume_completes_interrupted_body_before_reading_next_header(protocol, 
 def test_new_connection_clears_pending_packet(protocol, monkeypatch):
     async def scenario():
         source_type, method, make_header = protocol
-        source = source_type(parameters={})
+        source = source_type(parameters={}, resource_root=Path(__file__).parent)
         source.reader = asyncio.StreamReader()
         read = getattr(source, method)
         source.reader.feed_data(make_header(40).to_bytes())
@@ -95,7 +96,7 @@ def test_new_connection_clears_pending_packet(protocol, monkeypatch):
 def test_disconnect_closes_writer_and_discards_pending_header(protocol):
     async def scenario():
         source_type, method, make_header = protocol
-        source = source_type(parameters={})
+        source = source_type(parameters={}, resource_root=Path(__file__).parent)
         source.reader = asyncio.StreamReader()
         source.writer = writer = stream_writer()
         source._is_connected = True
@@ -114,7 +115,7 @@ def test_disconnect_closes_writer_and_discards_pending_header(protocol):
 def test_replaced_connection_does_not_reuse_interrupted_header(protocol):
     async def scenario():
         source_type, method, make_header = protocol
-        source = source_type(parameters={})
+        source = source_type(parameters={}, resource_root=Path(__file__).parent)
         source.reader = asyncio.StreamReader()
         read = getattr(source, method)
         source.reader.feed_data(make_header(40).to_bytes())

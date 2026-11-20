@@ -39,7 +39,7 @@ _NOW = datetime(2026, 9, 23, 12, tzinfo=UTC)
 def _package_bytes(*, publisher="acme", version="1.0.0"):
     manifest = {
         "manifest_version": 2,
-        "package": {"id": "device", "publisher": publisher, "version": version, "api_version": "2", "domain": "acquisition"},
+        "package": {"id": "device", "publisher": publisher, "version": version, "api_version": "1", "domain": "acquisition"},
         "contributions": [{"id": "reader", "kind": "acquisition", "entrypoint": "driver:Reader"}],
     }
     buffer = io.BytesIO()
@@ -60,7 +60,7 @@ def _index(archive):
             "description": "Controlled test package.", "download": "packages/device-1.0.0.zip",
             "sha256": hashlib.sha256(archive).hexdigest(), "size": len(archive),
             "contributions": [{"id": "reader", "kind": "acquisition"}],
-            "api_version": "2", "domain": "acquisition", "platforms": ["linux", "darwin", "win32"],
+            "api_version": "1", "domain": "acquisition", "platforms": ["linux", "darwin", "win32"],
             "host_version": "1.0.0", "requires": {},
         }],
     }
@@ -129,7 +129,7 @@ def test_listing_verifies_real_ed25519_signature_without_downloading_or_installi
     assert package.contributions[0].selection.package_id == "acme.device"
     assert package.contributions[0].selection.contribution_id == "reader"
     assert package.contributions[0].kind == "acquisition"
-    assert package.api_version == "2"
+    assert package.api_version == "1"
     assert package.host_version == "1.0.0"
     assert [request[0] for request in opener.requests] == [_URL]
     assert not client.cache_dir.exists()

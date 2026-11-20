@@ -1,4 +1,5 @@
 """File playback resumes exactly at the next sample delivered by acquisition."""
+from pathlib import Path
 import asyncio
 import os
 from copy import deepcopy
@@ -38,9 +39,7 @@ def reader_factory(tmp_path, monkeypatch):
     path.write_bytes(b"sample-file")
 
     def create(file_path=path):
-        return FileReader(parameters={
-            "data_file_path": str(file_path), "file_reader_chunk_size": 4,
-        })
+        return FileReader(parameters={'data_file_path': str(file_path), 'file_reader_chunk_size': 4}, resource_root=Path(__file__).parent)
 
     return create
 

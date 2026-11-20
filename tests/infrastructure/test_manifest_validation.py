@@ -14,7 +14,7 @@ def package(root):
     (root / 'manifest.toml').write_text(tomlkit.dumps({
         'manifest_version': 2,
         'package': {'id': 'device', 'publisher': 'test', 'version': '1.0.0',
-                    'api_version': '2', 'domain': 'acquisition'},
+                    'api_version': '1', 'domain': 'acquisition'},
         'contributions': [
             {'id': 'source', 'kind': 'acquisition', 'entrypoint': 'driver:Source'},
             {'id': 'output', 'kind': 'trigger', 'entrypoint': 'driver:Output',

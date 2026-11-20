@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-05-27 15:53
+from pathlib import Path
+from collections.abc import Mapping
 import asyncio
 import sys
 import time
@@ -11,7 +13,6 @@ import numpy as np
 
 from omnibci.domain.ports.acquisition import SignalSource, SourceObservation, TriggerEmitter
 from omnibci.infrastructure.acquisition.metadata import signal_info
-from omnibci.sdk import PluginContext, PluginParameters
 
 
 class Scan45Message:
@@ -118,8 +119,7 @@ class Scan45DataReader(SignalSource):
     trigger_mode = 'level'
     resume_mode = 'live-current'
     def __init__(
-        self, *, parameters: PluginParameters,
-        context: PluginContext | None = None,
+        self, *, parameters: Mapping[str, object], resource_root: Path,
     ) -> None:
         super().__init__()
         self._is_connected = False
@@ -127,7 +127,7 @@ class Scan45DataReader(SignalSource):
         self.data_provider_ip = parameters.get("DATA_PROVIDER_IP", "127.0.0.1")
         self.data_provider_port = parameters.get("DATA_PROVIDER_PORT", 4000)
         self.channel_count = parameters.get("channel_count", 10)
-        self._sample_rate = parameters.get("sample_rate", context.sample_rate if context else None)
+        self._sample_rate = parameters.get("sample_rate")
         if type(self.channel_count) is not int or self.channel_count < 2:
             raise ValueError("channel_count must be an integer >= 2, including the event channel")
         self.reader = None
@@ -269,12 +269,9 @@ class Scan45Trigger(TriggerEmitter):
     plugin_type = 'neuroscan_scan45_trigger'
 
     def __init__(
-        self, parallel_port_address: str | None = None, *,
-        parameters: PluginParameters,
-        context: PluginContext | None = None,
-    ):
-        self.parallel_port_address = (parallel_port_address if parallel_port_address is not None
-                                      else parameters.get('parallel_port_address', '0x3100'))
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+    ) -> None:
+        self.parallel_port_address = parameters.get('parallel_port_address', '0x3100')
         self.address = int(self.parallel_port_address, 16)
         self.port = None
 

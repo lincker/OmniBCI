@@ -3,9 +3,7 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-28 05:58
 import hashlib
-import json
 import sys
-from dataclasses import replace
 from importlib.machinery import ModuleSpec, NamespaceLoader, PathFinder
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -14,7 +12,7 @@ from typing import Type, TypeVar
 
 from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
-from omnibci.sdk import PluginContext
+from omnibci.domain.signal_info import SignalInfo
 
 T = TypeVar("T")
 
@@ -227,26 +225,25 @@ class PluginLoader:
         prefix = cls._module_prefix(descriptor)
         modules_before = set(sys.modules)
         try:
-            if descriptor.api_version != "2":
+            if descriptor.api_version != "1":
                 raise ValueError(f"Unsupported plugin API: {descriptor.api_version}")
-            if set(kwargs) != {"parameters", "context"}:
-                raise ValueError("API 2 requires parameters and context keyword inputs")
-            if not isinstance(kwargs["parameters"], dict):
-                raise ValueError("parameters must be an object")
-            if not isinstance(kwargs["context"], PluginContext):
-                raise ValueError("context must be a PluginContext")
-            # JSON roundtrip prevents plugin mutations from reaching host state
-            # and rejects non-finite or non-serializable constructor values.
-            if descriptor.configuration_schema is not None:
-                kwargs["parameters"] = validate_parameters(
-                    dict(descriptor.configuration_schema), kwargs["parameters"],
-                )
-            kwargs = {
-                "parameters": json.loads(json.dumps(kwargs["parameters"], allow_nan=False)),
-                "context": replace(kwargs["context"], resource_root=str(descriptor.location)),
+            processing = descriptor.category in {"filter", "decoder", "epoch_detector"}
+            required = {"parameters", "input_signal"} if processing else {"parameters"}
+            if set(kwargs) != required:
+                raise ValueError(f"API 1 {descriptor.category} requires {sorted(required)} keyword inputs")
+            if processing and not isinstance(kwargs["input_signal"], SignalInfo):
+                raise ValueError("Processing requires prepared input_signal")
+            arguments = {
+                "parameters": validate_parameters(
+                    dict(descriptor.configuration_schema) if descriptor.configuration_schema is not None else None,
+                    kwargs["parameters"],
+                ),
+                "resource_root": descriptor.location,
             }
+            if processing:
+                arguments["input_signal"] = kwargs["input_signal"]
             plugin_class = cls.load_entrypoint(descriptor, expected_base)
-            return plugin_class(**kwargs)
+            return plugin_class(**arguments)
         except BaseException as exc:
             cls._cleanup_modules(prefix, modules_before)
             if not isinstance(exc, Exception):

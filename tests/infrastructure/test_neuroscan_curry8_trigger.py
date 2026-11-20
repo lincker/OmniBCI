@@ -1,5 +1,6 @@
 """CURRY 8 TTL output through a simulated InpOut driver; no hardware required."""
 
+from pathlib import Path
 import ctypes
 import sys
 from unittest.mock import Mock, call
@@ -16,7 +17,7 @@ from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 
 def prepared(*, parameters):
-    output = trigger.Curry8Trigger(parameters=parameters)
+    output = trigger.Curry8Trigger(parameters=parameters, resource_root=Path(__file__).parent)
     output.setup()
     output.clear()
     return output
@@ -167,8 +168,7 @@ def test_stimulator_loads_exact_curry_trigger_and_free_run_keeps_zero(driver, ad
     pack.iter_stimulation_frames.return_value = iter(())
     pack.iter_cue_frames.return_value = iter(())
     pack.iter_result_frames.return_value = iter(())
-    from contextlib import nullcontext
-    monkeypatch.setattr(module, "_frame_pack_path", lambda: nullcontext("fake.ofp"))
+    monkeypatch.setattr(module, "_frame_pack_path", lambda root: "fake.ofp")
     monkeypatch.setattr(module, "FramePack", lambda path: pack)
     paradigm.setup(renderer=Mock(), trigger=output)
     driver.Out32.reset_mock()
