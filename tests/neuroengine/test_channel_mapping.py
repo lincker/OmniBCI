@@ -1,5 +1,5 @@
 """Prepared channel mapping reaches every processing consumer before buffering."""
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 from copy import deepcopy
 from dataclasses import replace
 from unittest.mock import MagicMock
@@ -452,6 +452,7 @@ def test_trial_pipeline_replacement_receives_current_transformed_context(monkeyp
     after = deepcopy(before)
     after["CONFIG.module_revisions"]["processing"] = "revision-two"
     after["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 1.5
+    after = prepared_snapshot(after)
     load = MagicMock(return_value=_Decoder())
     monkeypatch.setattr(pipeline_configuration, "load_configured_plugin", load)
     pipeline_configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.008, signal_plan=plan)
@@ -469,6 +470,7 @@ def test_processing_update_preserves_source_identity_and_reprepare_buffers(monke
     after = deepcopy(processor._settings_snapshot)
     after["CONFIG.module_revisions"]["processing"] = "revision-two"
     after["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 1.5
+    after = prepared_snapshot(after)
     monkeypatch.setattr(pipeline_configuration, "load_configured_plugin", MagicMock(return_value=_Decoder()))
     processor._stage_configuration(CommandRequest("trial-update", {
         "settings_snapshot": after, "expected_revision": "revision-one",
@@ -490,7 +492,7 @@ def test_processing_update_preserves_source_identity_and_reprepare_buffers(monke
 
 def test_bundled_pipeline_constructs_with_prepared_sample_rate():
     plan = _plan()
-    snapshot = {**_snapshot(plan), "PLUGINS.bindings": _bindings()}
+    snapshot = prepared_snapshot({**_snapshot(plan), "PLUGINS.bindings": _bindings()})
     decoder, detector, filters = signal_configuration.load_signal_pipeline(snapshot, plan)
     assert decoder.SAMPLE_COUNT == 250
     assert detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"

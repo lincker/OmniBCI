@@ -216,7 +216,8 @@ async def test_module_must_still_be_alive_when_its_readiness_completes():
 def prepared_input_decoder(tmp_path, monkeypatch):
     """A real decoder whose constructor requires prepared source information."""
     plugin_dir = tmp_path / "plugins"
-    package = plugin_dir / "algorithms" / "decoders" / "readiness"
+    package = tmp_path / "source-readiness"
+    marker = tmp_path / "constructed"
     package.mkdir(parents=True)
     (package / "manifest.toml").write_text(dedent('''
         manifest_version = 2
@@ -239,7 +240,7 @@ domain = "processing"
     (package / "default.schema.json").write_text(
         '{"type":"object","properties":{},"additionalProperties":false}', encoding="utf-8",
     )
-    (package / "decoder.py").write_text(dedent('''
+    (package / "decoder.py").write_text(dedent(f'''
         from pathlib import Path
         from omnibci.sdk import Decoder
 
@@ -254,7 +255,7 @@ domain = "processing"
                 if input_signal is None:
                     raise ValueError("ReadinessDecoder requires prepared input")
                 self.sample_rate = input_signal.sample_rate
-                Path(resource_root, "constructed").write_text("ready", encoding="utf-8")
+                Path({str(marker)!r}).write_text("ready", encoding="utf-8")
 
             def should_decode(self, window):
                 return False
@@ -263,14 +264,16 @@ domain = "processing"
                 return None
     '''), encoding="utf-8")
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_dir))
-    return "readiness_decoder", package / "constructed"
+    from tests.plugin_configuration_helpers import install_package_root
+    install_package_root(package)
+    return "readiness_decoder", marker
 
 
 def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
-    from dataclasses import replace
     from omnibci.application.configuration.models import ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
     from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+    from tests.plugin_configuration_helpers import prepared_snapshot
     snapshot = {"CONFIG.module_revisions": {"acquisition": "r", "processing": "r", "stimulation": "r", "actuation": "r"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "g", "ACQUISITION.sample_rate": 250,
                 "ACQUISITION.signal_source": "file_reader"}
     bindings = []
@@ -282,11 +285,13 @@ def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
     ):
         descriptor = PluginCatalog().resolve_selection(kind, builtin_selection(kind, alias))
         selection = descriptor.selection
-        if kind == broken_kind:
-            selection = replace(selection, package_id="missing-plugin")
         bindings.append(ProfileBinding(slot, kind, None, selection, parameters,
             processing_input=ProcessingInput() if kind == "decoder" else None).to_dict())
     snapshot["PLUGINS.bindings"] = bindings
+    snapshot = prepared_snapshot(snapshot)
+    for binding in snapshot["PLUGINS.bindings"]:
+        if binding["kind"] == broken_kind:
+            binding["selection"]["package_id"] = "missing-plugin"
     return snapshot
 
 

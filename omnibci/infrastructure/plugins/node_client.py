@@ -14,6 +14,8 @@ from omnibci.application.node_configuration import (
     materialize_node_configuration,
 )
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +131,9 @@ def run_configured_node(role: str, application_factory, *, server_url: str) -> N
             time.sleep(_RETRY_DELAY_S)
             continue
 
-        snapshot = materialize_node_configuration(configuration, CatalogConfigurationAdapter())
+        store = ManagedPluginPackageStore()
+        snapshot = materialize_node_configuration(configuration, CatalogConfigurationAdapter(store.catalog))
+        snapshot = PluginArtifactPreparer(store).prepare_snapshot(snapshot, (role,))
         logger.info(
             "Starting %s for modules %s, Engine %s, generation %s",
             role, configuration.module_revisions, configuration.engine_revision, configuration.generation,

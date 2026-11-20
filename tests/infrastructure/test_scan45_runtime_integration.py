@@ -1,6 +1,6 @@
 """Scan45 events survive numeric input aliases and reach direct web results."""
 from pathlib import Path
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 
 import asyncio
 from queue import Queue
@@ -64,6 +64,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
             ).to_dict(),
         ],
     }
+    snapshot = prepared_snapshot(snapshot)
     receipt = {
         "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "engine_revision": "engine",
         "connection_id": "scan45-connection",

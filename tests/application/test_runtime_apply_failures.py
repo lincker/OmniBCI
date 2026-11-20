@@ -37,6 +37,10 @@ class Engine:
         self.starts = []
         self.modules = {"acquisition": True, "processing": True}
 
+    def prepare_plugins(self, snapshot, modules):
+        # This lifecycle fake does not execute plugin code.
+        return deepcopy(snapshot)
+
     def is_module_running(self, module):
         return self.is_engine_ready and self.modules.get(module, False)
 

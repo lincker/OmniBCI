@@ -3,6 +3,7 @@ import json
 from unittest.mock import Mock
 
 import pytest
+from tests.plugin_configuration_helpers import prepared_snapshot
 
 from omnibci.application.commands.stimulation_commands import StartStimTrialCommand
 from omnibci.infrastructure.actuation.actuator import Actuator
@@ -69,9 +70,9 @@ def test_payload_schemas_reuse_bounded_local_schema_validation(tmp_path, path, c
 
 
 def stimulator():
-    owner = Stimulator(settings_snapshot={'PLUGINS.bindings': [
+    owner = Stimulator(settings_snapshot=prepared_snapshot({'PLUGINS.bindings': [
         binding('stimulation.paradigm', 'paradigm', 'STIMULATION_THUBCI_SSVEP_classic40'),
-    ]})
+    ]}))
     owner._load_paradigm()
     owner.paradigm = Mock()
     owner.paradigm.present_trial.return_value = owner.paradigm.present_result.return_value = None
@@ -112,7 +113,7 @@ def test_stimulation_callbacks_must_return_none(method, value):
 @pytest.mark.parametrize('command', [None, {'target_id': True}, {'target_id': 1.5}, {'target_id': 2, 'seq': 9},
                                       {'target_id': 2, 'unknown': 1}])
 def test_effector_schema_rejects_bad_payloads_before_execute(command):
-    owner = Actuator(settings_snapshot={'PLUGINS.bindings': [binding('actuation.effector', 'effector', 'logger')]})
+    owner = Actuator(settings_snapshot=prepared_snapshot({'PLUGINS.bindings': [binding('actuation.effector', 'effector', 'logger')]}))
     owner.setup()
     callback = owner.effector.execute = Mock(return_value=None)
     try:

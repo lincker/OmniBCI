@@ -1,6 +1,6 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes are also implemented and verified; S3a code caching is implemented and verified. S3b static artifact preparation is implemented; host integration and the remaining S3 ownership/S4–S6 work are pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3c code caching/prepared runtime handoff are implemented and verified. Store mutation ownership and S4–S6 remain pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2e are complete and verified (S2e: `cf30c57`).
 
@@ -352,6 +352,18 @@ Two simplifications keep this internal boundary small. Static schemas/declaratio
 This checkpoint provides the preparation primitive and hardens the installer; **normal workers still use the old runtime resolver**. The next S3 batch must connect this record to snapshots, pending/active/recovery ownership and local/external host startup before claiming the handoff complete. Ordinary unmanaged discovery is still present until the coordinated runtime/development transition; the new preparation primitive does not admit it as an installed artifact.
 
 Validation: the first run records **32 failing cases** (27 exercise the absent preparation feature; five demonstrate the existing extra-file/bytecode gaps). Corrected and expanded tests cover environment drift, changes during schema reading and retained offline market evidence. The preparation/cache/discovery/installer/origin group passes **234 tests** and architecture checks pass **9 contracts**. A further **152 caller/lifecycle tests** and **120 market tests** pass, for **506 passing focused tests** in this checkpoint. Evidence: `/private/tmp/omnibci-s3b-rhwjj3a7`. Full engine/platform verification is not claimed for this unconnected primitive.
+
+#### S3c execution: prepared runtime handoff (2026-11-20)
+
+Application startup and configuration replacement now prepare only the modules that will execute locally. Preparation runs under the existing package-reference guard; the existing pending/active/recovery reference owners remain in place. Dormant selections and an empty foundation do not load plugins. Failed candidate preparation occurs before stopping a healthy owner. Module snapshot merges replace that module's artifact records along with its bindings and retain the other modules' records. Existing pins are verified, never silently refreshed.
+
+Acquisition, Processing, Stimulation and Actuation consume the private artifact record without a catalog search. An external node materializes and prepares its own local inventory before constructing its host. Controllers still send no paths. Comparing returned node artifact/environment receipts remains S4. Processing still waits for actual mapped signal information before construction.
+
+The loader receives the checked content digest and rejects changes between descriptor verification and import. Every Python source buffer, including a later relative import, must match the selected inventory; that same buffer is compiled without a second read or bytecode caches. The digest and inventory are private loader metadata, not SDK exports. This is integrity checking for trusted installed code, not an OS sandbox or a guarantee against a privileged process replacing a native library while the OS opens it.
+
+Tests that execute real external-style plugins now install and enable them through the managed store. Their mutable output files live outside the immutable artifact. Existing source checkpoint, pipeline replacement, child readiness and rollback scenarios continue to exercise real hosts.
+
+Validation first reproduced **11 runtime-handoff failures**, **four application-sequencing failures**, and **three import-handoff failures**. The final preparation/import group passes **90 tests**. The unchanged 468-file backend/test verification tree passes **4,221 headless tests**, **36 integration tests with one Windows-only skip**, and **9 import contracts**. Evidence: `/private/tmp/omnibci-s3c-hawoob8x`. This completes host handoff, not the remaining per-store mutation authority or S4 node receipt exchange. No physical GPU/device or other-OS execution is claimed.
 
 ### S4 Narrow application and external-node interfaces
 

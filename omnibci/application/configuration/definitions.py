@@ -151,6 +151,12 @@ def merge_module_settings(current: dict, selected: dict, modules) -> dict:
                                      if not binding.get("slot", "").startswith(f"{module}.")]
         result["PLUGINS.bindings"].extend(deepcopy(binding) for binding in selected.get("PLUGINS.bindings", ())
                                          if binding.get("slot", "").startswith(f"{module}."))
+        if 'PLUGINS.artifacts' in result or 'PLUGINS.artifacts' in selected:
+            artifacts = {slot: record for slot, record in result.get('PLUGINS.artifacts', {}).items()
+                         if not slot.startswith(f'{module}.')}
+            artifacts.update({slot: deepcopy(record) for slot, record in selected.get('PLUGINS.artifacts', {}).items()
+                              if slot.startswith(f'{module}.')})
+            result['PLUGINS.artifacts'] = artifacts
         result.setdefault("CONFIG.module_revisions", {})[module] = selected.get("CONFIG.module_revisions", {}).get(module)
     result["PLUGINS.bindings"] = sorted(result.get("PLUGINS.bindings", ()),
                                        key=lambda binding: MODULES.index(binding["slot"].split(".", 1)[0]))

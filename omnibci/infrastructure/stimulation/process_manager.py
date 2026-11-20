@@ -43,14 +43,10 @@ mp = multiprocessing.get_context("spawn")
 
 
 def _configured_paradigm(snapshot: dict) -> str:
-    from omnibci.infrastructure.plugins.runtime_configuration import configured_bindings
-    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-    from omnibci.infrastructure.plugins.loader import PluginLoadError
+    from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
 
-    bindings = configured_bindings(snapshot, slot="stimulation.paradigm")
-    if not bindings:
-        raise PluginLoadError("No paradigm selected for stimulation.paradigm")
-    return PluginCatalog().resolve_selection("paradigm", bindings[0].selection).plugin_type
+    descriptor, _ = resolve_configured_plugin(snapshot, 'stimulation.paradigm', 'paradigm')
+    return descriptor.plugin_type
 
 
 def _run_stimulation(

@@ -6,7 +6,7 @@ import sys
 from unittest.mock import Mock, call
 
 import numpy as np
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 
 import pytest
 
@@ -148,12 +148,12 @@ def test_stimulator_loads_exact_curry_trigger_and_free_run_keeps_zero(driver, ad
     catalog = PluginCatalog()
     selected_trigger = catalog.resolve_selection("trigger", builtin_selection("trigger", "neuroscan_curry8_trigger"))
     selected_paradigm = catalog.resolve_selection("paradigm", builtin_selection("paradigm", "STIMULATION_THUBCI_SSVEP_classic40"))
-    stimulator = Stimulator(settings_snapshot={"PLUGINS.bindings": [
+    stimulator = Stimulator(settings_snapshot=prepared_snapshot({"PLUGINS.bindings": [
         ProfileBinding("stimulation.trigger", "trigger", None, selected_trigger.selection,
                        {"parallel_port_address": address}).to_dict(),
         ProfileBinding("stimulation.paradigm", "paradigm", None, selected_paradigm.selection,
                        {}).to_dict(),
-    ]})
+    ]}))
     output = stimulator._load_trigger()
     assert output.plugin_type == "neuroscan_curry8_trigger"
     output.setup()

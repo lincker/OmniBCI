@@ -1,12 +1,15 @@
 """Private, JSON-safe artifact handoff between local preparation and a host."""
 import hashlib
 import json
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 import platform
 import re
 import sys
 
 from omnibci.application.configuration.models import ProfileBinding
+from omnibci.application.configuration.definitions import MODULES
 from omnibci.application.plugin_packages import PluginPackageError
 from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.artifact_inventory import artifact_inventory, content_digest
@@ -26,6 +29,22 @@ _FIELDS = frozenset({
     'origin', 'verified_repository', 'entrypoint', 'binding_sha256',
 })
 _FAILURES = (ValueError, TypeError, OSError, PluginResolutionError, PluginPackageError, PackageInstallError)
+
+
+def configured_bindings(snapshot: dict, *, slot: str | None = None, modules=None) -> tuple[ProfileBinding, ...]:
+    """Require explicit selections while leaving unrelated dormant inputs alone."""
+    if 'PLUGINS.bindings' not in snapshot:
+        raise PluginLoadError('Runtime configuration requires pinned PLUGINS.bindings')
+    raw = snapshot['PLUGINS.bindings']
+    if not isinstance(raw, list):
+        raise PluginLoadError('PLUGINS.bindings must be a list')
+    if any(not isinstance(value, dict) or not isinstance(value.get('slot'), str) for value in raw):
+        raise PluginLoadError('Each plugin binding must name a slot')
+    if len({value['slot'] for value in raw}) != len(raw):
+        raise PluginLoadError('Duplicate plugin slot')
+    return tuple(ProfileBinding.from_dict(value) for value in raw
+                 if (slot is None or value['slot'] == slot)
+                 and (modules is None or value['slot'].split('.', 1)[0] in modules))
 
 
 def _digest(value) -> str:
@@ -117,7 +136,7 @@ def read_prepared_plugin(binding: ProfileBinding, record: dict):
         if descriptor is None or str(descriptor.entrypoint) != record['entrypoint']:
             raise ValueError('Prepared artifact declaration changed')
         if not descriptor.supports_platform(sys.platform):
-            raise ValueError('Selected contribution is not supported on this platform')
+            raise ValueError(f'Selected contribution is not supported on {sys.platform}')
         if descriptor.configuration_version != binding.configuration_version:
             raise ValueError('Configuration schema migration required')
         check_dependencies(dict(descriptor.package.requires), environment['libraries'])
@@ -125,21 +144,41 @@ def read_prepared_plugin(binding: ProfileBinding, record: dict):
         # Detect edits while reading schemas/declarations, before any code import.
         if content_digest(artifact_inventory(location)) != digest:
             raise ValueError('Prepared artifact content changed while reading declarations')
-        return descriptor
+        return replace(descriptor, package=replace(descriptor.package, content_sha256=digest))
     except _FAILURES as exc:
-        raise PluginLoadError(f'{binding.slot}: {exc}') from exc
+        raise PluginLoadError(f'{binding.slot}: {binding.selection.package_id}@{binding.selection.version}: {exc}') from exc
 
 
 class PluginArtifactPreparer:
     def __init__(self, store):
         self.store = store
 
+    def prepare_snapshot(self, snapshot: dict, modules) -> dict:
+        """Pin only this node's requested modules; retained pins are never refreshed."""
+        modules = tuple(modules)
+        if any(module not in MODULES for module in modules):
+            raise PluginLoadError('Unknown plugin preparation module')
+        result = deepcopy(snapshot)
+        bindings = configured_bindings(result, modules=modules)
+        existing = result.get('PLUGINS.artifacts', {})
+        if not isinstance(existing, dict) or any(not isinstance(slot, str) for slot in existing):
+            raise PluginLoadError('PLUGINS.artifacts must map slots to prepared artifacts')
+        artifacts = {slot: record for slot, record in existing.items() if slot.split('.', 1)[0] not in modules}
+        for binding in bindings:
+            if binding.slot in existing:
+                read_prepared_plugin(binding, existing[binding.slot])
+                artifacts[binding.slot] = existing[binding.slot]
+            else:
+                artifacts[binding.slot] = self.prepare(binding)
+        result['PLUGINS.artifacts'] = artifacts
+        return result
+
     def prepare(self, binding: ProfileBinding) -> dict:
         """Resolve once at admission and bind static declarations to checked bytes."""
         try:
             descriptor = self.store.catalog.resolve_selection(binding.kind, binding.selection)
             if not descriptor.supports_platform(sys.platform):
-                raise ValueError('Selected contribution is not supported on this platform')
+                raise ValueError(f'Selected contribution is not supported on {sys.platform}')
             environment = _environment()
             check_dependencies(dict(descriptor.package.requires), environment['libraries'])
             directory = None if descriptor.source == 'builtin' else self.store.plugin_dir

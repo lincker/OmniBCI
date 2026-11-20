@@ -1,5 +1,5 @@
 """Only compatible exact selections can be prepared for a trial boundary."""
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 
 from copy import deepcopy
 from dataclasses import replace
@@ -10,6 +10,7 @@ import pytest
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugins.loader import PluginLoadError
 from omnibci.infrastructure.signal_processing import pipeline_configuration as configuration
 
 
@@ -35,7 +36,7 @@ def _build(before, after, boundary="module"):
     source = SignalInfo(sample_rate=before["ACQUISITION.sample_rate"], channels=channels)
     plan = compile_processing_plan(source, ProcessingInput.from_dict(
         before["PLUGINS.bindings"][1]["processing_input"]), acquisition_revision=before["CONFIG.module_revisions"]["acquisition"])
-    return configuration.build_pipeline_update(before, after, sample_rate=250, baseline_duration=0.2,
+    return configuration.build_pipeline_update(before, prepared_snapshot(after, ("processing",)), sample_rate=250, baseline_duration=0.2,
                                                signal_plan=plan, boundary=boundary)
 
 
@@ -82,7 +83,7 @@ def test_trial_update_uses_prepared_source_rate_instead_of_legacy_flat_mirror(pr
     plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="source-revision")
 
     bundle = configuration.build_pipeline_update(
-        before, after, sample_rate=500, baseline_duration=0.2, signal_plan=plan,
+        before, prepared_snapshot(after, ("processing",)), sample_rate=500, baseline_duration=0.2, signal_plan=plan,
     )
 
     assert bundle.decoder.SAMPLE_COUNT == 750
@@ -95,12 +96,12 @@ def test_unprepared_update_validates_settings_and_defers_plugin_construction(mon
     after["CONFIG.module_revisions"]["processing"] = "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
     monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
-    bundle = configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2, boundary="module")
+    bundle = configuration.build_pipeline_update(before, prepared_snapshot(after, ("processing",)), sample_rate=None, baseline_duration=0.2, boundary="module")
     assert bundle.decoder is None and bundle.filters == ()
     assert bundle.settings_snapshot["CONFIG.module_revisions"]["processing"] == "new"
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = -1
-    with pytest.raises(ValueError):
-        configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2, boundary="module")
+    with pytest.raises(PluginLoadError):
+        configuration.build_pipeline_update(before, prepared_snapshot(after, ("processing",)), sample_rate=None, baseline_duration=0.2, boundary="module")
 
 
 def test_filter_can_be_applied_before_selecting_a_decoder(monkeypatch):
@@ -114,10 +115,10 @@ def test_filter_can_be_applied_before_selecting_a_decoder(monkeypatch):
     ).to_dict())
     monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
 
-    bundle = configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2, boundary="module")
+    bundle = configuration.build_pipeline_update(before, prepared_snapshot(after, ("processing",)), sample_rate=None, baseline_duration=0.2, boundary="module")
 
     assert bundle.decoder is None and bundle.filters == ()
-    assert bundle.settings_snapshot == after
+    assert bundle.settings_snapshot == prepared_snapshot(after, ("processing",))
 
 
 @pytest.mark.parametrize("key,value", [
@@ -138,7 +139,7 @@ def test_source_and_detector_binding_changes_require_restart(index):
     after = deepcopy(before)
     after["PLUGINS.bindings"][index]["parameters"]["changed"] = True
     with pytest.raises(ValueError, match="topology"):
-        _build(before, after)
+        configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2)
 
 
 @pytest.mark.parametrize("policy", [None, "module", "restart"])
@@ -146,18 +147,18 @@ def test_same_selection_parameter_changes_require_explicit_trial_policy(monkeypa
     before = selected_snapshot()
     after = deepcopy(before)
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
-    original_get = configuration.CatalogConfigurationAdapter.get
+    original_get = configuration.resolve_configured_plugin
 
-    def get(catalog, kind, selection):
-        definition = original_get(catalog, kind, selection)
-        schema = deepcopy(definition.schema)
+    def get(snapshot, slot, kind):
+        descriptor, parameters = original_get(snapshot, slot, kind)
+        schema = deepcopy(descriptor.configuration_schema)
         declaration = schema["properties"]["window_duration"]
         declaration.pop("x-apply", None)
         if policy is not None:
             declaration["x-apply"] = policy
-        return replace(definition, schema=schema)
+        return replace(descriptor, configuration_schema=schema), parameters
 
-    monkeypatch.setattr(configuration.CatalogConfigurationAdapter, "get", get)
+    monkeypatch.setattr(configuration, "resolve_configured_plugin", get)
     with pytest.raises(ValueError, match="restart"):
         _build(before, after, boundary="trial")
 
@@ -185,7 +186,7 @@ def test_invalid_candidate_does_not_change_input():
     before = selected_snapshot()
     after = deepcopy(before)
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = -1
-    with pytest.raises(ValueError):
+    with pytest.raises(PluginLoadError):
         _build(before, after)
     assert before["PLUGINS.bindings"][1]["parameters"]["window_duration"] == 1
 
@@ -205,22 +206,19 @@ def test_decoder_input_change_cannot_reuse_existing_prepared_plan(changed_select
 
 
 @pytest.mark.parametrize("change,message", [
-    ({"available": False}, "unavailable"),
-    ({"configuration_version": 99}, "schema migration"),
+    ("environment", "environment"), ("schema_version", "binding"),
 ])
-def test_unprepared_replacement_checks_plugin_contract_before_acknowledgement(monkeypatch, change, message):
+def test_replacement_checks_prepared_contract_before_input_acknowledgement(monkeypatch, change, message):
     before = selected_snapshot()
     after = deepcopy(before)
     after["CONFIG.module_revisions"]["processing"] = "new"
     replacement = PluginCatalog().resolve_selection("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40FBCCA"))
     after["PLUGINS.bindings"][1]["selection"] = replacement.selection.to_dict()
-    original_get = configuration.CatalogConfigurationAdapter.get
-
-    def get(catalog, kind, selection):
-        definition = original_get(catalog, kind, selection)
-        return replace(definition, **change) if kind == "decoder" else definition
-
-    monkeypatch.setattr(configuration.CatalogConfigurationAdapter, "get", get)
+    after = prepared_snapshot(after, ("processing",))
+    if change == "environment":
+        after["PLUGINS.artifacts"]["processing.decoder"]["environment_sha256"] = "0" * 64
+    else:
+        after["PLUGINS.bindings"][1]["configuration_version"] = 99
     monkeypatch.setattr(configuration, "load_configured_plugin", lambda *a, **kw: pytest.fail("premature construction"))
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(PluginLoadError, match=message):
         configuration.build_pipeline_update(before, after, sample_rate=None, baseline_duration=0.2, boundary="module")

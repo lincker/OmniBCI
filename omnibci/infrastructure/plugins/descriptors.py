@@ -66,6 +66,8 @@ class PluginPackageDescriptor:
     host_version: str | None = None
     requires: tuple[tuple[str, str], ...] = ()
     platforms: tuple[str, ...] = ()
+    # Derived during preparation, never supplied by package authors.
+    content_sha256: str | None = field(default=None, repr=False, compare=False)
     # Catalog metadata: lower values have higher priority.  It is intentionally
     # excluded from equality/repr because it is not plugin identity.
     precedence: int = field(default=0, repr=False, compare=False)

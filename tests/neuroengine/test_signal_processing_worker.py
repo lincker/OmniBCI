@@ -1,7 +1,7 @@
 """Tests for SignalProcessingWorker plugin loading and processor wiring."""
 from __future__ import annotations
 from pathlib import Path
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 
 from queue import Queue
 from traceback import format_exception
@@ -27,7 +27,7 @@ from omnibci.infrastructure.signal_processing.worker import (
     SignalProcessingWorker,
 )
 from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
-from omnibci.infrastructure.plugins.loader import PluginLoader
+from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.signal_processing.pipeline_configuration import load_filters
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.shared.events import EventType
@@ -54,16 +54,15 @@ class TestFilterLoading:
         from uuid import uuid4
         descriptor = PluginCatalog().resolve_selection("filter", builtin_selection("filter", "BASELINE_CORRECTION"))
         selection = replace(descriptor.selection, package_id="missing") if missing else descriptor.selection
-        return {"PLUGINS.bindings": [ProfileBinding(
+        return prepared_snapshot({"PLUGINS.bindings": [ProfileBinding(
             f"processing.filter.{uuid4()}", "filter", None, selection, {},
-        ).to_dict() for _ in range(count)]}
+        ).to_dict() for _ in range(count)]})
 
     def test_empty_configuration_returns_no_filters(self):
         assert load_filters(self.snapshot(0), prepared_signal(250)) == []
 
     def test_unknown_filter_blocks_pipeline(self):
-        from omnibci.infrastructure.plugins.plugin_catalog import PluginNotFoundError
-        with pytest.raises(PluginNotFoundError):
+        with pytest.raises(PluginLoadError, match="Unknown"):
             load_filters(self.snapshot(missing=True), prepared_signal(250))
 
     def test_repeated_filters_construct_separate_instances_in_order(self):
@@ -91,6 +90,7 @@ class TestAlgorithmLoading:
             bindings.append(ProfileBinding(slot, kind, None, descriptor.selection, parameters,
                                            processing_input=ProcessingInput() if kind == "decoder" else None).to_dict())
         snapshot["PLUGINS.bindings"] = bindings
+        snapshot = prepared_snapshot(snapshot)
         source = SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "O1", signal_type="eeg", unit="V", channel_id="channel-0"),))
         plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision=snapshot["CONFIG.module_revisions"]["processing"])
         with patch.object(

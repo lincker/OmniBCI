@@ -80,6 +80,7 @@ class RuntimeApplyCoordinator:
                 await self.engine.start_for_configuration(foundation)
         selected = self.profiles.materialize(ActivationSet(stored.candidates, engine_settings), self.engine.generation)
         snapshot = merge_module_settings(self.engine.applied_snapshot or {}, selected, (module,))
+        snapshot = self.engine.prepare_plugins(snapshot, (module,))
         if module in ("acquisition", "processing"):
             if not self.engine.is_module_running(module):
                 await self.engine.start_module_for_configuration(module, snapshot)
@@ -244,7 +245,7 @@ class RuntimeApplyCoordinator:
 
     async def _apply_pipeline(self, stored, previous, progress):
         before = self.engine.applied_snapshot
-        target = self._runtime_target(stored)
+        target = self.engine.prepare_plugins(self._runtime_target(stored), ('processing',))
         boundary = "module" if stored.plan.strategy == "module" else "trial"
         if boundary == "module":
             progress("detaching_processing")
@@ -326,6 +327,8 @@ class RuntimeApplyCoordinator:
         before = self.engine.applied_snapshot
         target = self._runtime_target(stored)
         active = (self.stimulation.is_active or self.stimulation.process_alive) if module == "stimulation" else self._actuation_active()
+        if active:
+            target = self.engine.prepare_plugins(target, (module,))
         written = []
         replacing = False
         startup_pending = False
@@ -495,7 +498,7 @@ class RuntimeApplyCoordinator:
         if module == "processing":
             return await self._rebuild_processing(stored, previous, progress)
         before = self.engine.applied_snapshot
-        target = self._runtime_target(stored)
+        target = self.engine.prepare_plugins(self._runtime_target(stored), (module,))
         source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
         state = _RestoreState(source.connected, source.streaming, False)
         stopped = resumed = False
@@ -549,7 +552,7 @@ class RuntimeApplyCoordinator:
 
     async def _rebuild_processing(self, stored, previous, progress):
         before = self.engine.applied_snapshot
-        target = self._runtime_target(stored)
+        target = self.engine.prepare_plugins(self._runtime_target(stored), ('processing',))
         stopped = attaching = False
         written = []
         try:
@@ -597,6 +600,9 @@ class RuntimeApplyCoordinator:
                               actuation=self._actuation_active(),
                               acquisition=self.engine.is_module_running("acquisition"),
                               processing=self.engine.is_module_running("processing"))
+        target = self.engine.prepare_plugins(target, tuple(module for module in (
+            'acquisition', 'processing', 'stimulation', 'actuation',
+        ) if getattr(state, module)))
         stopped = False
         resumed = False
         written = []

@@ -7,7 +7,7 @@ import sys
 from threading import RLock
 from importlib import import_module
 from importlib.abc import MetaPathFinder
-from importlib.machinery import ModuleSpec, NamespaceLoader, PathFinder, SourceFileLoader, SourcelessFileLoader
+from importlib.machinery import ExtensionFileLoader, ModuleSpec, NamespaceLoader, PathFinder, SourceFileLoader, SourcelessFileLoader
 from importlib.util import spec_from_file_location
 from pathlib import Path
 from types import ModuleType
@@ -26,12 +26,25 @@ class PluginLoadError(RuntimeError):
 
 
 _ENTRYPOINT_PATHS: dict[str, tuple[Path, Path | None]] = {}
+_ARTIFACT_FILES: dict[str, tuple[Path, dict[str, str]]] = {}
+
+
+def _verified_source(fullname: str, path: str, source: bytes) -> bytes:
+    root, files = _ARTIFACT_FILES[fullname.split('.', 1)[0]]
+    location = Path(path)
+    if location != location.resolve() or not location.is_relative_to(root):
+        raise PluginLoadError('Plugin source location changed since preparation')
+    expected = files.get(location.relative_to(root).as_posix())
+    if expected != hashlib.sha256(source).hexdigest():
+        raise PluginLoadError('Plugin source content changed since preparation')
+    return source
 
 
 class _ArtifactSourceLoader(SourceFileLoader):
     def get_code(self, fullname):
         # Never read or write .pyc files inside an immutable plugin artifact.
-        return self.source_to_code(self.get_data(self.path), self.path)
+        source = _verified_source(fullname, self.path, self.get_data(self.path))
+        return self.source_to_code(source, self.path)
 
 
 class _ArtifactFinder(MetaPathFinder):
@@ -51,6 +64,8 @@ class _ArtifactFinder(MetaPathFinder):
                 spec.loader = _ArtifactSourceLoader(fullname, spec.origin)
             elif isinstance(spec.loader, SourcelessFileLoader):
                 raise PluginLoadError("Plugin modules require Python source, not bytecode-only imports")
+            elif isinstance(spec.loader, ExtensionFileLoader):
+                _verified_source(fullname, spec.origin, Path(spec.origin).read_bytes())
         return spec
 
 
@@ -62,14 +77,17 @@ class PluginLoader:
     _lock = RLock()
 
     @staticmethod
-    def _module_prefix(descriptor: PluginDescriptor) -> str:
+    def _module_prefix(descriptor: PluginDescriptor, files=None) -> str:
         """Share code by local package content, independently of Contribution."""
         location = descriptor.location.resolve()
         digest = hashlib.sha256("\0".join((
             descriptor.identifier, descriptor.version, sys.platform, str(location),
         )).encode("utf-8"))
         try:
-            digest.update(content_digest(artifact_inventory(location)).encode())
+            content = content_digest(artifact_inventory(location) if files is None else files)
+            if descriptor.package.content_sha256 is not None and descriptor.package.content_sha256 != content:
+                raise PluginLoadError('Plugin artifact content changed since preparation')
+            digest.update(content.encode())
         except (ValueError, OSError) as exc:
             raise PluginLoadError(str(exc)) from exc
         return f"_omnibci_plugin_{digest.hexdigest()}"
@@ -106,6 +124,7 @@ class PluginLoader:
         for name in tuple(_ENTRYPOINT_PATHS):
             if name == prefix or name.startswith(f"{prefix}."):
                 _ENTRYPOINT_PATHS.pop(name, None)
+        _ARTIFACT_FILES.pop(prefix, None)
 
     @classmethod
     def _prepare_module(
@@ -200,9 +219,14 @@ class PluginLoader:
                     f"{descriptor.identifier}: plugin directory changed after discovery"
                 )
 
-            prefix = cls._module_prefix(descriptor)
+            try:
+                files = artifact_inventory(location)
+            except (ValueError, OSError) as exc:
+                raise PluginLoadError(str(exc)) from exc
+            prefix = cls._module_prefix(descriptor, files)
             modules_before = set(sys.modules)
             try:
+                _ARTIFACT_FILES[prefix] = location, files
                 module_name, target, package_dir = cls._prepare_module(
                     prefix,
                     location,

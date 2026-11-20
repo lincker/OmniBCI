@@ -585,9 +585,10 @@ async def test_live_logger_replacement_preserves_source_and_processing(tmp_path,
     from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
     from tests.application.test_runtime_apply_integration import configured_profiles, wire_signal_preparation
+    from tests.plugin_configuration_helpers import install_package_root, prepare_runtime_plugins
 
     profiles, bindings = configured_profiles(tmp_path, monkeypatch)
-    plugin = tmp_path / "plugins" / "effectors" / "alternate_logger"
+    plugin = tmp_path / "source-alternate-logger"
     plugin.mkdir(parents=True)
     (plugin / "manifest.toml").write_text('''manifest_version=2
 [package]
@@ -619,6 +620,7 @@ schema_version=1
     (plugin / "config.schema.json").write_text(json.dumps({
         "type": "object", "properties": {}, "additionalProperties": False,
     }))
+    install_package_root(plugin)
     original = profiles.create("effector", builtin_selection("effector", "logger"), "Logger", {})
     alternate = profiles.create("effector", builtin_selection("effector", "alternate_logger"),
                                 "Alternate logger", {})
@@ -628,6 +630,7 @@ schema_version=1
     profiles.repository.save_module(profiles.propose("actuation", [bindings[-1]], settings=settings), expected_revision=None)
     manager = ActuationProcessManager()
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+                                plugin_preparer=prepare_runtime_plugins,
                                 actuation_process_manager=manager, snapshot_provider=lambda: profiles.materialize(profiles.repository.get_activation_set()))
     await engine.startup()
     container = assemble(engine, admission=engine.admission,
@@ -642,13 +645,19 @@ schema_version=1
     try:
         await engine.handle_start_engine(StartEngineCommand())
         async with engine.runtime_transition("acquisition"):
-            await engine.start_module_for_configuration("acquisition", engine.applied_snapshot)
+            prepared = engine.prepare_plugins(engine.applied_snapshot, ("acquisition",))
+            await engine.start_module_for_configuration("acquisition", prepared)
+            engine.acknowledge_configuration(prepared, modules=("acquisition",))
         async with engine.runtime_transition("processing"):
-            await engine.start_module_for_configuration("processing", engine.applied_snapshot)
+            prepared = engine.prepare_plugins(engine.applied_snapshot, ("processing",))
+            await engine.start_module_for_configuration("processing", prepared)
+            engine.acknowledge_configuration(prepared, modules=("processing",))
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         async with engine.runtime_transition("actuation"):
-            await engine.start_module_for_configuration("actuation", engine.applied_snapshot)
+            prepared = engine.prepare_plugins(engine.applied_snapshot, ("actuation",))
+            await engine.start_module_for_configuration("actuation", prepared)
+            engine.acknowledge_configuration(prepared, modules=("actuation",))
         await asyncio.sleep(.08)
         old_workers = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
         old_actuation = manager._process.pid

@@ -67,7 +67,9 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
     for module in ("acquisition", "processing", "stimulation"):
         profiles.repository.save_module(profiles.propose(module, [item for item in selections if item["slot"].startswith(f"{module}.")], settings=section_settings(host, module)),
                                expected_revision=None)
+    from tests.plugin_configuration_helpers import prepare_runtime_plugins
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+                                plugin_preparer=prepare_runtime_plugins,
                                 snapshot_provider=lambda: accepted_runtime_settings(profiles=profiles))
     await engine.startup()
     container = assemble(engine, settings=host, admission=engine.admission)

@@ -15,7 +15,7 @@ from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
 from tests.infrastructure.test_builtin_contributions import CAPABILITIES
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 
 
 PROCESSING = {'filter', 'decoder', 'epoch_detector'}
@@ -68,7 +68,7 @@ def test_all_builtin_kinds_construct_through_api_one(monkeypatch, tmp_path, kind
 
 
 @pytest.mark.parametrize('kind,alias,port', CAPABILITIES)
-def test_host_does_not_pass_its_revision_or_upstream_signal(kind, alias, port):
+def test_host_does_not_pass_its_revision_or_upstream_signal(monkeypatch, kind, alias, port):
     descriptor = PluginCatalog().resolve_selection(kind, builtin_selection(kind, alias))
     slot = {'acquisition': 'acquisition.source', 'trigger': 'stimulation.trigger',
             'paradigm': 'stimulation.paradigm', 'effector': 'actuation.effector',
@@ -78,10 +78,12 @@ def test_host_does_not_pass_its_revision_or_upstream_signal(kind, alias, port):
                              configuration_version=descriptor.configuration_version)
     snapshot = {'PLUGINS.bindings': [binding.to_dict()], 'ACQUISITION.sample_rate': 1000,
                 'CONFIG.module_revisions': {'role': 'private-revision'}}
-    catalog, loader = Mock(), Mock()
-    catalog.resolve_selection.return_value = descriptor
+    loader = Mock()
+    if kind == 'trigger':
+        monkeypatch.setattr(sys, 'platform', 'win32')
+    snapshot = prepared_snapshot(snapshot)
     kwargs = {'input_signal': input_signal()} if kind in PROCESSING else {}
-    load_configured_plugin(snapshot, slot, kind, port, catalog=catalog, loader=loader, **kwargs)
+    load_configured_plugin(snapshot, slot, kind, port, loader=loader, **kwargs)
     assert set(loader.instantiate.call_args.kwargs) == {'parameters'} | set(kwargs)
     if kwargs:
         assert loader.instantiate.call_args.kwargs['input_signal'] is kwargs['input_signal']

@@ -152,6 +152,12 @@ async def build_container(*, host_settings: dict | None = None,
 async def _build_container_services(host_settings, allow_process_termination):
     package_references_lock = RLock()
     package_store = ManagedPluginPackageStore()
+    from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
+    artifact_preparer = PluginArtifactPreparer(package_store)
+
+    def prepare_plugins(snapshot, modules):
+        with package_references_lock:
+            return artifact_preparer.prepare_snapshot(snapshot, modules)
     configuration = ConfigurationService(
         TomlConfigurationRepository(),
         CatalogConfigurationAdapter(package_store.catalog, platform_name=package_store.installer.platform_name),
@@ -183,6 +189,7 @@ async def _build_container_services(host_settings, allow_process_termination):
         snapshot_provider=startup_snapshot,
         actuation_process_manager=actuation_manager,
         stimulation_process_manager=stimulation_manager,
+        plugin_preparer=prepare_plugins,
     )
     await engine_service.startup()
     container = assemble(engine_service,

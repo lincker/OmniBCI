@@ -1,5 +1,5 @@
 """Managed peer readiness belongs to its pinned configuration and generation."""
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 
 from importlib import import_module
 from unittest.mock import MagicMock
@@ -25,7 +25,7 @@ def peer(request):
                     f"{kind}.{selection}", selection, None, descriptor.selection, {},
                 ).to_dict()],
                 f"{kind.upper()}.enabled": True, f"{kind.upper()}.auto_spawn": True}
-    return kind, component, module, snapshot
+    return kind, component, module, prepared_snapshot(snapshot)
 
 
 @pytest.mark.parametrize("outcome", ["ready", "failure"])

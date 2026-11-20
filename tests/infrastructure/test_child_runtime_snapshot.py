@@ -15,6 +15,8 @@ import pytest
 from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.process_lifecycle import StartupReport, StartupReporter
+from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
 
 
 MANAGERS = (
@@ -35,11 +37,13 @@ def _snapshot(key, revision="revision-1"):
     if key == "STIMULATION.paradigm":
         snapshot.pop(key)
         snapshot["PLUGINS.bindings"][0].update({
+            "parameters": {},
             "slot": "stimulation.paradigm", "kind": "paradigm",
             "selection": {"package_id": "OmniBCI.classic40SSVEP",
                           "contribution_id": "default", "version": "0.1.0"},
             "configuration_version": 1, "profile_revision": 0,
         })
+        snapshot = PluginArtifactPreparer(ManagedPluginPackageStore()).prepare_snapshot(snapshot, ("stimulation",))
     return snapshot
 
 
@@ -105,6 +109,8 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
     saved["CONFIG.module_revisions"][component.lower()] = "revision-2"
     saved["PLUGINS.bindings"][0]["parameters"]["level"] = 2
     assert spawned["kwargs"]["settings_snapshot"] == original
+    if component == "Stimulation":
+        saved["PLUGINS.bindings"][0]["parameters"].pop("level")
     manager.start(settings_snapshot=saved)
 
     assert factory.call_count == 2

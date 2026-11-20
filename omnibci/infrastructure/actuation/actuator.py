@@ -13,7 +13,6 @@ from typing import Mapping, Optional
 from omnibci.domain.ports.effector import Effector
 from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +21,11 @@ class Actuator:
     def __init__(
         self,
         *,
-        plugin_catalog: PluginCatalog | None = None,
         plugin_loader: type[PluginLoader] = PluginLoader,
         settings_snapshot: dict,
     ) -> None:
         self.effector: Optional[Effector] = None
         self._command_schema = None
-        self._plugin_catalog = (
-            plugin_catalog if plugin_catalog is not None else PluginCatalog()
-        )
         self._plugin_loader = plugin_loader
         self._settings_snapshot = deepcopy(settings_snapshot)
 
@@ -39,7 +34,7 @@ class Actuator:
     def _load_effector(self) -> Optional[Effector]:
         from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
         descriptor, parameters = resolve_configured_plugin(
-            self._settings_snapshot, "actuation.effector", "effector", catalog=self._plugin_catalog,
+            self._settings_snapshot, "actuation.effector", "effector",
         )
         self._command_schema = deepcopy(descriptor.payload_schemas["command"])
         return self._plugin_loader.instantiate(descriptor, Effector, parameters=parameters)

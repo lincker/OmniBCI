@@ -1,6 +1,6 @@
 """Decoder requirements are checked against prepared input before plugin code runs."""
 from pathlib import Path
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -21,7 +21,7 @@ from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
 
 
-def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
+def configured(monkeypatch, requirements, outputs=("O1",), *, signal_type="eeg"):
     source = SignalInfo(sample_rate=250, channels=(
         ChannelDescriptor(0, "O1", signal_type=signal_type, unit="uV", channel_id="channel-0"),
         ChannelDescriptor(1, "Oz", signal_type="eeg", unit="uV", channel_id="channel-1"),
@@ -35,9 +35,9 @@ def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
     plan = compile_processing_plan(source, inputs)
     descriptor = SimpleNamespace(channel_requirements=requirements,
                                  api_version="1", configuration_version=1)
-    catalog = Mock()
-    catalog.resolve_selection.return_value = descriptor
-    return snapshot, mapped_input(plan), catalog
+    monkeypatch.setattr("omnibci.infrastructure.plugins.runtime_configuration.resolve_configured_plugin",
+                        lambda snapshot, slot, kind: (descriptor, {}))
+    return snapshot, mapped_input(plan)
 
 
 @pytest.mark.parametrize("requirements, fields", [
@@ -46,39 +46,39 @@ def configured(requirements, outputs=("O1",), *, signal_type="eeg"):
     (DecoderChannelRequirements(signal_type="eeg"), {"signal_type": "eog"}),
     (DecoderChannelRequirements(required_names=("M1",)), {}),
 ])
-def test_invalid_final_input_never_constructs_decoder(requirements, fields):
-    snapshot, context, catalog = configured(requirements, **fields)
+def test_invalid_final_input_never_constructs_decoder(monkeypatch, requirements, fields):
+    snapshot, context = configured(monkeypatch, requirements, **fields)
     loader = Mock()
     with pytest.raises(PluginLoadError):
         load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                               input_signal=context, catalog=catalog, loader=loader)
+                               input_signal=context, loader=loader)
     loader.instantiate.assert_not_called()
 
 
-def test_required_names_allow_extra_channels_and_profile_order():
+def test_required_names_allow_extra_channels_and_profile_order(monkeypatch):
     requirements = DecoderChannelRequirements(signal_type="eeg", min_count=2, required_names=("O1",))
-    snapshot, context, catalog = configured(requirements, outputs=("Oz", "O1"))
+    snapshot, context = configured(monkeypatch, requirements, outputs=("Oz", "O1"))
     loader = Mock()
     result = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                                    input_signal=context, catalog=catalog, loader=loader)
+                                    input_signal=context, loader=loader)
     assert result is loader.instantiate.return_value
     assert [channel.name for channel in loader.instantiate.call_args.kwargs["input_signal"].channels] == ["Oz", "O1"]
 
 
-def test_declared_requirements_cannot_run_without_verified_channel_metadata():
-    snapshot, _, catalog = configured(DecoderChannelRequirements(signal_type="eeg"))
+def test_declared_requirements_cannot_run_without_verified_channel_metadata(monkeypatch):
+    snapshot, _ = configured(monkeypatch, DecoderChannelRequirements(signal_type="eeg"))
     loader = Mock()
     with pytest.raises(PluginLoadError, match="prepared input"):
         load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                               input_signal=None, catalog=catalog, loader=loader)
+                               input_signal=None, loader=loader)
     loader.instantiate.assert_not_called()
 
 
-def test_processing_plugin_receives_its_prepared_signal():
-    snapshot, signal, catalog = configured(None)
+def test_processing_plugin_receives_its_prepared_signal(monkeypatch):
+    snapshot, signal = configured(monkeypatch, None)
     loader = Mock()
     load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                           input_signal=signal, catalog=catalog, loader=loader)
+                           input_signal=signal, loader=loader)
     loader.instantiate.assert_called_once()
 
 
@@ -99,18 +99,18 @@ async def test_curry_unknown_types_require_processing_declaration_before_builtin
     undeclared = ProcessingInput()
     binding = ProfileBinding("processing.decoder", "decoder", None, definition.selection,
                              {"window_duration": 1.0, "offset_time": 0}, processing_input=undeclared)
-    snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
+    snapshot = prepared_snapshot({"PLUGINS.bindings": [binding.to_dict()]})
     with pytest.raises(PluginLoadError, match="eeg"):
-        load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder, catalog=catalog,
+        load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
                                input_signal=mapped_input(compile_processing_plan(source, undeclared)))
 
     declared = ProcessingInput(outputs=(ChannelBinding("Right", "channel-1", "eeg"),))
     binding = ProfileBinding("processing.decoder", "decoder", None, definition.selection,
                              binding.parameters, processing_input=declared)
-    snapshot = {"PLUGINS.bindings": [binding.to_dict()]}
+    snapshot = prepared_snapshot({"PLUGINS.bindings": [binding.to_dict()]})
     plan = compile_processing_plan(source, declared)
     decoder = load_configured_plugin(snapshot, "processing.decoder", "decoder", Decoder,
-                                     catalog=catalog, input_signal=mapped_input(plan))
+                                     input_signal=mapped_input(plan))
     decoder.setup()
     decoder.begin_epoch()
     times = np.arange(501) / source.sample_rate

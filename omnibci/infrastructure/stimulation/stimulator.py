@@ -84,7 +84,8 @@ class Stimulator:
     # ── Internal loaders ───────────────────────────────────────────────────
 
     def _load_trigger(self) -> TriggerEmitter:
-        from omnibci.infrastructure.plugins.runtime_configuration import configured_bindings, load_configured_plugin
+        from omnibci.infrastructure.plugins.preparation import configured_bindings
+        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
         if not any(binding.slot == "stimulation.trigger" for binding in configured_bindings(self._snapshot)):
             return _NoTrigger()
         return load_configured_plugin(

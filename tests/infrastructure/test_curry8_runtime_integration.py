@@ -118,6 +118,8 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
                            {}).to_dict(),
         ],
     }
+    from tests.plugin_configuration_helpers import prepared_snapshot
+    snapshot = prepared_snapshot(snapshot)
     source = load_configured_plugin(snapshot, "acquisition.source", "acquisition", SignalSource)
     events = []
     bus = SimpleNamespace(put_event=events.append)

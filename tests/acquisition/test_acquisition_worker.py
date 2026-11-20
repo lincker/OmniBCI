@@ -1,5 +1,5 @@
 """Unit tests for the AcquisitionWorker process boundary orchestration."""
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 
 from queue import Queue
 from pathlib import Path
@@ -96,10 +96,10 @@ def test_file_source_worker_connects_with_unconfigured_processing(decoder):
     commands.put((AcquisitionCommand.get_metadata, CommandRequest("metadata")))
     commands.put((AcquisitionCommand.stop_acquisition, None))
     events = MagicMock()
-    worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot={
+    worker = AcquisitionWorker(commands, MagicMock(), events, settings_snapshot=prepared_snapshot({
         "ACQUISITION.signal_source": "file_reader",
         "PLUGINS.bindings": [source] + ([decoder] if decoder else []),
-    })
+    }, ("acquisition",)))
     worker.run()
 
     results = {call.args[0].data.command_id: call.args[0].data
@@ -213,10 +213,10 @@ def test_load_data_source_uses_pinned_parameters_without_registry_or_global_sett
         parameters={"data_file_path": "selected.cnt", "file_reader_chunk_size": 37,
                     "sample_rate": 250, "channel_count": 10},
     )
-    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={
+    worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot=prepared_snapshot({
         "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.sample_rate": 250,
         "ACQUISITION.signal_source": "must_not_be_used",
-    })
+    }))
     with patch.object(
         PluginLoader, "load_entrypoint", wraps=PluginLoader.load_entrypoint
     ) as load_entrypoint:

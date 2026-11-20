@@ -68,12 +68,14 @@ class NeuroEngineService(EnginePort):
         snapshot_provider: Callable[[], dict] | None = None,
         admission: RuntimeAdmission | None = None,
         stimulation_process_manager=None,
+        plugin_preparer: Callable[[dict, tuple[str, ...]], dict] | None = None,
     ) -> None:
         # The composition root supplies a fresh graph factory and, for managed
         # configuration, the snapshot to pin before constructing any worker.
         self._engine_factory = engine_factory
         self._admission = admission or RuntimeAdmission()
         self._snapshot_provider = snapshot_provider
+        self._plugin_preparer = plugin_preparer
         self._graph_snapshot: dict | None = None
         self._applied_snapshot: dict | None = None
         self._actuation = ActuationAppService(self, actuation_process_manager)
@@ -253,7 +255,19 @@ class NeuroEngineService(EnginePort):
             if selected["CONFIG.engine_revision"] != snapshot.get("CONFIG.engine_revision"):
                 raise RuntimeError("Apply the current Engine settings before starting a module")
             snapshot = merge_module_settings(snapshot, selected, (module,))
-        return snapshot
+        return self.prepare_plugins(snapshot, (module,))
+
+    def prepare_plugins(self, snapshot: dict, modules) -> dict:
+        """Prepare only modules executed locally; external nodes resolve their own files."""
+        local = tuple(module for module in modules if module not in ('stimulation', 'actuation')
+                      or snapshot.get(f'{module.upper()}.auto_spawn', True))
+        snapshot = deepcopy(snapshot)
+        if self._plugin_preparer is None:
+            if any(binding.get('slot', '').split('.', 1)[0] in local
+                   for binding in snapshot.get('PLUGINS.bindings', ())):
+                raise RuntimeError('Plugin artifact preparation is not configured')
+            return snapshot
+        return self._plugin_preparer(snapshot, local)
 
     async def start_reading(self, *, expected_revision, generation, connection_id):
         """Validate the connection inside the same ownership interval as Start."""

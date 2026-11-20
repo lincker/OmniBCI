@@ -181,12 +181,17 @@ def test_supervisor_retries_before_application_and_refetches_only_after_clean_ex
         return Mock(run=run)
 
     monkeypatch.setattr(node_client, "fetch_node_configuration", fetch)
+    def prepare(snapshot, modules):
+        assert modules == ("actuation",)
+        calls.append("prepare")
+        return snapshot
+    monkeypatch.setattr(node_client, "PluginArtifactPreparer", lambda store: Mock(prepare_snapshot=prepare))
     monkeypatch.setattr(node_client, "materialize_node_configuration", materialize)
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     monkeypatch.setattr(node_client.time, "sleep", lambda _: calls.append("wait"))
     node_client.run_configured_node("actuation", application, server_url="http://server")
-    assert calls == ["fetch", "wait", "fetch", "validate", "construct", "run-cleanup", "wait",
-                     "fetch", "validate", "construct", "run-cleanup"]
+    assert calls == ["fetch", "wait", "fetch", "validate", "prepare", "construct", "run-cleanup", "wait",
+                     "fetch", "validate", "prepare", "construct", "run-cleanup"]
     assert snapshots == [{"CONFIG.generation": "run-1"}, {"CONFIG.generation": "run-2"}]
 
 
@@ -194,7 +199,7 @@ def test_supervisor_retries_before_application_and_refetches_only_after_clean_ex
 def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monkeypatch, stage):
     error = RuntimeError("invalid config or hardware cleanup")
     fetch = Mock(return_value=configuration())
-    validate = Mock(return_value={})
+    validate = Mock(return_value={"PLUGINS.bindings": []})
     application = Mock(return_value=Mock(run=Mock(side_effect=error if stage == "run" else None)))
     if stage == "fetch":
         fetch.side_effect = error

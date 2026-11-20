@@ -1,5 +1,5 @@
 """Exercise trial-boundary replacement through real spawned-worker queues."""
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, install_package_root, prepared_snapshot
 
 from copy import deepcopy
 import json
@@ -41,7 +41,9 @@ def _event(queue, kind, predicate=lambda event: True):
 
 @pytest.mark.integration
 def test_spawned_worker_preserves_old_trial_then_acknowledges_new_pipeline(tmp_path, monkeypatch):
-    plugin = tmp_path / "algorithms" / "decoders" / "fixture"
+    plugin = tmp_path / "source"
+    markers = tmp_path / "markers"
+    markers.mkdir()
     plugin.mkdir(parents=True)
     (plugin / "manifest.toml").write_text('''manifest_version = 2
 [package]
@@ -61,8 +63,9 @@ schema_version = 1
 ''')
     (plugin / "schema.json").write_text(json.dumps({
         "type": "object", "additionalProperties": False,
-        "properties": {"target": {"type": "integer", "minimum": 1, "x-apply": "trial"}},
-        "required": ["target"],
+        "properties": {"target": {"type": "integer", "minimum": 1, "x-apply": "trial"},
+                       "marker_dir": {"type": "string"}},
+        "required": ["target", "marker_dir"],
     }))
     (plugin / "plugin.py").write_text('''from pathlib import Path
 from omnibci.sdk import Decoder, Prediction
@@ -73,7 +76,7 @@ class ValueDecoder(Decoder):
         pass
     def __init__(self, *, parameters, resource_root, input_signal):
         self.target = parameters["target"]
-        self.root = Path(resource_root)
+        self.root = Path(parameters["marker_dir"])
         (self.root / f"constructed-{self.target}").write_text("ready")
     def should_decode(self, data):
         return False
@@ -82,7 +85,8 @@ class ValueDecoder(Decoder):
     def begin_epoch(self):
         (self.root / f"epoch-{self.target}").write_text("ready")
 ''')
-    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path))
+    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
+    install_package_root(plugin)
     catalog = PluginCatalog()
     decoder = next(item for item in catalog.list_contributions("decoder")
                    if item.package.identifier == "Tests.trial_fixture")
@@ -92,13 +96,15 @@ class ValueDecoder(Decoder):
                 "ACQUISITION.signal_source": "test-source",
                 "PLUGINS.bindings": [
                     ProfileBinding("processing.decoder", "decoder", None, decoder.selection,
-                                   {"target": 1}, processing_input=ProcessingInput()).to_dict(),
+                                   {"target": 1, "marker_dir": str(markers)}, processing_input=ProcessingInput()).to_dict(),
                     ProfileBinding("processing.epoch_detector", "epoch_detector", None,
                                    detector.selection, {}).to_dict(),
                 ]}
     replacement = deepcopy(snapshot)
     replacement["CONFIG.module_revisions"]["processing"] = "new"
     replacement["PLUGINS.bindings"][0]["parameters"]["target"] = 2
+    snapshot = prepared_snapshot(snapshot)
+    replacement = prepared_snapshot(replacement)
     context = mp.get_context("spawn")
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
@@ -124,11 +130,11 @@ class ValueDecoder(Decoder):
         attached = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "attach")
         assert attached.ok, attached.message
         data.put(SignalChunk(1, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
-        _wait_file(plugin / "epoch-1")
+        _wait_file(markers / "epoch-1")
         commands.put((SignalProcessorCommand.stage_configuration, CommandRequest("update", {
             "settings_snapshot": replacement, "expected_revision": "old", "generation": "run", "engine_revision": "engine", "boundary": "trial",
         })))
-        _wait_file(plugin / "constructed-2")
+        _wait_file(markers / "constructed-2")
         data.put(SignalChunk(2, 2, np.array([[1., 1., 1.], [0., 9., 0.]])))
         old_trial = _event(events, EventType.TrialCompleted)
         assert old_trial.processing_revision == "old" and old_trial.classification.target_id == 1

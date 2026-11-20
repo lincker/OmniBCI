@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import threading
 
 import pytest
+from tests.plugin_configuration_helpers import prepared_snapshot
 
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError,
@@ -23,14 +24,14 @@ from omnibci.application.commands.stimulation_commands import StartStimulationCo
 
 
 def _paradigm_snapshot():
-    return {"CONFIG.module_revisions": {"stimulation": "revision"},
+    return prepared_snapshot({"CONFIG.module_revisions": {"stimulation": "revision"},
             "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
             "PLUGINS.bindings": [{
         "slot": "stimulation.paradigm", "kind": "paradigm", "profile_id": None,
         "selection": {"package_id": "OmniBCI.classic40SSVEP",
                       "contribution_id": "default", "version": "0.1.0"},
         "parameters": {}, "configuration_version": 1, "profile_revision": 0,
-    }]}
+    }]}, ("stimulation",))
 
 
 def _mock_process(*, exits_after_join=None, alive=True, pid=4321):

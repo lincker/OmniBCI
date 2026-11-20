@@ -19,7 +19,7 @@ from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from tests.plugin_configuration_helpers import accept_profiles, builtin_selection
+from tests.plugin_configuration_helpers import accept_profiles, builtin_selection, install_package_root, prepare_runtime_plugins
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
@@ -68,7 +68,7 @@ class Replay(SignalSource):
 
 def configured_profiles(tmp_path, monkeypatch, *, actuation_port=8001):
     root = tmp_path / 'plugins'
-    plugin = root / 'acquisition' / 'replay'
+    plugin = tmp_path / 'source-replay'
     plugin.mkdir(parents=True)
     monkeypatch.setenv('OMNIBCI_PLUGIN_DIR', str(root))
     (plugin / 'manifest.toml').write_text('''manifest_version=2
@@ -96,6 +96,7 @@ schema_version=1
                        'channel_count':{'type':'integer','default':2}},
         'required':['size','log','sample_rate','channel_count'],
     }))
+    install_package_root(plugin)
     host = {'STIMULATION.auto_spawn':True,
             'ACTUATION.server_port':actuation_port, 'ALGORITHM.baseline_duration':0.0}
     profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / 'profiles'),
@@ -132,7 +133,8 @@ def wire_signal_preparation(profiles, engine, container):
 @pytest.mark.parametrize("processing_first", [False, True])
 async def test_current_actions_connect_and_start_processing_with_real_workers(tmp_path, monkeypatch, processing_first):
     profiles, _ = configured_profiles(tmp_path, monkeypatch)
-    engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build())
+    engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+                                plugin_preparer=prepare_runtime_plugins)
     await engine.startup()
     container = assemble(engine, admission=engine.admission)
     signal = wire_signal_preparation(profiles, engine, container)
@@ -203,6 +205,7 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
 async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candidate_rolls_back(tmp_path, monkeypatch, unused_tcp_port):
     profiles, bindings = configured_profiles(tmp_path, monkeypatch, actuation_port=unused_tcp_port)
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+                                plugin_preparer=prepare_runtime_plugins,
                                 snapshot_provider=lambda: accepted_runtime_settings(profiles=profiles))
     await engine.startup()
     container = assemble(engine, admission=engine.admission)
@@ -224,7 +227,9 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         })
         assert started["status"] == "succeeded", started
         async with engine.runtime_transition("acquisition"):
-            await engine.start_module_for_configuration("acquisition", engine.applied_snapshot)
+            prepared = engine.prepare_plugins(engine.applied_snapshot, ("acquisition",))
+            await engine.start_module_for_configuration("acquisition", prepared)
+            engine.acknowledge_configuration(prepared, modules=("acquisition",))
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         await asyncio.sleep(.08)

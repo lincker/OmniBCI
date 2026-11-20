@@ -198,7 +198,7 @@ def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch
     factory = Mock(return_value=app)
     sleep = Mock()
     monkeypatch.setattr(node_client, "fetch_node_configuration", fetch)
-    monkeypatch.setattr(node_client, "materialize_node_configuration", Mock(return_value={}))
+    monkeypatch.setattr(node_client, "materialize_node_configuration", Mock(return_value={"PLUGINS.bindings": []}))
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     monkeypatch.setattr(node_client.time, "sleep", sleep)
 
