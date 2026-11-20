@@ -51,6 +51,12 @@ def test_market_verification_and_local_publication_share_one_installation_owner(
     store, archive, _, _ = artifacts
     prepare, verify, publish = repository.prepare_install, repository.verify_prepared, store.install_archive
     calls = []
+    original_publish = store.installer._publish
+    def publishing(*args):
+        assert held
+        calls.append("publish")
+        return original_publish(*args)
+    monkeypatch.setattr(store.installer, "_publish", publishing)
     def downloading(*args):
         assert not held
         calls.append("download")
@@ -68,10 +74,10 @@ def test_market_verification_and_local_publication_share_one_installation_owner(
     monkeypatch.setattr(store, "install_archive", installing)
 
     result = market.install("acme.device", "1.0.0")
-    assert calls == ["download", "verify", "install"]
+    assert calls == ["download", "install", "verify", "publish"]
     assert not result.package.enabled and not result.already_installed
     assert installation.install(archive).already_installed
-    assert calls == ["download", "verify", "install", "install"]
+    assert calls == ["download", "install", "verify", "publish", "install", "publish"]
     assert not hasattr(repository, "installer") and not hasattr(repository, "install")
     assert not hasattr(market.repository, "store") and not hasattr(market.repository, "install_prepared")
     assert not list(store.packages_dir.rglob("__pycache__"))
@@ -96,7 +102,7 @@ def test_delayed_publication_rechecks_proof_identity_and_archive(artifacts, prob
             repository.clock = lambda: datetime(2026, 9, 25, tzinfo=UTC)
         yield
     installation.admission_guard = delayed
-    with pytest.raises(PluginMarketError if problem != "archive" else PluginPackageError):
+    with pytest.raises(PluginMarketError if problem == "expired" else PluginPackageError):
         market.install("acme.device", "1.0.0")
     assert not store.list_packages()
 

@@ -1,18 +1,16 @@
 """Installed package inventory; installation does not add any catalog roots."""
 from __future__ import annotations
 
-import json
-import re
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from omnibci.application.plugin_packages import (
-    PackageContribution, PackageInstallation, PackageVersion, PluginPackageError,
+    MarketVerification, PackageContribution, PackageInstallation, PackageVersion, PluginPackageError,
     PluginPackageNotFoundError, PluginPackageStorageError,
 )
 from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.package_installer import PackageInstallError, PluginPackageInstaller, _portable_path
+from omnibci.infrastructure.plugins.package_installer import PackageInstallError, PluginPackageInstaller
 from omnibci.infrastructure.plugins.package_paths import managed_package_path
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog, PluginRoot, user_plugins_dir,
@@ -46,13 +44,14 @@ class DirectoryPluginPackageStore:
             raise PluginPackageError("Installed manifest identity differs from its directory")
         return descriptors
 
-    def install_archive(self, archive: Path, *, expected_sha256: str | None = None,
+    def install_archive(self, archive: Path, *, revalidate: Callable[[], MarketVerification] | None = None,
+                        expected_sha256: str | None = None,
                         expected_package_id: str | None = None, expected_version: str | None = None,
                         expected_domain: str | None = None,
                         expected_contributions: Mapping[str, str] | None = None) -> PackageInstallation:
         try:
             installed = self.installer.install(
-                archive, expected_sha256=expected_sha256, expected_package_id=expected_package_id,
+                archive, revalidate=revalidate, expected_sha256=expected_sha256, expected_package_id=expected_package_id,
                 expected_version=expected_version, expected_domain=expected_domain,
                 expected_contributions=expected_contributions,
             )
@@ -65,7 +64,7 @@ class DirectoryPluginPackageStore:
     def get_package(self, package_id: str, version: str) -> PackageVersion:
         location = self._path(package_id, version)
         try:
-            receipt = self._receipt(location, package_id, version)
+            receipt = self.installer.read_receipt(location, package_id, version)
             descriptors = self._descriptors(package_id, version)
             first = descriptors[0]
             definitions = [CatalogConfigurationAdapter._adapt(item, self.installer.platform_name) for item in descriptors]
@@ -73,38 +72,17 @@ class DirectoryPluginPackageStore:
                 package_id, version, first.display_name, first.description, receipt["sha256"],
                 tuple(PackageContribution(item.selection, item.kind, item.label, item.available) for item in definitions),
                 domain=first.package.domain, available=any(item.available for item in definitions),
+                origin=receipt["origin"],
+                verified_repository=(receipt["market_verification"]["repository_id"]
+                                     if receipt["market_verification"] is not None else None),
             )
         except (OSError, ValueError, KeyError, PluginResolutionError, PackageInstallError, PluginPackageError) as exc:
             return PackageVersion(package_id, version, package_id, None, None, (), domain=None, available=False, error=str(exc))
 
-    def _receipt(self, location: Path, package_id: str, version: str) -> dict:
-        path = location / ".omnibci-install.json"
-        # JSON escapes can expand each permitted archive path character sixfold.
-        receipt_limit = self.installer.limits.max_entries * (6 * 4096 + 128) + 4096
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > receipt_limit:
-            raise PluginPackageError("Installation receipt must be a bounded regular file")
-        receipt = json.loads(path.read_text(encoding="utf-8"))
-        if (not isinstance(receipt, dict)
-                or receipt.keys() != {"receipt_version", "package_id", "version", "sha256", "files"}
-                or type(receipt["receipt_version"]) is not int or receipt["receipt_version"] != 1
-                or receipt["package_id"] != package_id or receipt["version"] != version):
-            raise PluginPackageError("Installation receipt identity or format is invalid")
-        files = receipt["files"]
-        if not isinstance(files, dict) or not files or len(files) > self.installer.limits.max_entries:
-            raise PluginPackageError("Installation receipt file list is invalid")
-        for value in [receipt["sha256"], *files.values()]:
-            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
-                raise PluginPackageError("Installation receipt digest is invalid")
-        for name in files:
-            _portable_path(name)
-        if "manifest.toml" not in files:
-            raise PluginPackageError("Installation receipt does not include the manifest")
-        return receipt
-
     def verify_integrity(self, package_id: str, version: str) -> None:
         location = self._path(package_id, version)
         try:
-            self.installer._verify_existing(location, self._receipt(location, package_id, version))
+            self.installer._verify_existing(location, self.installer.read_receipt(location, package_id, version))
         except (OSError, ValueError, PackageInstallError) as exc:
             raise PluginPackageError(str(exc)) from exc
 

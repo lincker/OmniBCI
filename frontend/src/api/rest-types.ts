@@ -2032,6 +2032,13 @@ export interface components {
             description: string | null;
             /** Sha256 */
             sha256: string | null;
+            /** Origin */
+            origin: ("local" | "market") | null;
+            /**
+             * Verified Repository
+             * @description Repository accepted at installation; not a current online trust check
+             */
+            verified_repository: string | null;
             /** Contributions */
             contributions: components["schemas"]["PackageContributionResponse"][];
             /** Enabled */

@@ -22,15 +22,16 @@ from dataclasses import dataclass, replace
 from contextlib import contextmanager
 from importlib import metadata
 from pathlib import Path, PurePosixPath
-from typing import Mapping
+from typing import Callable, Mapping
 
+from omnibci.application.plugin_packages import MarketVerification, PluginPackageError
 from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog,
 )
 
 from omnibci.infrastructure.plugins.manifest import (
-    PluginManifestError, parse_manifest, read_manifest,
+    PluginManifestError, parse_manifest, read_manifest, _unique_json_object,
 )
 
 _RECEIPT = ".omnibci-install.json"
@@ -141,7 +142,8 @@ class PluginPackageInstaller:
         self.catalog = PluginCatalog(plugin_dir=self.root.parent, host_version=self.host_version)
 
     def install(
-        self, archive: Path, *, expected_sha256: str | None = None,
+        self, archive: Path, *, revalidate: Callable[[], MarketVerification] | None = None,
+        expected_sha256: str | None = None,
         expected_package_id: str | None = None, expected_version: str | None = None,
         expected_contributions: Mapping[str, str] | None = None, expected_domain: str | None = None,
     ) -> InstalledPackage:
@@ -150,6 +152,10 @@ class PluginPackageInstaller:
             r"[0-9a-fA-F]{64}", expected_sha256,
         ):
             raise PackageInstallError("Expected SHA-256 must contain 64 hexadecimal digits")
+        if revalidate is not None and any(value is None for value in (
+            expected_sha256, expected_package_id, expected_version, expected_domain, expected_contributions,
+        )):
+            raise PackageInstallError("Repository verification requires exact expected artifact metadata")
         self.root.mkdir(parents=True, exist_ok=True)
         # Catalog traversal ignores __ directories, so incomplete installations
         # cannot become visible even when the installation root is being scanned.
@@ -188,9 +194,15 @@ class PluginPackageInstaller:
                 receipt = {
                     "receipt_version": 1, "package_id": package.identifier,
                     "version": package.version, "sha256": digest, "files": files,
+                    "origin": "market" if revalidate is not None else "local", "market_verification": None,
                 }
-                self._write_receipt(location, receipt)
                 with self._package_lock(package.identifier):
+                    if revalidate is not None:
+                        verification = revalidate()
+                        if not isinstance(verification, MarketVerification):
+                            raise PackageInstallError("Repository verifier must return accepted evidence")
+                        receipt["market_verification"] = verification.to_dict()
+                    self._write_receipt(location, receipt)
                     destination_parent.mkdir(exist_ok=True)
                     already_installed = self._publish(location, destination, receipt)
                 published = tuple(replace(
@@ -200,7 +212,7 @@ class PluginPackageInstaller:
                     package.identifier, package.version, destination, digest,
                     already_installed, published,
                 )
-            except PackageInstallError:
+            except (PackageInstallError, PluginPackageError):
                 raise
             except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
                 raise PackageInstallError(f"Cannot install plugin archive: {exc}") from exc
@@ -426,31 +438,80 @@ class PluginPackageInstaller:
             writer.flush()
             os.fsync(writer.fileno())
 
+    def read_receipt(self, location: Path, package_id: str, version: str) -> dict:
+        """Read bounded host records without refreshing repository trust."""
+        path = location / _RECEIPT
+        # Reserve space for one bounded signed proof as well as escaped paths.
+        limit = self.limits.max_entries * (6 * 4096 + 128) + 2 * 1024 * 1024
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+            raise PackageInstallError("Installation receipt must be a bounded regular file")
+        receipt = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_json_object)
+        if (not isinstance(receipt, dict)
+                or receipt.keys() != {"receipt_version", "package_id", "version", "sha256", "files",
+                                      "origin", "market_verification"}
+                or type(receipt["receipt_version"]) is not int or receipt["receipt_version"] != 1
+                or receipt["package_id"] != package_id or receipt["version"] != version):
+            raise PackageInstallError("Installation receipt identity or format is invalid")
+        files = receipt["files"]
+        if not isinstance(files, dict) or not files or len(files) > self.limits.max_entries:
+            raise PackageInstallError("Installation receipt file list is invalid")
+        for value in [receipt["sha256"], *files.values()]:
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise PackageInstallError("Installation receipt digest is invalid")
+        for name in files:
+            _portable_path(name)
+        if "manifest.toml" not in files:
+            raise PackageInstallError("Installation receipt does not include the manifest")
+        if receipt["origin"] not in ("local", "market"):
+            raise PackageInstallError("Installation receipt origin is invalid")
+        verification = receipt["market_verification"]
+        if verification is not None:
+            MarketVerification.from_dict(verification)
+        elif receipt["origin"] == "market":
+            raise PackageInstallError("Market origin requires accepted repository evidence")
+        return receipt
+
     def _publish(self, source: Path, destination: Path, receipt: dict) -> bool:
-        if destination.exists():
-            self._verify_existing(destination, receipt)
-            return True
-        try:
-            source.rename(destination)
-        except OSError:
-            # Another installer may have published this exact version first.
-            if not destination.exists():
-                raise
-            self._verify_existing(destination, receipt)
-            return True
-        return False
+        if not destination.exists():
+            try:
+                source.rename(destination)
+                return False
+            except OSError:
+                if not destination.exists():
+                    raise
+        actual = self._verify_existing(destination, receipt)
+        incoming = receipt["market_verification"]
+        retained = actual["market_verification"]
+        # Identical proof retries retain their first acceptance timestamp.
+        if incoming is not None and (retained is None or any(
+            incoming[key] != retained[key] for key in incoming if key != "accepted_at"
+        )):
+            actual["market_verification"] = incoming
+            self._replace_receipt(destination, actual)
+        return True
 
     @staticmethod
-    def _verify_existing(destination: Path, expected: dict) -> None:
+    def _replace_receipt(destination: Path, receipt: dict) -> None:
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix="__receipt-",
+                                             dir=destination.parent, delete=False) as writer:
+                temporary = Path(writer.name)
+                json.dump(receipt, writer, sort_keys=True)
+                writer.flush()
+                os.fsync(writer.fileno())
+            os.replace(temporary, destination / _RECEIPT)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    def _verify_existing(self, destination: Path, expected: dict) -> dict:
         try:
             if destination.is_symlink() or not destination.is_dir():
                 raise ValueError("destination is not a real directory")
-            receipt_path = destination / _RECEIPT
-            if receipt_path.is_symlink():
-                raise ValueError("receipt is a symlink")
-            actual = json.loads(receipt_path.read_text(encoding="utf-8"))
-            if actual != expected:
-                raise ValueError("different archive or receipt")
+            actual = self.read_receipt(destination, expected["package_id"], expected["version"])
+            if any(actual[key] != expected[key] for key in ("package_id", "version", "sha256", "files")):
+                raise ValueError("different archive or file inventory")
             for name, digest in expected["files"].items():
                 path = destination.joinpath(*PurePosixPath(name).parts)
                 if any(item.is_symlink() for item in (path, *path.parents) if item != destination.parent):
@@ -458,7 +519,8 @@ class PluginPackageInstaller:
                 with path.open("rb") as reader:
                     if hashlib.file_digest(reader, "sha256").hexdigest() != digest:
                         raise ValueError("installed file content changed")
-        except (OSError, ValueError, TypeError) as exc:
+            return actual
+        except (OSError, ValueError, TypeError, PackageInstallError) as exc:
             raise PackageInstallError(
                 f"Package version already exists with conflicting content: {destination} ({exc})"
             ) from exc

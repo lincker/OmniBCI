@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from omnibci.application.plugin_market import MarketContribution, MarketPackage, PreparedMarketInstall
 from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_packages import MarketVerification
 from omnibci.infrastructure.plugins.manifest import VALID_CATEGORIES, PACKAGE_DOMAINS
 
 _IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9_-]*"
@@ -186,12 +187,19 @@ class StaticMarketRepository:
         archive = self._download(selected)
         return PreparedMarketInstall(selected, archive, proof)
 
-    def verify_prepared(self, prepared: PreparedMarketInstall) -> None:
-        # Admission may have delayed publication; verify expiry and signed identity
-        # again, then let the installer hash the cached bytes before publication.
+    def verify_prepared(self, prepared: PreparedMarketInstall) -> MarketVerification:
+        # Called after archive validation, immediately before local publication.
+        # The accepted evidence stays in the host receipt, outside plugin inputs.
         selected = prepared.package
         if selected not in self._parse_index(prepared.proof):
             raise MarketRepositoryError("Prepared package differs from signed repository metadata")
+        document = json.loads(prepared.proof)
+        key_id = document["signature"]["key_id"]
+        return MarketVerification(
+            selected.repository_id, key_id,
+            hashlib.sha256(self._keys[key_id].public_bytes_raw()).hexdigest(),
+            self.clock().astimezone(UTC).isoformat(), prepared.proof,
+        )
 
     def _verify_signature(self, document: dict) -> None:
         signature = document["signature"]

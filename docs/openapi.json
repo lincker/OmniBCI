@@ -9349,6 +9349,33 @@
             ],
             "title": "Sha256"
           },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "market"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "verified_repository": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified Repository",
+            "description": "Repository accepted at installation; not a current online trust check"
+          },
           "contributions": {
             "items": {
               "$ref": "#/components/schemas/PackageContributionResponse"
@@ -9391,6 +9418,8 @@
           "label",
           "description",
           "sha256",
+          "origin",
+          "verified_repository",
           "contributions",
           "enabled",
           "available",

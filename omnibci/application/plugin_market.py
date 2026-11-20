@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from omnibci.application.plugin_packages import PluginPackageError
+from omnibci.application.plugin_packages import MarketVerification, PluginPackageError
 from omnibci.application.plugin_identity import PluginSelection
 
 
@@ -46,4 +46,4 @@ class PreparedMarketInstall:
 class PluginMarketRepository(Protocol):
     def list_packages(self) -> tuple[MarketPackage, ...]: ...
     def prepare_install(self, package_id: str, version: str) -> PreparedMarketInstall: ...
-    def verify_prepared(self, prepared: PreparedMarketInstall) -> None: ...
+    def verify_prepared(self, prepared: PreparedMarketInstall) -> MarketVerification: ...

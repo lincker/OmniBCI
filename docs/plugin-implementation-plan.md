@@ -1,6 +1,6 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2e and S3–S6 remain pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes are also implemented and verified; S3–S6 remain pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2d are complete and verified (S2d: `1526d06`); the remaining S2 work is pending.
 
@@ -303,6 +303,20 @@ The configuration adapter now receives the installation target platform explicit
 Eight scope/target cases failed before implementation and then passed. The focused run passed **373 tests**; its two localhost node-sync cases hit sandbox bind restrictions and both passed when rerun with loopback access. All **8 import contracts** passed. Final verification passed **3781 headless tests** and **36 integration tests**, with one Windows Job Objects skip and the two existing WebSocket warnings. Both full suites used the same frozen source/test tree. Evidence is in `/private/tmp/omnibci-s2d-e9nhvgtx`.
 
 Only six production files change: catalog, installer, store, lifecycle store, configuration adapter and Bootstrap. The new cases cover two independent inventories with the same identity, corrupt unrelated registry state, enable/disable visibility after environment changes, selected/default domain conflicts, and explicit Windows/Linux target metadata without plugin imports. They do not execute either target OS or physical devices. After this checkpoint, Stimulation work takes priority under the updated branch scope.
+
+#### S2e execution (2026-11-20)
+
+The existing installation receipt now keeps first acquisition `origin` (`local` or `market`) separately from one bounded `market_verification` record. The latter retains the accepted signed index, its digest, configured signer ID/key fingerprint, repository ID and acceptance time. The repository adapter still verifies signatures; the installer/store share one receipt reader. No source hierarchy, additional trust service, public proof object or compatibility reader is added.
+
+Market verification now runs after archive/manifest validation under the existing admission and package publication locks. A proof that expires during extraction cannot publish either a fresh installation or evidence for an existing local installation. The existing signed artifact identity/digest checks remain mandatory. This closes the interval left by S2c's earlier admission-before-extraction recheck while preserving its shared publication owner.
+
+The first origin is immutable. An explicit Market install of identical local bytes adds accepted evidence without changing enablement, profiles, code or origin. The same proof retains its first acceptance timestamp; a newly verified proof atomically replaces the single retained record. A later local retry cannot erase it. Conflicting bytes and failed evidence replacement leave the existing installation intact. One current evidence record is sufficient for the configured repository workflow; an unbounded provenance/history collection is unnecessary.
+
+Management responses expose only `origin` and `verified_repository` in addition to the existing fields. Proofs, fingerprints, acceptance details and paths stay private. This is the repository accepted during installation, not a current online trust claim. Inventory/integrity/enablement use local evidence without rechecking old index expiry or fetching the market. Existing enablement remains the operator acceptance action. Built-in distribution provenance is S3; isolated development provenance is S5. Pre-launch receipts with the old shape are rejected, without implicit migration or deletion.
+
+The first origin group reproduced **12 failures**, with four malformed-record cases already rejected; all 16 then passed. Seven additional corruption/boundary cases also passed and are not claimed as reproduced failures. Final verification passed **362 package/market/HTTP contract tests**, **16 runtime-reference tests**, the existing signed HTTP installation integration case, **527 frontend tests**, the production build and **9 import contracts**. OpenAPI and generated REST types include the two summary fields. The earlier S1f checkpoint supplies the full **4131 headless / 36 integration** baseline; no new full-suite run is claimed for this isolated storage batch. Two initial regression assertions were updated for the later verification point and earlier archive-identity rejection. Evidence is in `/private/tmp/omnibci-s2e-dx92bf9l`.
+
+S2 is complete for the local management ownership scope. Exact artifact/environment preparation, per-process code caching and mutation authority remain S3; remote execution receipts remain S4. Remote installation/removal is still unavailable.
 
 ### S3 Complete artifact preparation, loading and reference handoff
 

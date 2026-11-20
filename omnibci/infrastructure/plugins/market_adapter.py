@@ -38,7 +38,7 @@ class MarketRepositoryAdapter:
 
     def verify_prepared(self, prepared):
         with _market_errors():
-            self.repository.verify_prepared(prepared)
+            return self.repository.verify_prepared(prepared)
 
 
 def configured_market_service(installation: PluginInstallationService, *, environ=None):
