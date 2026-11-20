@@ -136,7 +136,7 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
     profiles, _ = configured_profiles(tmp_path, monkeypatch)
     history = PluginExecutionHistory(profiles.repository.root)
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(
-        settings_snapshot=snapshot, record_execution=history.record).build(),
+        settings_snapshot=snapshot, execution_history_root=profiles.repository.root).build(),
                                 plugin_preparer=prepare_runtime_plugins)
     await engine.startup()
     container = assemble(engine, admission=engine.admission)
@@ -182,9 +182,10 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
         assert connected["result"]["action"] == "connected"
         assert engine.is_engine_ready and engine.is_module_running("acquisition")
         records = [json.loads(path.read_text())["receipt"] for path in history.directory.glob("*.json")]
-        assert len(records) == 1
-        assert records[0]["module"] == "acquisition" and records[0]["generation"] == engine.generation
-        assert records[0]["artifacts"]["acquisition.source"]["content_sha256"] == (
+        source_records = [record for record in records if record["module"] == "acquisition"]
+        assert len(source_records) == 1
+        assert source_records[0]["generation"] == engine.generation
+        assert source_records[0]["artifacts"]["acquisition.source"]["content_sha256"] == (
             engine.applied_snapshot["PLUGINS.artifacts"]["acquisition.source"]["content_sha256"])
         assert engine.is_module_running("processing") is processing_first
         assert engine.admission.recovery_status == {"stimulation": "External output stop is unconfirmed"}
@@ -205,6 +206,15 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
                                    connection_id=status.connection_id)
         assert container.acquisition_service.is_streaming
         assert engine._engine.data_manager.processing_active.is_set()
+        records = [json.loads(path.read_text())["receipt"] for path in history.directory.glob("*.json")]
+        processing_records = [record for record in records if record["module"] == "processing"]
+        assert processing_records
+        assert all(record["generation"] == generation for record in processing_records)
+        assert all(set(record["artifacts"]) == {"processing.decoder", "processing.epoch_detector"}
+                   for record in processing_records)
+        assert all(record["artifacts"]["processing.decoder"]["content_sha256"] == (
+            engine.applied_snapshot["PLUGINS.artifacts"]["processing.decoder"]["content_sha256"])
+                   for record in processing_records)
     finally:
         await engine.handle_stop_engine(StopEngineCommand())
 

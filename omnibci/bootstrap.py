@@ -195,7 +195,7 @@ async def _build_container_services(host_settings, allow_process_termination, pa
     engine_service = NeuroEngineService(
         engine_factory=lambda snapshot: NeuroEngineBuilder(
             settings_snapshot=snapshot, allow_process_termination=allow_process_termination,
-            record_execution=execution_history.record,
+            execution_history_root=repository.root,
         ).build(),
         snapshot_provider=startup_snapshot,
         actuation_process_manager=actuation_manager,

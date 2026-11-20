@@ -224,7 +224,7 @@ class TestProcessorWiring:
             filters=[],
             generation=None,
             processing_revision=None, acquisition_revision=None, engine_revision=None,
-            settings_snapshot=worker.settings_snapshot, runtime_counters=None,
+            settings_snapshot=worker.settings_snapshot, runtime_counters=None, record_execution=None,
         )
         assert worker.signal_processor is processor
         processor.run.assert_called_once_with()

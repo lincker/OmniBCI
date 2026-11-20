@@ -2,8 +2,10 @@
 import multiprocessing as mp
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
+from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
 from omnibci.infrastructure.plugins.preparation import execution_receipt
 
 from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS, module_runtime_settings
@@ -62,10 +64,13 @@ class NeuroEngineBuilder:
 
     def __init__(self, config: NeuroEngineConfig | None = None,
                  *, settings_snapshot: dict | None = None,
-                 allow_process_termination: bool = True, record_execution=None) -> None:
+                 allow_process_termination: bool = True,
+                 execution_history_root: Path | None = None) -> None:
         if settings_snapshot is None:
             raise ValueError("NeuroEngineBuilder requires a pinned settings snapshot")
-        self._record_execution = record_execution
+        self._execution_history_root = execution_history_root.resolve() if execution_history_root is not None else None
+        self._record_execution = (PluginExecutionHistory(self._execution_history_root).record
+                                  if self._execution_history_root is not None else None)
         self._settings_snapshot = deepcopy(settings_snapshot)
         self._config = config or NeuroEngineConfig.from_settings(self._settings_snapshot)
         self._allow_process_termination = allow_process_termination
@@ -132,6 +137,7 @@ class NeuroEngineBuilder:
                             MODULE_SETTING_DEFAULTS["processing"]["ALGORITHM.baseline_duration"],
                         )),
                         startup_reporter=reporter, runtime_counters=runtime_counters,
+                        execution_history_root=self._execution_history_root,
                     )
                 return StartupChannel(component, worker, receiver, reporter, expected_execution)
             except BaseException:

@@ -20,6 +20,7 @@ from omnibci.application.events import (
     ProcessingInputStart, SignalPreparationReceipt, StreamBarrier, StreamDrainReceipt, TrialOutcome,
 )
 from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 from omnibci.shared.events import Event, EventType
 from .processing_state import AwaitingEpochState, AssemblingEpochState
 from .epoch.epoch_processor import EpochProcessor
@@ -68,10 +69,12 @@ class SignalProcessor:
         engine_revision: str | None = None,
         settings_snapshot: dict | None = None,
         runtime_counters=None,
+        record_execution=None,
     ) -> None:
         self.data_manager = data_manager
         self.event_bus = event_bus
         self.command_queue = command_queue
+        self._record_execution = record_execution
 
         # EpochDetector: reads epoch start/end markers from each chunk. Owned
         # here (the orchestration/state-machine level), not by EpochProcessor —
@@ -475,6 +478,8 @@ class SignalProcessor:
                     raise ValueError("Drain the stream before preparing a new signal plan")
                 decoder, detector, filters = load_signal_pipeline(snapshot, plan)
                 self._setup_decoder(decoder)
+                if self._record_execution is not None:
+                    self._record_execution(execution_receipt(snapshot, "processing", receipt.input_id))
                 self._release_decoder(self._decoder)
                 self._decoder, self.detector, self._filters = decoder, detector, list(filters)
                 self._sample_rate = plan.source.sample_rate
@@ -563,7 +568,10 @@ class SignalProcessor:
             self._publish_configuration_result(result)
         if newly_staged:
             try:
-                self._setup_decoder(self._configuration_transactions.pending[1].decoder)
+                candidate = self._configuration_transactions.pending[1]
+                self._setup_decoder(candidate.decoder)
+                if candidate.decoder is not None and self._record_execution is not None:
+                    self._record_execution(execution_receipt(candidate.settings_snapshot, "processing", request.command_id))
             except Exception as exc:
                 self._cancel_pending_configuration(str(exc), error_code="PROCESSING_CONFIGURATION_REJECTED")
                 return
