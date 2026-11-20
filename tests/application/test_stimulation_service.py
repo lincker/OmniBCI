@@ -185,7 +185,9 @@ class TestStimulationStop:
             stimulation_service.handle_stop_stimulation(StopStimulationCommand())
 
         manager.stop.assert_called_once_with()
-        assert stimulation_service.is_active is False
+        assert stimulation_service._active_identity == (None, None)
+        with pytest.raises(RuntimeError, match="unconfirmed"):
+            stimulation_service.handle_start_trial(StartStimTrialCommand())
 
     def test_managed_stop_can_recover_after_foundation_stops(
         self, stimulation_service, engine_service,
@@ -317,3 +319,14 @@ def test_connected_external_node_cannot_run_trials_before_enable(stimulation_ser
         stimulation_service.handle_start_trial(StartStimTrialCommand())
     broker.request.assert_not_called()
     mock_engine.event_bus.put_event.assert_not_called()
+
+
+def test_failed_managed_stop_retains_identity(stimulation_service, engine_service):
+    manager = MagicMock(auto_spawn=True)
+    manager.stop.side_effect = RuntimeError("cleanup not confirmed")
+    stimulation_service._process_manager = manager
+    stimulation_service._active_identity = ("generation", "revision")
+    with pytest.raises(RuntimeError, match="cleanup not confirmed"):
+        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+    assert stimulation_service._active_identity == ("generation", "revision")
+    assert stimulation_service._stop_managed is True

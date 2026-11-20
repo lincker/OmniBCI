@@ -1,6 +1,6 @@
 # Stimulation Interface and Rendering Design
 
-Status: S1d implementation has resumed on `refactor/module-interface` under the latest user instruction. The first batch is restored from `e2299db` and verified against `1526d06`: 28 reproduced failures, then 245 focused tests and eight import contracts passed. Capabilities/lifecycle and graphics follow as separate verified commits. See the [execution scope](#8-follow-up-branch-handoff).
+Status: S1d implementation has resumed on `refactor/module-interface` under the latest user instruction. The first batch is restored from `e2299db` and verified against `1526d06`: 28 reproduced failures, then 245 focused tests and eight import contracts passed. The capabilities/lifecycle batch is complete and verified; graphics follows separately. See the [execution scope](#8-follow-up-branch-handoff).
 
 Updated: 2026-11-20. Historical findings describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e`. The branch retains S1a–S1c from `e81f825` and subsequently implements independent S1e Actuation work; the lifecycle and graphics changes below remain pending until their execution records confirm completion.
 
@@ -25,7 +25,7 @@ Frame-pack generation and image storage remain covered by [Building the stimulat
 | Component | Target responsibility | Boundary |
 | --- | --- | --- |
 | Stimulation application | Admit trial/result requests, validate host identity, manage queues and receipts, and coordinate pause/stop. | Keep IPC, module revisions and command IDs private. |
-| `Stimulator` | Construct selected components and own their preparation, rendering task and cleanup. | One resource owner across successful and partial startup. |
+| `Stimulator` | Construct selected components and own their preparation, rendering execution and cleanup; the application retains the task. | One resource owner across successful and partial startup. |
 | `RenderLoop` | Poll window events, call the paradigm for one frame, and submit that frame. | Drive the loop without independently owning plugin teardown. |
 | Renderer adapter | Implement window/context operations, drawing and texture resources. | Host uses lifecycle/submission methods; paradigm uses `RenderSurface`. |
 | Paradigm Instance (`Paradigm` contract) | Own cue/stimulus/feedback state, draw its content and request trigger operations. | No window, process or scheduler control. |
@@ -49,7 +49,7 @@ The [current application](../omnibci/infrastructure/stimulation/application.py:1
 
 The alternative `Stimulator.start()` creates resources on its caller's thread and then starts a background render thread. Its defects below must not be attributed to every run of the current asynchronous application.
 
-## 3. Current problems and their effects
+## 3. Baseline problems and their effects
 
 ### 3.1 Partial preparation and cleanup failures lose resource ownership
 
@@ -208,9 +208,9 @@ Its tests are `tests/domain/test_paradigm_contract.py`, `tests/stimulation/test_
 
 Recover the applicable code/tests against the current base. Reconcile documentation status separately; historical test results do not validate the restored implementation.
 
-### 8.2 Proposed second batch: capabilities and lifecycle
+### 8.2 Second batch: capabilities and lifecycle
 
-This batch is now authorized on the current branch. Implement it after the restored first batch, with failing lifecycle cases before production changes.
+This batch is implemented after `e2ef5a0`. The new failure cases and focused checks are recorded in the [execution plan](plugin-implementation-plan.md). Final verification passed 3865 headless tests, 36 integration tests (one Windows-only skip) and eight import contracts. The table records the implemented boundary, with graphics-specific work retained in section 8.3.
 
 | Change boundary | Concrete adjustment and reason |
 | --- | --- |

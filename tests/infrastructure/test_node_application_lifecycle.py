@@ -27,9 +27,16 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
             self.ready = True
 
         async def start_async(self):
-            self.setup()
-            self.released = asyncio.Event()
-            await self.released.wait()
+            try:
+                self.setup()
+                self.released = asyncio.Event()
+                await self.released.wait()
+            finally:
+                self.teardown()
+
+        def request_stop(self):
+            if self.released is not None:
+                self.released.set()
 
         def teardown(self):
             lifecycle.append("teardown")
@@ -37,8 +44,6 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
                 self.released.set()
             if cleanup_error:
                 raise RuntimeError("hardware cleanup failed")
-
-        stop = teardown
 
         def quiesce(self):
             lifecycle.append("quiesce")

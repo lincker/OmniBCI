@@ -118,6 +118,7 @@ class StimulationProcessManager:
         # Paradigm resolved from the running subprocess's pinned selection.
         self._paradigm: str | None = None
         self._state = ChildProcessState.STOPPED
+        self._cleanup_error: str | None = None
         # Synchronous API routes may run concurrently in a thread pool.  The
         # re-entrant lock also permits start() to reuse the single stop path
         # when a paradigm change requires a restart.
@@ -131,6 +132,8 @@ class StimulationProcessManager:
         The snapshot determines the selected paradigm and managed mode.
         """
         with self._lifecycle_lock:
+            if self._process is None and self._cleanup_error is not None:
+                raise RuntimeError(self._cleanup_error)
             snapshot = deepcopy(settings_snapshot)
             auto_spawn = snapshot.get(
                 "STIMULATION.auto_spawn", MODULE_SETTING_DEFAULTS["stimulation"]["STIMULATION.auto_spawn"],
@@ -261,6 +264,8 @@ class StimulationProcessManager:
         process = self._process
         if process is None:
             self._close_startup_receiver()
+            if self._cleanup_error is not None:
+                raise RuntimeError(self._cleanup_error)
             self._state = final_state
             return
 
@@ -282,6 +287,10 @@ class StimulationProcessManager:
                 "Stimulation subprocess did not stop gracefully; terminating "
                 "(pid=%s)",
                 pid,
+            )
+            self._cleanup_error = (
+                f"Stimulation cleanup was not confirmed after forced termination (pid={pid}); "
+                "replacement is blocked"
             )
             process.terminate()
             process.join(timeout=self._TERMINATE_TIMEOUT_S)
@@ -306,6 +315,11 @@ class StimulationProcessManager:
             self._state = ChildProcessState.FAILED
             raise RuntimeError(message)
 
+        if process.exitcode != 0:
+            self._cleanup_error = (
+                f"Stimulation cleanup was not confirmed (pid={pid}, exitcode={process.exitcode}); "
+                "replacement is blocked"
+            )
         logger.info(
             "Stimulation subprocess stopped (pid=%s, exitcode=%s)",
             pid,
@@ -325,6 +339,9 @@ class StimulationProcessManager:
         self._process = None
         self._stop_event = None
         self._close_startup_receiver()
+        if self._cleanup_error is not None:
+            self._state = ChildProcessState.FAILED
+            raise RuntimeError(self._cleanup_error)
         self._paradigm = None
         self._settings_snapshot = None
         self._state = final_state

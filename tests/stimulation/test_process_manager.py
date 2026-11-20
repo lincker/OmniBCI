@@ -213,7 +213,8 @@ def test_stop_escalates_through_kill(mock_process_cls, mock_event_cls):
     manager = StimulationProcessManager()
     manager.start(settings_snapshot=_paradigm_snapshot())
 
-    manager.stop()
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
 
     process.terminate.assert_called_once_with()
     process.kill.assert_called_once_with()
@@ -323,3 +324,39 @@ def test_child_entrypoint_forwards_stop_event(mock_stimulation_cls, monkeypatch)
 
     mock_stimulation_cls.assert_called_once_with(stop_event=stop_event, settings_snapshot=snapshot)
     mock_stimulation_cls.return_value.run.assert_called_once_with()
+
+
+@pytest.mark.parametrize("exitcode", [1, -15, None])
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_unclean_exit_keeps_failure_and_blocks_replacement(process_factory, exitcode):
+    process, state = _mock_process()
+    process_factory.return_value = process
+    manager = StimulationProcessManager()
+    manager.start(settings_snapshot=_paradigm_snapshot())
+    state["alive"] = False
+    process.exitcode = exitcode
+
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
+    assert manager.state is ChildProcessState.FAILED
+    assert not manager.is_alive
+    process.close.assert_called_once()
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.start(settings_snapshot=_paradigm_snapshot())
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
+    assert process_factory.call_count == 1
+
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_forced_exit_cannot_claim_cleanup_even_with_zero_exitcode(process_factory):
+    process, _ = _mock_process(exits_after_join=2)
+    process_factory.return_value = process
+    manager = StimulationProcessManager()
+    manager.start(settings_snapshot=_paradigm_snapshot())
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
+    process.terminate.assert_called_once()
+    assert manager.state is ChildProcessState.FAILED
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.start(settings_snapshot=_paradigm_snapshot())
+    assert process_factory.call_count == 1

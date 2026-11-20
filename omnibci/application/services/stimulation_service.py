@@ -49,6 +49,8 @@ class StimulationAppService:
             self._start_stimulation(settings_snapshot=settings_snapshot)
 
     def _start_stimulation(self, *, settings_snapshot: dict) -> None:
+        if self._stop_managed is not None:
+            raise RuntimeError("Stimulation stop is unconfirmed; replacement is blocked")
         if not self._engine.is_engine_ready:
             raise RuntimeError("Start the engine before starting stimulation")
         process_ready = False
@@ -121,25 +123,24 @@ class StimulationAppService:
             # still has to stop.  Never replace the dispatch error with a
             # secondary process-cleanup failure.
             try:
-                if self._process_manager is not None:
+                if self._process_manager is not None and self._managed():
                     self._process_manager.stop()
+                    self._active_identity = None
             except BaseException:
                 logger.exception(
                     "Failed to stop Stimulation process after dispatch error"
                 )
-            finally:
-                self._active_identity = None
             raise
         else:
-            try:
-                if self._process_manager is not None:
-                    self._process_manager.stop()
-            finally:
-                self._active_identity = None
+            if self._process_manager is not None:
+                self._process_manager.stop()
+            self._active_identity = None
         logger.info("StopStimulation event dispatched")
 
     @admitted(scopes="stimulation")
     def handle_start_trial(self, cmd: StartStimTrialCommand) -> None:
+        if self._stop_managed is not None:
+            raise RuntimeError("Stimulation stop is unconfirmed; trials are blocked")
         if not self.is_active:
             raise RuntimeError("Start stimulation before starting a trial")
         # JSON-friendly payload: it crosses the engine→stimulation socket, where

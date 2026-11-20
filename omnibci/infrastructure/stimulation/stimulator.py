@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib
+import threading
 from copy import deepcopy
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
@@ -48,10 +49,16 @@ def _create_renderer(name: str):
 class _NoTrigger(TriggerEmitter):
     """Honor an explicit configuration without trigger output."""
 
-    def send(self, event_id: int) -> bool:
-        return True
+    def setup(self) -> None:
+        pass
+
+    def send(self, event_id: int) -> None:
+        pass
 
     def clear(self) -> None:
+        pass
+
+    def teardown(self) -> None:
         pass
 
 
@@ -61,6 +68,15 @@ class Stimulator:
         self.paradigm: Paradigm | None    = None
         self.trigger:  TriggerEmitter | None = None
         self._loop:    RenderLoop | None  = None
+        self._renderer = None
+        self._running = False
+        self._stop_requested = False
+        self._owner_thread = None
+        self._cleanup_error = None
+        self._renderer_started = False
+        self._trigger_started = False
+        self._trigger_ready = False
+        self._paradigm_started = False
 
     # ── Internal loaders ───────────────────────────────────────────────────
 
@@ -72,72 +88,110 @@ class Stimulator:
             self._snapshot, "stimulation.trigger", "trigger", TriggerEmitter,
         )
 
-    def _load_paradigm(self, trigger: TriggerEmitter) -> Paradigm:
+    def _load_paradigm(self) -> Paradigm:
         from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
         paradigm = load_configured_plugin(
             self._snapshot, "stimulation.paradigm", "paradigm", Paradigm,
         )
-        paradigm.bind_trigger(trigger)
         return paradigm
 
     # ── Internal setup ─────────────────────────────────────────────────────
 
     def _setup(self) -> None:
-        """Load plugins, initialise renderer and paradigm, build RenderLoop.
-
-        Called by both ``start()`` and ``start_async()`` before the loop runs.
-        """
-        self.trigger  = self._load_trigger()
-        self.paradigm = self._load_paradigm(self.trigger)
-
+        self.trigger = self._load_trigger()
+        self.paradigm = self._load_paradigm()
         renderer_name = self._snapshot.get(
             "STIMULATION.renderer", MODULE_SETTING_DEFAULTS["stimulation"]["STIMULATION.renderer"],
         )
-        renderer = _create_renderer(renderer_name)
-        renderer.initialize(width=1920, height=1080, title="OmniBCI Stimulation")
+        self._renderer = _create_renderer(renderer_name)
+        self._renderer_started = True
+        self._require_none(self._renderer.initialize(width=1920, height=1080, title="OmniBCI Stimulation"),
+                           "Renderer.initialize")
+        self._trigger_started = True
+        self._require_none(self.trigger.setup(), "TriggerEmitter.setup")
+        self._trigger_ready = True
+        self._require_none(self.trigger.clear(), "TriggerEmitter.clear")
+        self._paradigm_started = True
+        self._require_none(self.paradigm.setup(renderer=self._renderer, trigger=self.trigger), "Paradigm.setup")
+        self._loop = RenderLoop(self._renderer, self.paradigm)
+        if self._stop_requested:
+            self._loop.request_stop()
 
-        self.paradigm.setup(renderer=renderer)
-        self._loop = RenderLoop(renderer, self.paradigm)
+    @staticmethod
+    def _require_none(result, operation) -> None:
+        if result is not None:
+            raise TypeError(f"{operation} must return None")
 
-    # ── Public API ─────────────────────────────────────────────────────────
-
-    def start(self) -> None:
-        """Setup and start render loop in a background thread (non-macOS)."""
-        self._setup()
-        self._loop.start()
+    def _cleanup(self) -> None:
+        errors = []
+        actions = []
+        if self._paradigm_started:
+            actions.append((self.paradigm, "teardown", "Paradigm.teardown"))
+        if self._trigger_ready:
+            actions.append((self.trigger, "clear", "TriggerEmitter.clear"))
+        if self._trigger_started:
+            actions.append((self.trigger, "teardown", "TriggerEmitter.teardown"))
+        if self._renderer_started:
+            actions.append((self._renderer, "shutdown", "Renderer.shutdown"))
+        for component, method, name in actions:
+            try:
+                self._require_none(getattr(component, method)(), name)
+            except BaseException as exc:
+                exc.add_note(name)
+                errors.append(exc)
+        if errors:
+            self._cleanup_error = errors[0] if len(errors) == 1 else BaseExceptionGroup(
+                "Stimulation resource cleanup failed", errors)
+            raise self._cleanup_error
+        self.paradigm = self.trigger = self._renderer = self._loop = None
+        self._renderer_started = self._trigger_started = self._trigger_ready = self._paradigm_started = False
 
     async def start_async(self) -> None:
-        """Setup and run render loop as an asyncio coroutine.
+        """Prepare, render and release on this thread; the application owns this task."""
+        if self._running:
+            raise RuntimeError("Stimulation is already running")
+        if self._cleanup_error is not None:
+            raise RuntimeError("Stimulation cleanup is unsettled; replacement is blocked") from self._cleanup_error
+        self._running = True
+        self._stop_requested = False
+        self._owner_thread = threading.get_ident()
+        failure = None
+        try:
+            self._setup()
+            await self._loop.run_async()
+        except BaseException as exc:
+            failure = exc
+            raise
+        finally:
+            try:
+                self._cleanup()
+            except BaseException as cleanup_error:
+                if failure is not None:
+                    raise BaseExceptionGroup("Stimulation failed and cleanup also failed", [failure, cleanup_error])
+                raise
+            finally:
+                self._running = False
 
-        Preferred on macOS: the coroutine runs on the asyncio main thread,
-        satisfying Cocoa's requirement that GLFW event polling stays on the
-        main thread.  Blocks (awaits) until the window is closed or
-        ``stop()`` is called from another coroutine.
-        """
-        self._setup()
-        await self._loop.run_async()
-
-    def stop(self) -> None:
-        """Stop the RenderLoop (teardown + shutdown run on the GL thread)."""
+    def request_stop(self) -> None:
+        """Signal the loop without releasing resources or claiming settlement."""
+        self._stop_requested = True
         if self._loop is not None:
-            self._loop.stop()
-            self._loop = None
+            self._loop.request_stop()
+
+    def _check_owner(self) -> None:
+        if self._owner_thread is not None and self._owner_thread != threading.get_ident():
+            raise RuntimeError("Stimulation callbacks require the renderer owner thread")
 
     def present_trial(self, params=None) -> None:
-        # *params* is one trial's paradigm-specific parameter (opaque here);
-        # the concrete Paradigm interprets it.
-        if self.paradigm is not None:
-            self.paradigm.trial_stimulus_present(params)
-
-    def clear_trigger(self) -> None:
-        """Clear the final trigger after the rendering task has stopped."""
-        if self.trigger is None:
-            raise RuntimeError("Stimulation trigger has not been initialized")
-        self.trigger.clear()
+        self._check_owner()
+        if self.paradigm is None:
+            raise RuntimeError("Stimulation paradigm has not been initialized")
+        self.paradigm.trial_stimulus_present(params)
 
     @property
     def is_presenting(self) -> bool:
         """True while a trial or feedback is active; query failures propagate."""
+        self._check_owner()
         if self.paradigm is None:
             raise RuntimeError("Stimulation paradigm has not been initialized")
         presenting = self.paradigm.is_presenting()
@@ -146,5 +200,7 @@ class Stimulator:
         return presenting
 
     def present_result(self, result) -> None:
-        if self.paradigm is not None:
-            self.paradigm.trial_result_present(result=result)
+        self._check_owner()
+        if self.paradigm is None:
+            raise RuntimeError("Stimulation paradigm has not been initialized")
+        self.paradigm.trial_result_present(result=result)

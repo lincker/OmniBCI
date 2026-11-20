@@ -40,7 +40,7 @@ def test_pause_joins_renderer_clears_trigger_and_cancels_future_trials():
         await asyncio.sleep(0)
         assert not pause.done()
         assert receipts(instance, EventType.PauseStimulation) == []
-        instance.stimulator.stop.assert_called_once()
+        instance.stimulator.request_stop.assert_called_once()
         instance.stimulator.clear_trigger.assert_not_called()
         assert instance.stim_command_queue.empty()
         assert receipts(instance, EventType.StartStimTrial)[0].ok is False
@@ -48,7 +48,7 @@ def test_pause_joins_renderer_clears_trigger_and_cancels_future_trials():
         instance.stimulator.present_trial.assert_not_called()
         exited.set()
         await pause
-        instance.stimulator.clear_trigger.assert_called_once()
+        instance.stimulator.clear_trigger.assert_not_called()
         result = receipts(instance, EventType.PauseStimulation)[0]
         assert result.command_id == "pause"
         assert result.ok
@@ -68,8 +68,9 @@ def test_pause_joins_renderer_clears_trigger_and_cancels_future_trials():
 def test_trigger_clear_failure_leaves_paused_without_success_receipt():
     async def scenario():
         instance = app()
-        instance._render_task = asyncio.create_task(asyncio.sleep(0))
-        instance.stimulator.clear_trigger.side_effect = OSError("trigger clear failed")
+        async def failed_cleanup():
+            raise OSError("trigger clear failed")
+        instance._render_task = asyncio.create_task(failed_cleanup())
         await instance._pause_stimulation(Event(EventType.PauseStimulation, CommandRequest("pause")))
         result = receipts(instance, EventType.PauseStimulation)[0]
         assert not result.ok
@@ -93,6 +94,6 @@ def test_renderer_failure_is_not_a_successful_pause():
         assert not result.ok
         assert "renderer teardown failed" in result.message
         assert instance._paused
-        instance.stimulator.clear_trigger.assert_called_once()
+        instance.stimulator.clear_trigger.assert_not_called()
 
     asyncio.run(scenario())

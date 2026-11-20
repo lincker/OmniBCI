@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any
 
-from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
+from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter, TriggerOutput
 from omnibci.domain.ports.algorithm import (
     Decoder,
     EpochDetector,
@@ -25,7 +25,7 @@ from omnibci.domain.ports.algorithm import (
 )
 from omnibci.domain.ports.effector import Effector
 from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.domain.ports.renderer import Color, Rect, Renderer, TextureHandle
+from omnibci.domain.ports.renderer import Color, Rect, RenderSurface, TextureHandle
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.signal_info import SignalInfo
 
@@ -76,5 +76,5 @@ class PluginContext:
 __all__ = [
     "Color", "Decoder", "Effector", "EpochDetector", "Filter", "EpochBoundary",
     "Paradigm", "PluginContext", "PluginParameters", "Prediction", "Rect",
-    "Renderer", "SignalChunk", "SignalSource", "SignalInfo", "TextureHandle", "TriggerEmitter",
+    "RenderSurface", "SignalChunk", "SignalSource", "SignalInfo", "TextureHandle", "TriggerEmitter", "TriggerOutput",
 ]

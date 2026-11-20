@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
-"""Classic 40-target SSVEP paradigm — Renderer-protocol edition.
+"""Classic 40-target SSVEP paradigm — RenderSurface-protocol edition.
 
 Rendering is driven by an external RenderLoop that calls ``render_frame``
 once per VSync.  Trial control methods (``trial_stimulus_present``,
-``trial_result_present``) only mutate state and are safe to call from any
-thread.
+``trial_result_present``) run on the renderer owner thread.
 """
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ from enum import Enum, auto
 from importlib import resources
 
 from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.sdk import PluginContext, PluginParameters, Rect, Renderer, TextureHandle
+from omnibci.sdk import PluginContext, PluginParameters, Rect, RenderSurface, TextureHandle, TriggerOutput
 from .feedback_display import FeedbackDisplay
 from .frame_pack import FramePack
 
@@ -77,10 +76,10 @@ class _State(Enum):
 class Classic40SSVEP_2(Paradigm):
     plugin_type = 'STIMULATION_THUBCI_SSVEP_classic40'
 
-    def __init__(self, trigger=None, *, parameters: PluginParameters | None = None,
+    def __init__(self, *, parameters: PluginParameters | None = None,
                  context: PluginContext | None = None):
-        self.trigger = trigger
-        self._renderer: Renderer | None = None
+        self.trigger: TriggerOutput | None = None
+        self._renderer: RenderSurface | None = None
 
         # GPU texture handles (populated in setup)
         self._init_tex: TextureHandle | None     = None
@@ -107,24 +106,19 @@ class Classic40SSVEP_2(Paradigm):
 
     # ── Paradigm port ──────────────────────────────────────────────────────
 
-    def setup(self, renderer: Renderer = None) -> None:  # type: ignore[override]
-        """Upload all textures to GPU."""
-        if renderer is None:
-            return
+    def setup(self, *, renderer: RenderSurface, trigger: TriggerOutput) -> None:
+        """Borrow host capabilities and retain every uploaded texture."""
         self._renderer = renderer
+        self.trigger = trigger
 
         with _frame_pack_path() as pack_path, FramePack(pack_path) as pack:
             self._init_tex = renderer.upload_texture(pack.idle_frame)
-            self._stim_textures = [
-                renderer.upload_texture(frame)
-                for frame in pack.iter_stimulation_frames()
-            ]
-            self._cue_textures = [
-                renderer.upload_texture(frame) for frame in pack.iter_cue_frames()
-            ]
-            self._result_textures = [
-                renderer.upload_texture(frame) for frame in pack.iter_result_frames()
-            ]
+            for frame in pack.iter_stimulation_frames():
+                self._stim_textures.append(renderer.upload_texture(frame))
+            for frame in pack.iter_cue_frames():
+                self._cue_textures.append(renderer.upload_texture(frame))
+            for frame in pack.iter_result_frames():
+                self._result_textures.append(renderer.upload_texture(frame))
 
         # Text widget — uploads blank texture
         self._text_view.setup(renderer)
@@ -133,24 +127,35 @@ class Classic40SSVEP_2(Paradigm):
             self._state = _State.IDLE
             self._result_target_id = 0
 
-    def teardown(self, renderer: Renderer = None) -> None:  # type: ignore[override]
-        """Release all GPU textures."""
-        r = renderer or self._renderer
+    def teardown(self) -> None:
+        """Attempt every safe release, including after partial texture upload."""
+        r = self._renderer
         if r is None:
             return
-        self._text_view.teardown(r)
-        for tex in self._stim_textures:
-            r.release_texture(tex)
-        for tex in self._cue_textures:
-            r.release_texture(tex)
-        for tex in self._result_textures:
-            r.release_texture(tex)
+        errors = []
+        try:
+            self._text_view.teardown(r)
+        except Exception as exc:
+            errors.append(exc)
+        for textures in (self._stim_textures, self._cue_textures, self._result_textures):
+            for tex in tuple(textures):
+                try:
+                    r.release_texture(tex)
+                except Exception as exc:
+                    errors.append(exc)
+                else:
+                    textures.remove(tex)
         if self._init_tex is not None:
-            r.release_texture(self._init_tex)
-        self._stim_textures.clear()
-        self._cue_textures.clear()
-        self._result_textures.clear()
+            try:
+                r.release_texture(self._init_tex)
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                self._init_tex = None
+        if errors:
+            raise ExceptionGroup("Paradigm texture cleanup failed", errors)
         self._renderer = None
+        self.trigger = None
 
     # ── RenderLoop interface ───────────────────────────────────────────────
 
@@ -247,7 +252,7 @@ class Classic40SSVEP_2(Paradigm):
 
     # ── Private ────────────────────────────────────────────────────────────
 
-    def _draw_idle(self, r: Renderer) -> None:
+    def _draw_idle(self, r: RenderSurface) -> None:
         """Draw initial frame + text. Caller must hold _lock."""
         r.draw_texture(self._init_tex, _STIM_RECT)
         self._text_view.draw(r)

@@ -23,6 +23,12 @@ class Curry8Trigger(TriggerEmitter):
         self, *, parameters: PluginParameters, context: PluginContext | None = None,
     ):
         self.address = int(parameters.get("parallel_port_address", "0x3100"), 16)
+        self._driver = None
+        self._ready = False
+
+    def setup(self) -> None:
+        if self._driver is not None:
+            raise RuntimeError("CURRY 8 trigger is already initialized")
         if sys.platform != "win32":
             raise RuntimeError("CURRY 8 Parallel Trigger requires Windows and an InpOut driver")
 
@@ -44,16 +50,24 @@ class Curry8Trigger(TriggerEmitter):
                 "permissions on the Windows stimulation host."
             )
 
-        self.clear()
+        self._ready = True
 
-    def send(self, event_id: int) -> bool:
+    def send(self, event_id: int) -> None:
         """Set a code in 0..255; zero is the baseline, not an event marker."""
         if isinstance(event_id, bool) or not isinstance(event_id, Integral) or not 0 <= event_id <= 255:
             raise ValueError("CURRY 8 parallel trigger event_id must be an integer from 0 to 255")
+        if not self._ready:
+            raise RuntimeError("CURRY 8 trigger requires successful setup")
         self._driver.Out32(self.address, int(event_id))
-        return True
 
     def clear(self) -> None:
         """Reset all stimulus bits before the next event, including repeated codes."""
+        if not self._ready:
+            raise RuntimeError("CURRY 8 trigger requires successful setup")
         self._driver.Out32(self.address, 0)
         time.sleep(0.02)
+
+    def teardown(self) -> None:
+        # InpOut exposes no per-instance close. The host clears before release.
+        self._ready = False
+        self._driver = None

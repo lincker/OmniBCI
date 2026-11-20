@@ -62,6 +62,8 @@ def test_scan45_trigger_uses_configured_address_and_sends_events(
         parallel_port_address=explicit_address, parameters={"parallel_port_address": configured_address}
     )
 
+    trigger.setup()
+    trigger.clear()
     trigger.send(7)
     trigger.clear()
 

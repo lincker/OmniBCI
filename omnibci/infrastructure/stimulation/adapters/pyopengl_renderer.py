@@ -7,9 +7,6 @@ created and destroyed per draw call, which is acceptable at BCI frame
 rates (≤ 60 Hz, ≤ 40 rects/frame).  Performance-critical work lives in
 ModernGLRenderer (Step 5).
 
-Known issue inherited from UIWindow: glfw.swap_interval(1) is called
-before make_context_current — behaviour is driver-dependent.  Fixed in
-ModernGLRenderer.
 """
 from __future__ import annotations
 
@@ -30,7 +27,7 @@ from OpenGL.GL import (
     GL_VERTEX_SHADER, GL_FRAGMENT_SHADER,
     glBindBuffer, glBindTexture, glBindVertexArray,
     glBufferData, glClear, glClearColor,
-    glDeleteBuffers, glDeleteTextures, glDeleteVertexArrays,
+    glDeleteBuffers, glDeleteTextures, glDeleteVertexArrays, glDeleteProgram,
     glDrawElements, glEnableVertexAttribArray,
     glGenBuffers, glGenTextures, glGenVertexArrays,
     glPixelStorei, glTexImage2D, glTexParameteri,
@@ -98,6 +95,14 @@ _QUAD_INDICES = np.array([0, 1, 2, 2, 3, 0], dtype=np.uint32)
 class PyOpenGLRenderer:
     """Renderer backed by PyOpenGL 3.3 Core Profile + GLFW (via UIWindow)."""
 
+    def __init__(self) -> None:
+        self._win = None
+        self._ebo = self._prog_texture = self._prog_color = None
+        self._textures: dict[int, int] = {}
+        self._next_id = 1
+        self._closed = False
+        self._shutdown_error = None
+
     # -- Lifecycle -----------------------------------------------------------
 
     def initialize(self, width: int, height: int, title: str) -> None:
@@ -105,16 +110,37 @@ class PyOpenGLRenderer:
         self._height = height
         self._win    = UIWindow(title, width, height)
 
-        # handle_id (int) → GL texture name (int)
-        self._textures: dict[int, int] = {}
-        self._next_id = 1
-
         self._setup_programs()
         self._setup_shared_ebo()
 
     def shutdown(self) -> None:
-        glDeleteBuffers(1, [self._ebo])
-        self._win.teardown()
+        if self._shutdown_error is not None:
+            raise self._shutdown_error
+        if self._closed:
+            return
+        errors = []
+        for tex in self._textures.values():
+            try:
+                glDeleteTextures(1, [tex])
+            except Exception as exc:
+                errors.append(exc)
+        for name, delete in (("_ebo", lambda value: glDeleteBuffers(1, [value])),
+                             ("_prog_texture", glDeleteProgram), ("_prog_color", glDeleteProgram)):
+            value = getattr(self, name)
+            if value is not None:
+                try:
+                    delete(value)
+                except Exception as exc:
+                    errors.append(exc)
+        if self._win is not None:
+            try:
+                self._win.teardown()
+            except Exception as exc:
+                errors.append(exc)
+        self._closed = True
+        if errors:
+            self._shutdown_error = ExceptionGroup("PyOpenGL resource cleanup failed", errors)
+            raise self._shutdown_error
 
     def poll_events(self) -> None:
         self._win.poll_events()

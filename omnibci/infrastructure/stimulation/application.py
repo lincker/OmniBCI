@@ -69,6 +69,7 @@ class Stimulation:
         self.stimulator = Stimulator(settings_snapshot=self._runtime_snapshot)
         self._render_task = None  # The IPC process survives a closed render window.
         self._paused = False
+        self._stop_requests = []
 
     def run(self):
         print('---StimulationMain run---')
@@ -88,6 +89,7 @@ class Stimulation:
 
     async def serve(self):
         startup_complete = False
+        failure = None
         try:
             try:
                 # A cooperative stop can win the race before the spawned child
@@ -112,7 +114,7 @@ class Stimulation:
                 )
                 # Let start_async() install its RenderLoop before checking the
                 # stop flag again. Without this hand-off an immediate stop can
-                # make stimulator.stop() a no-op and strand the renderer.
+                # make stimulator.request_stop() a no-op and strand the renderer.
                 await asyncio.sleep(0)
 
                 if self._render_task.done() and not self._render_task.cancelled():
@@ -153,39 +155,93 @@ class Stimulation:
                 if not startup_complete:
                     self._report_startup_failed("initialization", exc)
                 raise
+        except BaseException as exc:
+            failure = exc
+            raise
         finally:
-            # Ensure GL/paradigm teardown and IPC teardown happen on every exit
-            # path, including render setup failures and task cancellation.
             try:
-                try:
-                    self.stimulator.stop()
-                except BaseException:
-                    # A failed stop hook may have left the render coroutine
-                    # blocked forever.  Cancel it, but continue through the
-                    # outer finally so sockets and the EventBus still close.
-                    if (
-                        self._render_task is not None
-                        and not self._render_task.done()
-                    ):
-                        self._render_task.cancel()
+                await self._await_owned(asyncio.create_task(self._shutdown(failure)))
+            except BaseException as cleanup_error:
+                if failure is not None and cleanup_error is not failure:
+                    if isinstance(failure, asyncio.CancelledError):
+                        raise failure from cleanup_error
+                    raise BaseExceptionGroup("Stimulation failed and shutdown also failed", [failure, cleanup_error])
+                raise
+
+    @staticmethod
+    async def _await_owned(task):
+        """Cancellation cannot abandon a render callback or its resource cleanup."""
+        cancellation = None
+        while True:
+            try:
+                result = await asyncio.shield(task)
+                break
+            except asyncio.CancelledError as exc:
+                if task.cancelled():
                     raise
-            finally:
+                cancellation = cancellation or exc
+            except BaseException as exc:
+                if cancellation is not None:
+                    raise cancellation from exc
+                raise
+        if cancellation is not None:
+            raise cancellation
+        return result
+
+    async def _shutdown(self, failure=None):
+        self._paused = True
+        errors = []
+        try:
+            self.stimulator.request_stop()
+        except BaseException as exc:
+            errors.append(exc)
+            if self._render_task is not None and not self._render_task.done():
+                self._render_task.cancel()
+        if self._render_task is not None:
+            try:
+                await self._render_task
+            except BaseException as exc:
+                if exc is not failure:
+                    errors.append(exc)
+        queue = getattr(self, "stim_command_queue", None)
+        while queue is not None:
+            try:
+                queued = queue.get_nowait().data
+            except Empty:
+                break
+            if isinstance(queued, _QueuedStimTrial) and queued.request is not None:
+                result = CommandResult(
+                    queued.request.command_id, EventType.StartStimTrial.name, ok=False,
+                    message="Stimulation stopped before this trial was presented",
+                    error_code="STIMULATION_STOPPING", failure_kind=CommandFailureKind.REJECTED,
+                )
                 try:
-                    if self._render_task is not None:
-                        await self._render_task
-                except asyncio.CancelledError:
-                    pass
-                finally:
-                    try:
-                        if (getattr(self, "_external_node", False)
-                                and getattr(self.stimulator, "trigger", None) is not None
-                                and self._render_task is not None and self._render_task.done()):
-                            # No rendering may assert a new trigger after this
-                            # point. A failed clear must prevent automatic retry.
-                            self.stimulator.clear_trigger()
-                    finally:
-                        # Renderer/trigger teardown failures must not skip IPC cleanup.
-                        await self.stop()
+                    if not await self.peer_channel.send(Event(EventType.CommandResult, result)):
+                        raise RuntimeError("Could not deliver cancelled stimulation trial receipt")
+                except Exception as exc:
+                    errors.append(exc)
+        # Emit the terminal result only after the render task's single cleanup path.
+        for request in getattr(self, "_stop_requests", ()):
+            error = failure or (errors[0] if errors else None)
+            result = CommandResult(
+                request.command_id, EventType.StopStimulation.name, ok=error is None,
+                message="Stimulation stopped" if error is None else str(error),
+                error_code=None if error is None else "STIMULATION_STOP_FAILED",
+                failure_kind=None if error is None else CommandFailureKind.EXECUTION_FAILED,
+            )
+            try:
+                if not await self.peer_channel.send(Event(EventType.CommandResult, result)):
+                    raise RuntimeError("Could not deliver stimulation stop receipt")
+            except Exception as exc:
+                errors.append(exc)
+        try:
+            await self.stop()
+        except BaseException as exc:
+            errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("Stimulation shutdown failed", errors)
 
     async def start(self):
         print('---StimulationMain start---')
@@ -468,14 +524,8 @@ class Stimulation:
         try:
             if self._render_task is None:
                 raise RuntimeError("Stimulation renderer was not started")
-            self.stimulator.stop()
-            try:
-                await asyncio.shield(self._render_task)
-            finally:
-                # A teardown error still means no more rendering is possible.
-                # Clear the trigger on that path too, without claiming success.
-                if self._render_task.done():
-                    self.stimulator.clear_trigger()
+            self.stimulator.request_stop()
+            await asyncio.shield(self._render_task)
             snapshot = getattr(self, "_runtime_snapshot", {})
             result = CommandResult(
                 request.command_id, EventType.PauseStimulation.name, ok=True,
@@ -499,20 +549,10 @@ class Stimulation:
         request = CommandRequest.from_value(
             event.data if isinstance(event, Event) else None
         )
-        if request is not None:
-            result = Event(
-                EventType.CommandResult,
-                CommandResult(
-                    command_id=request.command_id,
-                    command=EventType.StopStimulation.name,
-                    ok=True,
-                    message="Stimulation stop accepted",
-                ),
-            )
-            # Flush the terminal receipt over IPC before this process tears its
-            # EventBus and peer channel down.
-            await self.peer_channel.send(result)
+        self._paused = True
         self.should_stop = True
+        if request is not None:
+            self._stop_requests.append(request)
 
     def _emit_command_result(
         self,

@@ -389,7 +389,7 @@ def test_readiness_fault_flushes_receipts_before_existing_shutdown():
             released.set()
 
         stimulator.start_async = render
-        stimulator.stop = stop_render
+        stimulator.request_stop = stop_render
         s = _make(stimulator)
         s.start = AsyncMock()
         s.stop = AsyncMock(side_effect=lambda: lifecycle.append("ipc-stop"))

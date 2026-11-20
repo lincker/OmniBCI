@@ -84,6 +84,8 @@ def test_trigger_explicit_configuration_uses_windows_driver(
     monkeypatch.setattr(scan45.time, "sleep", Mock())
 
     trigger = scan45.Scan45Trigger(parameters=parameters, context=PluginContext())
+    trigger.setup()
+    trigger.clear()
     trigger.send(7)
 
     port_class.assert_called_once_with(expected_address)
@@ -98,6 +100,9 @@ def test_trigger_retains_positional_address(monkeypatch):
     trigger = scan45.Scan45Trigger("0x3bc", parameters={})
 
     assert trigger.address == 0x3BC
+    open_port.assert_not_called()
+    monkeypatch.setattr(sys, "platform", "win32")
+    trigger.setup()
     open_port.assert_called_once_with(0x3BC)
 
 

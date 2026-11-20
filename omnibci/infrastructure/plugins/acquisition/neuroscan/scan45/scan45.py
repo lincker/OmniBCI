@@ -3,7 +3,6 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-05-27 15:53
 import asyncio
-import logging
 import sys
 import time
 from enum import IntEnum
@@ -268,59 +267,45 @@ class Scan45DataReader(SignalSource):
 
 class Scan45Trigger(TriggerEmitter):
     plugin_type = 'neuroscan_scan45_trigger'
+
     def __init__(
         self, parallel_port_address: str | None = None, *,
         parameters: PluginParameters,
         context: PluginContext | None = None,
     ):
-        super().__init__()
-        if parallel_port_address is not None:
-            self.parallel_port_address = parallel_port_address
-        else:
-            self.parallel_port_address = parameters.get('parallel_port_address', '0x3100')
+        self.parallel_port_address = (parallel_port_address if parallel_port_address is not None
+                                      else parameters.get('parallel_port_address', '0x3100'))
         self.address = int(self.parallel_port_address, 16)
+        self.port = None
+
+    def setup(self) -> None:
+        if self.port is not None:
+            raise RuntimeError("Scan45 trigger is already initialized")
+        if sys.platform != 'win32':
+            raise RuntimeError("Scan45 parallel trigger requires Windows and an InpOut driver")
         self.port = self._set_parallel_port(self.address)
-        self.clear()
+        if self.port is None:
+            raise RuntimeError("Scan45 parallel port setup returned no driver")
 
-    def send(self, event_id):
-        self._send(event_id)
+    def send(self, event_id: int) -> None:
+        from numbers import Integral
+        if isinstance(event_id, bool) or not isinstance(event_id, Integral) or not 0 <= event_id <= 255:
+            raise ValueError("Scan45 parallel trigger event_id must be an integer from 0 to 255")
+        if self.port is None:
+            raise RuntimeError("Scan45 trigger requires successful setup")
+        self.port.setData(int(event_id))
 
-    def _send(self, data):
-        if sys.platform == 'win32':
-            self.port.setData(data)
-        else:
-            print(f'macOS do not support parallel port. Send data = {data}')
-
-    def clear(self):
-        self._send(0)
+    def clear(self) -> None:
+        self.send(0)
         time.sleep(0.02)
 
+    def teardown(self) -> None:
+        # The bundled InpOut adapter exposes no close operation.
+        self.port = None
+
     def _set_parallel_port(self, address):
-        if sys.platform == 'win32':
-            drivers = dict(inpout32=('_inpout', 'PParallelInpOut'),
-                           inpoutx64=('_inpout', 'PParallelInpOut'),
-                           dlportio=('_dlportio', 'PParallelDLPortIO'))
-            from ctypes import windll
-            from importlib import import_module
-            parallel_port = None
-            for key, val in drivers.items():
-                driver_name, class_name = val
-                try:
-                    hasattr(windll, key)
-                    parallel_port = getattr(import_module('..' + driver_name, __name__),
-                                           class_name)
-                    break
-                except (OSError, KeyError, NameError):
-                    parallel_port = None
-                    continue
-            if parallel_port is not None:
-                try:
-                    port = parallel_port(address)
-                    return port
-                except Exception as e:
-                    logging.error(f"Failed to initialize parallel port at {address}: {e}")
-                    return None
-            if parallel_port is None:
-                logging.warning(
-                                "No parallel port driver found. Install either "
-                                "inpout32, inpoutx64 or dlportio")
+        from ._inpout import PParallelInpOut
+        try:
+            return PParallelInpOut(address)
+        except (OSError, AttributeError) as exc:
+            raise RuntimeError("Cannot initialize Scan45 parallel port; install the matching InpOut driver") from exc

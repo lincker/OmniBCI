@@ -17,7 +17,7 @@ import pytest
     ("Filter", "algorithm"), ("EpochBoundary", "algorithm"),
     ("Decoder", "algorithm"), ("Prediction", "algorithm"),
     ("EpochDetector", "algorithm"), ("Paradigm", "paradigm"),
-    ("Effector", "effector"), ("Renderer", "renderer"),
+    ("Effector", "effector"), ("RenderSurface", "renderer"), ("TriggerOutput", "acquisition"),
     ("TextureHandle", "renderer"), ("Rect", "renderer"), ("Color", "renderer"),
 ])
 def test_sdk_reexports_existing_contract_types(name, module):
@@ -142,10 +142,12 @@ def test_context_and_configuration_are_usable_in_spawned_plugin(tmp_path):
         outgoing.close()
 
 
-def test_paradigm_renderer_argument_is_optional():
+def test_paradigm_borrows_required_capabilities_only_during_setup():
     import inspect
-
     from omnibci.sdk import Paradigm
 
-    for method in (Paradigm.setup, Paradigm.teardown):
-        assert inspect.signature(method).parameters["renderer"].default is None
+    parameters = inspect.signature(Paradigm.setup).parameters
+    for name in ("renderer", "trigger"):
+        assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters[name].default is inspect.Parameter.empty
+    assert tuple(inspect.signature(Paradigm.teardown).parameters) == ("self",)

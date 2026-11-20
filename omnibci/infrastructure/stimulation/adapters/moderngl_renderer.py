@@ -77,9 +77,20 @@ _INDICES = np.array([0, 1, 2, 2, 3, 0], dtype=np.uint32)
 class ModernGLRenderer:
     """Renderer backed by moderngl (OpenGL 3.3 Core Profile) + GLFW."""
 
+    def __init__(self) -> None:
+        self._glfw_started = False
+        self._window = None
+        self._textures: dict[int, mgl.Texture] = {}
+        self._next_id = 1
+        self._closed = False
+        self._shutdown_error = None
+        for name in ("_ctx", "_prog_tex", "_prog_col", "_ibo", "_vbo_tex", "_vbo_col", "_vao_tex", "_vao_col"):
+            setattr(self, name, None)
+
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     def initialize(self, width: int, height: int, title: str) -> None:
+        self._glfw_started = True
         if not glfw.init():
             raise RuntimeError("glfw.init() failed")
 
@@ -92,7 +103,6 @@ class ModernGLRenderer:
 
         self._window = glfw.create_window(width, height, title, None, None)
         if not self._window:
-            glfw.terminate()
             raise RuntimeError("glfw.create_window() failed")
 
         glfw.make_context_current(self._window)
@@ -134,22 +144,34 @@ class ModernGLRenderer:
             self._ibo,
         )
 
-        # handle_id (int) → mgl.Texture
-        self._textures: dict[int, mgl.Texture] = {}
-        self._next_id = 1
-
     def shutdown(self) -> None:
-        for tex in self._textures.values():
-            tex.release()
-        self._vao_tex.release()
-        self._vao_col.release()
-        self._vbo_tex.release()
-        self._vbo_col.release()
-        self._ibo.release()
-        self._prog_tex.release()
-        self._prog_col.release()
-        self._ctx.release()
-        glfw.terminate()
+        if self._shutdown_error is not None:
+            raise self._shutdown_error
+        if self._closed:
+            return
+        errors = []
+        resources = list(self._textures.values()) + [getattr(self, name) for name in (
+            "_vao_tex", "_vao_col", "_vbo_tex", "_vbo_col", "_ibo", "_prog_tex", "_prog_col", "_ctx")]
+        for resource in resources:
+            if resource is not None:
+                try:
+                    resource.release()
+                except Exception as exc:
+                    errors.append(exc)
+        if self._window:
+            try:
+                glfw.destroy_window(self._window)
+            except Exception as exc:
+                errors.append(exc)
+        if self._glfw_started:
+            try:
+                glfw.terminate()
+            except Exception as exc:
+                errors.append(exc)
+        self._closed = True
+        if errors:
+            self._shutdown_error = ExceptionGroup("ModernGL resource cleanup failed", errors)
+            raise self._shutdown_error
 
     # ── Window ─────────────────────────────────────────────────────────────
 

@@ -10,23 +10,19 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from omnibci.domain.ports.renderer import Renderer
-from omnibci.domain.ports.acquisition import TriggerEmitter
+from omnibci.domain.ports.renderer import RenderSurface
+from omnibci.domain.ports.acquisition import TriggerOutput
 
 
 class Paradigm(ABC):
 
-    def bind_trigger(self, trigger: TriggerEmitter) -> None:
-        """Receive the host-selected trigger before renderer setup."""
-        self.trigger = trigger
+    @abstractmethod
+    def setup(self, *, renderer: RenderSurface, trigger: TriggerOutput) -> None:
+        """Borrow drawing/output capabilities and prepare stimulus resources."""
 
     @abstractmethod
-    def setup(self, renderer: Renderer | None = None) -> None:
-        """Prepare stimulus resources on the thread owning the renderer."""
-
-    @abstractmethod
-    def teardown(self, renderer: Renderer | None = None) -> None:
-        """Release stimulus resources on the thread owning the renderer."""
+    def teardown(self) -> None:
+        """Release partial or complete stimulus resources on the owner thread."""
 
     @abstractmethod
     def trial_stimulus_present(self, params) -> None:

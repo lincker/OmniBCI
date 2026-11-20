@@ -1,6 +1,6 @@
 # Plugin API v1 Domain Contracts
 
-Status: target API v1 contract. S1a/S1b, S1c processing methods and S1e Effector methods are implemented and verified. S1d has resumed on this branch: required Paradigm methods and readiness scheduling are restored and verified; narrow capabilities, trigger lifecycle and graphics work follow separately. S1f and the coordinated constructor/SDK/manifest switch remain pending. See the [execution record](plugin-implementation-plan.md) and [Stimulation handoff](stimulation-interface-design.md#8-follow-up-branch-handoff).
+Status: target API v1 contract. S1a/S1b, S1c processing methods and S1e Effector methods are implemented and verified. S1d has resumed on this branch: required Paradigm methods and readiness scheduling are restored and verified; narrow capabilities and trigger lifecycle are implemented and verified; graphics follows separately. S1f and the coordinated constructor/SDK/manifest switch remain pending. See the [execution record](plugin-implementation-plan.md) and [Stimulation handoff](stimulation-interface-design.md#8-follow-up-branch-handoff).
 
 Updated: 2026-11-20. Implementation baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`.
 
@@ -38,7 +38,7 @@ The target has **18 public names**. Each is required by a role, a structured bou
 
 The SDK exports the same objects the host uses, not duplicate public models. Canonical definitions stay with the corresponding domain ports/values. Standard-library and NumPy types keep their own import paths.
 
-At the inspected baseline, the [SDK](../omnibci/sdk/__init__.py) had 17 exports. Relative to that baseline, the target retains 12 names, removes `Renderer`, `SignalChunk`, `FilterContext`, `PluginContext` and `PluginParameters`, and adds six required values/capabilities. S1c replaces only the `FilterContext` export with `EpochBoundary`; publishing the full inventory and removing `PluginContext` remain S1f. Generic contexts, a checkpoint subclass, decode-attempt/frame-phase wrappers, SDK-specific JSON aliases and an exception hierarchy are unnecessary for this contract.
+At the inspected baseline, the [SDK](../omnibci/sdk/__init__.py) had 17 exports. Relative to that baseline, the target retains 12 names, removes `Renderer`, `SignalChunk`, `FilterContext`, `PluginContext` and `PluginParameters`, and adds six required values/capabilities. S1c replaces `FilterContext` with `EpochBoundary`. S1d replaces full Renderer with RenderSurface and adds TriggerOutput; publishing the full inventory and removing `PluginContext` remain S1f. Generic contexts, a checkpoint subclass, decode-attempt/frame-phase wrappers, SDK-specific JSON aliases and an exception hierarchy are unnecessary for this contract.
 
 The following remain private: internal `SignalChunk` timestamps/counters, retained `Epoch`, host-enriched `Classification`, source/connection/generation IDs, configuration revisions, mapping plans, fingerprints, command envelopes, runtime receipts, artifact locks, event buses, workers and repositories. Removing a public export does not remove its host functionality.
 

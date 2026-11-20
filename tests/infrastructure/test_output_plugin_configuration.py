@@ -1,7 +1,8 @@
 """Stimulation and Actuation use exact, copied plugin inputs."""
 from tests.plugin_configuration_helpers import builtin_selection
 import sys
-from unittest.mock import Mock
+import asyncio
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -18,13 +19,13 @@ def binding(slot, kind, alias):
     return ProfileBinding(slot, kind, None, descriptor.selection, {}).to_dict()
 
 
-def test_selected_paradigm_receives_trigger_without_reading_globals():
+def test_selected_paradigm_loads_without_borrowing_hardware():
     snapshot = {"PLUGINS.bindings": [binding("stimulation.paradigm", "paradigm",
                                             "STIMULATION_THUBCI_SSVEP_classic40")]}
     stimulator = Stimulator(settings_snapshot=snapshot)
     trigger = Mock()
-    paradigm = stimulator._load_paradigm(trigger)
-    assert paradigm.trigger is trigger
+    paradigm = stimulator._load_paradigm()
+    assert paradigm.trigger is None
 
 
 def test_stimulation_without_selected_trigger_starts_and_clears_without_hardware(monkeypatch):
@@ -34,30 +35,33 @@ def test_stimulation_without_selected_trigger_starts_and_clears_without_hardware
     stimulator = Stimulator(settings_snapshot=snapshot)
     trigger = stimulator._load_trigger()
     assert isinstance(trigger, TriggerEmitter)
-    assert trigger.send(3) is True
+    assert trigger.setup() is None
+    assert trigger.send(3) is None
     assert trigger.clear() is None
-    paradigm = stimulator._load_paradigm(trigger)
-    assert paradigm.trigger is trigger
-    paradigm.setup = Mock()
+    paradigm = stimulator._load_paradigm()
+    assert paradigm.trigger is None
+    paradigm.setup = Mock(return_value=None)
     monkeypatch.setattr(stimulator, "_load_paradigm", Mock(return_value=paradigm))
     renderer, loop = Mock(), Mock()
+    renderer.initialize.return_value = renderer.shutdown.return_value = None
+    loop.run_async = AsyncMock()
     create_renderer = Mock(return_value=renderer)
     monkeypatch.setattr("omnibci.infrastructure.stimulation.stimulator._create_renderer", create_renderer)
     monkeypatch.setattr("omnibci.infrastructure.stimulation.stimulator.RenderLoop", Mock(return_value=loop))
 
-    stimulator.start()
+    asyncio.run(stimulator.start_async())
     create_renderer.assert_called_once_with("moderngl")
-    loop.start.assert_called_once()
-    paradigm.setup.assert_called_once_with(renderer=renderer)
-    stimulator.stop()
-    stimulator.clear_trigger()
-    loop.stop.assert_called_once()
+    loop.run_async.assert_awaited_once()
+    assert paradigm.setup.call_args.kwargs["renderer"] is renderer
+    assert isinstance(paradigm.setup.call_args.kwargs["trigger"], TriggerEmitter)
+    renderer.shutdown.assert_called_once()
+    assert stimulator.trigger is None
 
 
 def test_explicit_empty_trigger_selection_ignores_legacy_alias():
     stimulator = Stimulator(settings_snapshot={"PLUGINS.bindings": [],
                                               "ACQUISITION.trigger": "neuroscan_scan45_trigger"})
-    assert stimulator._load_trigger().send(1) is True
+    assert stimulator._load_trigger().send(1) is None
 
 
 @pytest.mark.parametrize("snapshot", [{}, {"PLUGINS.bindings": None}, {"PLUGINS.bindings": [{}]}])

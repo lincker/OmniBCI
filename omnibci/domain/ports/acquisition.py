@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from numpy import typing as npt
 
@@ -127,11 +127,31 @@ class SignalSource(ABC):
         raise NotImplementedError("This signal source does not support checkpoints")
 
 
+class TriggerOutput(Protocol):
+    """Emission capability borrowed by a paradigm on its owner thread."""
+
+    def send(self, event_id: int) -> None:
+        """Write an event code; failures raise instead of returning false."""
+        ...
+
+    def clear(self) -> None:
+        """Establish the device's clear baseline before the next event."""
+        ...
+
+
 class TriggerEmitter(ABC):
     @abstractmethod
-    def send(self, event_id: int) -> bool:
-        """send trigger/event"""
+    def setup(self) -> None:
+        """Acquire driver resources on the host's rendering thread."""
+
+    @abstractmethod
+    def send(self, event_id: int) -> None:
+        """Write an event code; successful return is not measured delivery."""
 
     @abstractmethod
     def clear(self) -> None:
-        """clear trigger/event, get read for sending event next time"""
+        """Clear trigger output according to the device's timing contract."""
+
+    @abstractmethod
+    def teardown(self) -> None:
+        """Release driver resources, including resources from partial setup."""

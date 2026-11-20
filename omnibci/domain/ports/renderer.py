@@ -52,40 +52,8 @@ class Color(NamedTuple):
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
-class Renderer(Protocol):
-    """2D rendering surface used by stimulus paradigms.
-
-    Lifecycle
-    ---------
-    initialize → (upload_texture | draw_* | clear | end_frame | poll_events
-                  | should_close)* → shutdown
-
-    Thread safety
-    -------------
-    All methods must be called from the thread that owns the OpenGL/GPU
-    context (i.e. the RenderLoop thread).
-    """
-
-    # -- Window / context ----------------------------------------------------
-
-    def initialize(self, width: int, height: int, title: str) -> None:
-        """Create the window and GPU context.
-
-        Must be called once before any other method.
-        """
-        ...
-
-    def shutdown(self) -> None:
-        """Destroy the window and release all GPU resources."""
-        ...
-
-    def poll_events(self) -> None:
-        """Process pending OS/window events (resize, close, input)."""
-        ...
-
-    def should_close(self) -> bool:
-        """Return True when the window has been requested to close."""
-        ...
+class RenderSurface(Protocol):
+    """Drawing capability borrowed by a paradigm on the renderer owner thread."""
 
     # -- Texture management --------------------------------------------------
 
@@ -130,6 +98,32 @@ class Renderer(Protocol):
 
         Primary use: SSVEP flickering targets, P300 highlight overlays.
         """
+        ...
+
+
+@runtime_checkable
+class Renderer(RenderSurface, Protocol):
+    """Host-owned window, context and frame submission on one owner thread."""
+
+    # -- Window / context ----------------------------------------------------
+
+    def initialize(self, width: int, height: int, title: str) -> None:
+        """Create the window and GPU context.
+
+        Must be called once before any other method.
+        """
+        ...
+
+    def shutdown(self) -> None:
+        """Destroy the window and release all GPU resources."""
+        ...
+
+    def poll_events(self) -> None:
+        """Process pending OS/window events (resize, close, input)."""
+        ...
+
+    def should_close(self) -> bool:
+        """Return True when the window has been requested to close."""
         ...
 
     # -- Frame submission ----------------------------------------------------

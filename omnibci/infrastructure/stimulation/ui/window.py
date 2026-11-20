@@ -11,38 +11,58 @@ class UIWindow:
     root_view_controller = None
 
     def __init__(self, window_name, width, height):
-        if not glfw.init():
-            print('glfw init failed')
-            return
-        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
-        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
-        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-        glfw.window_hint(glfw.RESIZABLE, glfw.FALSE)
-        glfw.swap_interval(1)
-        if platform == "darwin":
-            glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, glfw.TRUE)
-        self.window = glfw.create_window(width, height, window_name, None, None)
-        if not self.window:
-            glfw.terminate()
-            print('glfw create window failed')
-            return
-        glfw.make_context_current(self.window)
-        glfw.set_window_pos(self.window, 0, 0)
-        # 设置 OpenGL 清除颜色为黑色 (R=0, G=0, B=0, A=1)
-        glClearColor(0.0, 0.0, 0.0, 0.0)
-        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)  # 清除颜色缓冲区
-        # glViewport(0, 0, width, height)
-        # OpenGL version info
-        renderer = glGetString(GL_RENDERER)
-        version = glGetString(GL_VERSION)
-        print('Renderer:', renderer)  # Renderer: b'Intel Iris Pro OpenGL Engine'
-        print('OpenGL version supported: ', version)  # OpenGL version supported:  b'4.1 INTEL-10.12.13'
+        self.window = None
+        self._closed = False
+        self._shutdown_error = None
+        try:
+            if not glfw.init():
+                raise RuntimeError('glfw init failed')
+            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+            glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+            glfw.window_hint(glfw.RESIZABLE, glfw.FALSE)
+            if platform == "darwin":
+                glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, glfw.TRUE)
+            self.window = glfw.create_window(width, height, window_name, None, None)
+            if not self.window:
+                raise RuntimeError('glfw create window failed')
+            glfw.make_context_current(self.window)
+            glfw.swap_interval(1)
+            glfw.set_window_pos(self.window, 0, 0)
+            # Clear the framebuffer after establishing the owner context.
+            glClearColor(0.0, 0.0, 0.0, 0.0)
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            print('Renderer:', glGetString(GL_RENDERER))
+            print('OpenGL version supported:', glGetString(GL_VERSION))
+        except BaseException as failure:
+            try:
+                self.teardown()
+            except BaseException as cleanup_error:
+                raise BaseExceptionGroup("Window initialization and cleanup failed", [failure, cleanup_error])
+            raise
 
     def get_window(self):
         return self.window
 
     def teardown(self):
-        glfw.terminate()
+        if self._shutdown_error is not None:
+            raise self._shutdown_error
+        if self._closed:
+            return
+        errors = []
+        if self.window:
+            try:
+                glfw.destroy_window(self.window)
+            except Exception as exc:
+                errors.append(exc)
+        try:
+            glfw.terminate()
+        except Exception as exc:
+            errors.append(exc)
+        self._closed = True
+        if errors:
+            self._shutdown_error = ExceptionGroup("Window cleanup failed", errors)
+            raise self._shutdown_error
 
     def should_close(self):
         return glfw.window_should_close(self.window)

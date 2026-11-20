@@ -6,10 +6,10 @@ from omnibci.domain.ports.paradigm import Paradigm
 
 
 class _PresentationOnlyParadigm(Paradigm):
-    def setup(self, renderer=None):
+    def setup(self, *, renderer, trigger):
         pass
 
-    def teardown(self, renderer=None):
+    def teardown(self):
         pass
 
     def trial_stimulus_present(self, params):
