@@ -1,7 +1,7 @@
 """Application-layer port for controlling a running engine."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Protocol
+from typing import Callable, Protocol
 
 from omnibci.shared.events import Event
 
@@ -10,13 +10,15 @@ STIMULATION_PEER = "stimulation"
 
 
 class EngineHandle(Protocol):
-    """Minimal engine graph managed by NeuroEngineService."""
-    event_bus: Any
-    acquisition_worker: Any
-    signal_processing_worker: Any
-    peer_gateway: Any
-    should_stop: bool
-    shutdown_complete: bool
+    """Runtime operations managed by NeuroEngineService, without its graph."""
+    @property
+    def shutdown_complete(self) -> bool: ...
+
+    def subscribe(self, event_type, handler: Callable[[Event], None]) -> None: ...
+    def dispatch(self, event: Event) -> None: ...
+    def request_stop(self) -> None: ...
+    def is_peer_connected(self, peer_name: str) -> bool: ...
+    def is_current_peer_channel(self, peer_name: str, channel_id: str) -> bool: ...
 
     def read_acquisition_preview(self, capture_id: str | None, sequence_id: int | None = None) -> dict: ...
 
@@ -32,7 +34,7 @@ class EngineHandle(Protocol):
 
 
 # Each call returns a fresh graph because multiprocessing workers are single-use.
-EngineFactory = Callable[[dict], EngineHandle] | Callable[[], EngineHandle]
+EngineFactory = Callable[[dict], EngineHandle]
 
 
 class EnginePort(ABC):

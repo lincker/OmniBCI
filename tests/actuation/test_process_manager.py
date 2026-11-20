@@ -486,7 +486,8 @@ class TestEngineLifecycleHook:
         engine.set_actuation_active = AsyncMock()
         engine.ensure_output_ready = AsyncMock()
         engine.is_module_running.return_value = False
-        engine.peer_gateway.peer.return_value.is_connected = False
+        engine.is_peer_connected.return_value = False
+        engine.shutdown_complete = True
         stopped = threading.Event()
         engine.run.side_effect = stopped.wait
         svc = NeuroEngineService(engine_factory=lambda snapshot: engine,

@@ -18,11 +18,11 @@ from omnibci.application.commands.stimulation_commands import (
 )
 from omnibci.application.ports.engine_port import EnginePort
 from omnibci.application.ports.engine_port import STIMULATION_PEER
+from omnibci.application.ports.output_process import StimulationProcess
 from omnibci.application.services.command_result_service import CommandDeliveryError, CommandTimeoutError
 
 if TYPE_CHECKING:
     from omnibci.application.services.command_result_service import CommandResultBroker
-    from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class StimulationAppService:
     def __init__(
         self,
         engine: EnginePort,
-        process_manager: "StimulationProcessManager | None" = None,
+        process_manager: StimulationProcess | None = None,
         command_results: "CommandResultBroker | None" = None,
         admission=None,
     ) -> None:

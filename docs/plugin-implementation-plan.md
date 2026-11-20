@@ -1,6 +1,6 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4–S6 remain pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a runtime operations and generation-only Results access are implemented and verified. Remaining S4 work and S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2e are complete and verified (S2e: `cf30c57`).
 
@@ -391,6 +391,14 @@ The first **13 ownership/lifecycle cases failed** before implementation. Further
 **Checks:** engine port/lifecycle, independent modules, runtime apply/failure/recovery, command result, input-boundary, node configuration/synchronization, peer identity/quiescence, actuation translation and HTTP/WS contract tests. Add mismatched node artifact/environment receipts, lost response/late result and module-snapshot isolation cases. Retain bounded-channel recovery and request-gate/shutdown tests; cover pending apply during exit, failed stop and resume without overlapping resource owners when those boundaries change.
 
 **Gate:** application services use declared operations, not runtime graph attributes. Current local/remote execution, compensation, history, no-replay and uncertainty semantics remain intact. Unavailable remote management is reported as unavailable rather than silently acting on the controller's store.
+
+#### S4a execution: runtime operations and generation access (2026-11-20)
+
+[EngineHandle](../omnibci/application/ports/engine_port.py) now declares operations instead of bus, gateway, worker and writable-stop attributes. NeuroEngine implements subscription, dispatch, stop requests, peer connectivity and current-channel checks directly. The application retains its thread/startup/shutdown ownership and calls those methods. Unknown shutdown confirmation fails closed; the fallback that treated absent or mock-valued confirmation as success is removed.
+
+Every engine factory receives one copied dictionary, including an empty foundation with explicit empty bindings and a fresh generation. There is no zero-argument factory path. Existing output process managers structurally satisfy small application-owned lifecycle protocols, so application annotations no longer import their infrastructure classes. ResultsService receives only a generation callable; retention, duplicate handling, pagination and event filtering remain unchanged. This completes A01 and the generation-dependency portion of A05, not the separate B1 retention decision.
+
+Four new failing cases reproduced graph access, the alternate factory call, unknown-cleanup acceptance and whole-engine Results coupling. The updated engine/application/HTTP/lifecycle group passes **245 tests**, and the remaining Actuation/node caller group passes **24 tests**. An initial full run found three stale test doubles; those were updated to the same required operations and explicit shutdown confirmation. The final unchanged production tree passes **4,248 headless tests**, **38 integration tests** (one Windows-only skip), and **9 import contracts**. Evidence is retained in `/private/tmp/omnibci-s4a-9y4ckc_m`; 473 source/test/project files were checked against the final hash manifest. Command definitions, Configuration consumers, ownership receipts, apply outcomes, node readiness and remaining S4–S6 work are still pending.
 
 ### S5 Finish the three plugin entry workflows
 

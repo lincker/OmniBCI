@@ -34,7 +34,7 @@ class TestNeuroEngineServiceStatus:
     def test_peer_delivery_fault_only_quarantines_current_output_channel(self, module):
         svc = NeuroEngineService(engine_factory=MagicMock())
         svc._engine = MagicMock()
-        svc._engine.peer_gateway.peer.return_value.channel_id = "current-channel"
+        svc._engine.is_current_peer_channel.side_effect = lambda peer, channel: channel == "current-channel"
         svc._commands = MagicMock()
         stale = Event(EventType.PeerDeliveryFault, {
             "peer": module, "channel_id": "previous-channel", "reason": "write failed",
@@ -81,7 +81,7 @@ class TestNeuroEngineServicePortState:
         with pytest.raises(RuntimeError, match="not running|stop is in progress"):
             engine_service.dispatch(Event(EventType.StartStream))
 
-        mock_engine.event_bus.put_event.assert_not_called()
+        mock_engine.dispatch.assert_not_called()
 
     def test_dispatch_accepts_running_ready_engine(
         self, engine_service, mock_engine
@@ -94,7 +94,7 @@ class TestNeuroEngineServicePortState:
 
         engine_service.dispatch(event)
 
-        mock_engine.event_bus.put_event.assert_called_once_with(event)
+        mock_engine.dispatch.assert_called_once_with(event)
 
     def test_dead_engine_thread_is_not_running_ready(self, engine_service):
         engine_service._running = True
@@ -123,7 +123,7 @@ class TestNeuroEngineServicePortState:
             timers.append(timer)
             timer.start()
 
-        mock_engine.event_bus.put_event.side_effect = dispatch
+        mock_engine.dispatch.side_effect = dispatch
         try:
             assert broker.request(EventType.StartStimTrial).ok
         finally:
@@ -131,7 +131,7 @@ class TestNeuroEngineServicePortState:
                 timer.join()
         assert broker.pending_count == 0
         assert engine_service.is_engine_ready is True
-        mock_engine.event_bus.put_event.assert_called_once()
+        mock_engine.dispatch.assert_called_once()
 
     def test_closed_worker_handle_does_not_affect_foundation_readiness(self, engine_service, mock_engine):
         engine_service._running = True
@@ -154,7 +154,7 @@ class TestNeuroEngineServicePortState:
         engine_service._engine_thread = MagicMock()
         engine_service._engine_thread.is_alive.return_value = True
         getattr(mock_engine, worker).is_alive.return_value = True
-        mock_engine.event_bus.put_event.side_effect = lambda event: setattr(
+        mock_engine.dispatch.side_effect = lambda event: setattr(
             getattr(mock_engine, worker).is_alive, "return_value", False,
         )
         broker = CommandResultBroker(engine_service, timeout_s=1)
@@ -201,7 +201,7 @@ class TestNeuroEngineServicePortState:
         assert engine_service.is_engine_ready is False
         with pytest.raises(RuntimeError, match="not running|stop is in progress"):
             engine_service.dispatch(Event(EventType.StartStream))
-        mock_engine.event_bus.put_event.assert_not_called()
+        mock_engine.dispatch.assert_not_called()
 
         join_release.set()
         await stop_task
@@ -434,7 +434,7 @@ def running_modules(engine_service, mock_engine):
         )},
         "PLUGINS.bindings": [],
     }
-    mock_engine.peer_gateway.peer.return_value.is_connected = False
+    mock_engine.is_peer_connected.return_value = False
     acquisition, commands, signal = MagicMock(), MagicMock(), MagicMock()
     acquisition.handle_get_status.return_value = SimpleNamespace(connected=True, streaming=False)
     calls = []
@@ -561,7 +561,7 @@ async def test_processing_start_does_not_require_source_checkpoint(running_modul
 async def test_external_actuation_can_stop_and_resume_without_acquisition_or_processing(running_modules):
     engine, graph, acquisition, _, _, calls = running_modules
     engine._applied_snapshot["ACTUATION.auto_spawn"] = False
-    graph.peer_gateway.peer.return_value.is_connected = True
+    graph.is_peer_connected.return_value = True
     async with engine.runtime_transition("actuation"):
         await engine.start_module_for_configuration("actuation", engine.applied_snapshot)
     assert engine.is_module_running("actuation")
@@ -585,7 +585,7 @@ async def test_module_start_cannot_bypass_runtime_recovery(running_modules, modu
     engine, graph, _, commands, _, calls = running_modules
     if module == "actuation":
         engine._actuation.active = already_running
-        graph.peer_gateway.peer.return_value.is_connected = already_running
+        graph.is_peer_connected.return_value = already_running
     else:
         worker = graph.acquisition_worker if module == "acquisition" else graph.signal_processing_worker
         worker.is_alive.return_value = already_running
@@ -618,7 +618,7 @@ async def test_confirmed_actuation_replacement_does_not_repeat_settlement(runnin
     manager = MagicMock()
     engine._actuation.process_manager = manager
     engine._actuation.active = True
-    graph.peer_gateway.peer.return_value.is_connected = True
+    graph.is_peer_connected.return_value = True
     async with engine.runtime_transition():
         await engine.stop_actuation_for_configuration()
     commands.request.assert_not_called()
@@ -679,7 +679,7 @@ async def test_actuation_settlement_failure_still_cleans_managed_process_and_req
     manager.stop.side_effect = lambda: setattr(manager, "is_alive", False)
     engine._actuation.process_manager = manager
     engine._actuation.active = True
-    graph.peer_gateway.peer.return_value.is_connected = True
+    graph.is_peer_connected.return_value = True
     commands.request.side_effect = CommandTimeoutError("settle", "SettleActuation", .01)
     with pytest.raises(CommandTimeoutError):
         await engine.stop_module("actuation")
@@ -722,7 +722,7 @@ async def test_processing_stop_releases_worker_but_retains_failed_input_boundary
 async def test_failed_external_resume_remains_recoverable_before_active_flag_is_set(running_modules):
     engine, graph, _, commands, _, _ = running_modules
     engine._applied_snapshot["ACTUATION.auto_spawn"] = False
-    graph.peer_gateway.peer.return_value.is_connected = True
+    graph.is_peer_connected.return_value = True
     request = commands.request.side_effect
     commands.request.side_effect = CommandTimeoutError("resume", "ResumeActuation", .01)
     with pytest.raises(CommandTimeoutError):
@@ -734,7 +734,7 @@ async def test_failed_external_resume_remains_recoverable_before_active_flag_is_
     await engine.stop_module("actuation")
     assert commands.request.call_args.args[0] is EventType.SettleActuation
     assert not engine.admission.requires_recovery("actuation")
-    graph.peer_gateway.replace_peer.assert_not_called()
+    graph.reconfigure_output_modules.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -794,7 +794,7 @@ async def test_external_recovery_can_rebuild_foundation_and_publish_only_retaine
     old["PLUGINS.bindings"] = [{"slot": f"{module}.main", "plugin_id": "retained"},
                                {"slot": "processing.decoder", "plugin_id": "unrelated"}]
     engine._applied_snapshot = deepcopy(old)
-    graph.peer_gateway.peer.return_value.is_connected = True
+    graph.is_peer_connected.return_value = True
     if module == "actuation":
         engine._actuation.active = True
         engine._actuation._snapshot = deepcopy(old)
@@ -884,7 +884,7 @@ async def test_external_recovery_stop_requires_receipt_even_before_enable(runnin
     engine, graph, _, commands, _, _ = running_modules
     engine._applied_snapshot["ACTUATION.auto_spawn"] = False
     engine.admission.quarantine("Configuration settlement was not confirmed", "actuation")
-    graph.peer_gateway.peer.return_value.is_connected = True
+    graph.is_peer_connected.return_value = True
     request = commands.request.side_effect
     commands.request.side_effect = CommandTimeoutError("settle", "SettleActuation", .01)
     with pytest.raises(CommandTimeoutError):

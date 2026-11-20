@@ -206,6 +206,8 @@ Keep foundation lifecycle in `NeuroEngineService`. Move orchestration into exist
 
 **Acceptance:** application code no longer dereferences worker, gateway or bus objects; all engine construction uses a pinned snapshot; startup barriers and unresolved-shutdown ownership remain intact; focused fakes implement the same public protocols as production adapters.
 
+**S4a implementation (2026-11-20):** EngineHandle now exposes runtime operations, one explicit snapshot factory and required shutdown confirmation. Application services no longer traverse the graph or annotate infrastructure process-manager types. Existing managers implement application-owned structural lifecycle protocols directly. Four focused failures were reproduced before replacement; full validation is recorded in the [implementation plan](plugin-implementation-plan.md#s4a-execution-runtime-operations-and-generation-access).
+
 ### A02 Flat snapshots and receipts obscure module ownership
 
 **P1 — design risk visible at multiple seams.** [Processing binding helpers](/Users/lincker/workspace/OmniBCI/omnibci/application/processing_source.py:13), [SignalSetupService](/Users/lincker/workspace/OmniBCI/omnibci/application/services/signal_setup_service.py:248), the engine, and plugin loading all consume keys such as `PLUGINS.bindings` and `CONFIG.module_revisions` from dictionaries. Input receipt fields are reconstructed and validated in application services and [SignalProcessor](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/signal_processing/signal_processor.py:407).
@@ -249,6 +251,8 @@ Keep pure persistence/configuration services independent of runtime services. Sp
 **Adjustment:** give the read model a callable that supplies generation, rather than the engine graph; no additional interface is needed for one value. Define retention in the query contract: recent bounded inspection and a complete session archive are different requirements. For recent inspection, report retained range, total observed count and truncation. If all session records must remain accessible, retain that promise through an append-only session store with a bounded memory index; do not silently evict records while still claiming a complete list.
 
 This is a retention decision to settle before changing storage, not a reason to add a database immediately. Preserve generation filtering and duplicate suppression.
+
+**S4a implementation (2026-11-20):** the whole-engine dependency is replaced by a generation callable. The retention decision and storage changes remain B1; S4a preserves the existing trial and epoch behavior.
 
 **Acceptance:** long sessions have an explicit resource bound or durable storage policy; pagination describes retained data accurately; changing generations cannot show stale results; results queries cannot mutate internal collections.
 

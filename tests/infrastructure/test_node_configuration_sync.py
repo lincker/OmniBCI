@@ -2,7 +2,6 @@
 import asyncio
 import json
 from threading import Event as ThreadEvent
-from types import SimpleNamespace
 
 import pytest
 
@@ -64,19 +63,15 @@ class HardwareFreeGraph:
         self._started = ThreadEvent()
         self._stopped = ThreadEvent()
         self.prepared_outputs = {}
-        self.acquisition_worker = SimpleNamespace(
-            is_alive=lambda: self._started.is_set() and not self._stopped.is_set(),
-        )
-        self.signal_processing_worker = self.acquisition_worker
 
-    @property
-    def should_stop(self):
-        return self._stopped.is_set()
+    def request_stop(self):
+        self._stopped.set()
 
-    @should_stop.setter
-    def should_stop(self, value):
-        if value:
-            self._stopped.set()
+    def is_module_running(self, module):
+        return self._started.is_set() and not self._stopped.is_set()
+
+    def is_peer_connected(self, peer_name):
+        return False
 
     async def ensure_output_ready(self, role, snapshot):
         self.prepared_outputs[role] = snapshot

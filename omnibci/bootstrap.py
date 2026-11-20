@@ -133,7 +133,7 @@ def assemble(
             admission=admission,
         ),
         stimulation_process_manager=process_manager,
-        results_service=ResultsService(engine_service),
+        results_service=ResultsService(lambda: engine_service.generation),
         actuation_process_manager=actuation_process_manager,
         command_results=command_results,
     )

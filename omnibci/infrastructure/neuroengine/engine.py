@@ -158,6 +158,27 @@ class NeuroEngine:
     # Public lifecycle
     # ------------------------------------------------------------------
 
+    def subscribe(self, event_type, handler) -> None:
+        self.event_bus.register_event_listener(event_type, handler)
+
+    def dispatch(self, event: Event) -> None:
+        self.event_bus.put_event(event)
+
+    def request_stop(self) -> None:
+        self.should_stop = True
+
+    def is_peer_connected(self, peer_name: str) -> bool:
+        try:
+            return self.peer_gateway.peer(peer_name).is_connected
+        except KeyError:
+            return False
+
+    def is_current_peer_channel(self, peer_name: str, channel_id: str) -> bool:
+        try:
+            return self.peer_gateway.peer(peer_name).channel_id == channel_id
+        except KeyError:
+            return False
+
     def run(self) -> None:
         """Blocking entry point — call from a dedicated thread."""
         try:

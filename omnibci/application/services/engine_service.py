@@ -10,7 +10,7 @@ import logging
 from contextlib import asynccontextmanager, contextmanager
 from copy import deepcopy
 from threading import RLock, Thread
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable, Optional
 from uuid import uuid4
 
 from omnibci.application.runtime_admission import RuntimeAdmission
@@ -18,6 +18,7 @@ from omnibci.application.configuration.definitions import merge_module_settings
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.command_result_service import command_scopes
 from omnibci.application.services.actuation_service import ActuationAppService
+from omnibci.application.ports.output_process import OutputProcess
 from omnibci.application.commands.stimulation_commands import StopStimulationCommand
 from omnibci.application.commands.acquisition_commands import StartStreamCommand
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
@@ -38,9 +39,6 @@ from omnibci.application.queries.engine_queries import (
     GetEngineStatusQuery,
     EngineStatusResult,
 )
-
-if TYPE_CHECKING:
-    from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +61,11 @@ class NeuroEngineService(EnginePort):
     def __init__(
         self,
         engine_factory: EngineFactory,
-        actuation_process_manager: "ActuationProcessManager | None" = None,
+        actuation_process_manager: OutputProcess | None = None,
         *,
         snapshot_provider: Callable[[], dict] | None = None,
         admission: RuntimeAdmission | None = None,
-        stimulation_process_manager=None,
+        stimulation_process_manager: OutputProcess | None = None,
         plugin_preparer: Callable[[dict, tuple[str, ...]], dict] | None = None,
     ) -> None:
         # The composition root supplies a fresh graph factory and, for managed
@@ -161,17 +159,15 @@ class NeuroEngineService(EnginePort):
             if snapshot is None:
                 if self._snapshot_provider is not None:
                     raise ValueError("snapshot_provider must return a configuration dictionary")
-                self._engine = self._engine_factory()
-                self._graph_snapshot = None
-            else:
-                if not isinstance(snapshot, dict):
-                    raise ValueError("settings_snapshot must be a configuration dictionary")
-                snapshot = deepcopy(snapshot)
-                snapshot["CONFIG.generation"] = str(uuid4())
-                self._engine = self._engine_factory(deepcopy(snapshot))
-                self._graph_snapshot = snapshot
+                snapshot = {"PLUGINS.bindings": []}
+            if not isinstance(snapshot, dict):
+                raise ValueError("settings_snapshot must be a configuration dictionary")
+            snapshot = deepcopy(snapshot)
+            snapshot["CONFIG.generation"] = str(uuid4())
+            self._engine = self._engine_factory(deepcopy(snapshot))
+            self._graph_snapshot = snapshot
             for event_type, handler in self._subscriptions:
-                self._engine.event_bus.register_event_listener(event_type, handler)
+                self._engine.subscribe(event_type, handler)
             self._needs_rebuild = False
             self._restart_blocked = False
             logger.info(
@@ -190,7 +186,7 @@ class NeuroEngineService(EnginePort):
                 self._STARTUP_TIMEOUT_S,
             )
         except BaseException as exc:
-            self._engine.should_stop = True
+            self._engine.request_stop()
             await asyncio.to_thread(
                 self._engine_thread.join,
                 self._SHUTDOWN_TIMEOUT_S,
@@ -198,7 +194,7 @@ class NeuroEngineService(EnginePort):
             # A confirmed-dead failed graph is single-use and must be rebuilt;
             # an unresponsive thread remains owned here and blocks restart.
             if not self._engine_thread.is_alive():
-                if self._engine_shutdown_complete():
+                if self._engine.shutdown_complete is True:
                     self._needs_rebuild = True
                 else:
                     self._restart_blocked = True
@@ -479,7 +475,7 @@ class NeuroEngineService(EnginePort):
             except Exception as exc:
                 logger.exception("Acquisition failed to drain before foundation shutdown")
         self._accepting_commands = False
-        self._engine.should_stop = True
+        self._engine.request_stop()
         if self._engine_thread:
             await asyncio.to_thread(
                 self._engine_thread.join,
@@ -495,7 +491,7 @@ class NeuroEngineService(EnginePort):
                 )
         self._running = False
         self._engine_thread = None
-        if not self._engine_shutdown_complete():
+        if self._engine.shutdown_complete is not True:
             self._restart_blocked = True
             raise RuntimeError(
                 "NeuroEngine stopped with unreleased resources; restart is blocked"
@@ -550,7 +546,7 @@ class NeuroEngineService(EnginePort):
             self._require_engine()
             if not self.is_engine_ready:
                 raise RuntimeError("NeuroEngine is not running")
-            self._engine.event_bus.put_event(event)
+            self._engine.dispatch(event)
 
     @property
     def admission(self):
@@ -714,7 +710,7 @@ class NeuroEngineService(EnginePort):
         if not self.is_engine_ready:
             return False
         try:
-            return self._engine.peer_gateway.peer(peer_name).is_connected
+            return self._engine.is_peer_connected(peer_name)
         except Exception:
             return False
 
@@ -726,11 +722,7 @@ class NeuroEngineService(EnginePort):
                 or not isinstance(fault.get("channel_id"), str)
                 or not isinstance(fault.get("reason"), str)):
             return
-        try:
-            channel = self._engine.peer_gateway.peer(fault["peer"])
-        except KeyError:
-            return
-        if channel.channel_id != fault["channel_id"]:
+        if not self._engine.is_current_peer_channel(fault["peer"], fault["channel_id"]):
             return
         self._admission.quarantine(fault["reason"], fault["peer"])
         if self._commands is not None:
@@ -749,7 +741,7 @@ class NeuroEngineService(EnginePort):
             raise RuntimeError("NeuroEngineService not initialised")
         self._subscriptions.append((event_type, handler))
         if self._engine is not None:
-            self._engine.event_bus.register_event_listener(event_type, handler)
+            self._engine.subscribe(event_type, handler)
 
     # ------------------------------------------------------------------
     # Internal
@@ -770,8 +762,3 @@ class NeuroEngineService(EnginePort):
             logger.exception("NeuroEngine execution failed")
         finally:
             self._accepting_commands = False
-
-    def _engine_shutdown_complete(self) -> bool:
-        """Read the optional concrete lifecycle signal without trusting mocks."""
-        value = getattr(self._engine, "shutdown_complete", True)
-        return value if isinstance(value, bool) else True

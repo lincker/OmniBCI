@@ -4,7 +4,6 @@ from tests.plugin_configuration_helpers import builtin_selection, prepared_snaps
 
 import asyncio
 from queue import Queue
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import numpy as np
@@ -80,7 +79,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         put_data(chunk)
 
     monkeypatch.setattr(data, "put_data", capture)
-    results = ResultsService(SimpleNamespace(generation=generation))
+    results = ResultsService(lambda: generation)
     prepared = asyncio.get_running_loop().create_future()
     received = asyncio.Event()
     outcomes, messages = [], []

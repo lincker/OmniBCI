@@ -35,7 +35,7 @@ def client(tmp_path, monkeypatch):
     service = ConfigurationService(
         TomlConfigurationRepository(tmp_path / "configuration"), CatalogConfigurationAdapter(),
     )
-    engine = NeuroEngineService(lambda: pytest.fail("Applying stopped configuration must not start the engine"))
+    engine = NeuroEngineService(lambda snapshot: pytest.fail("Applying stopped configuration must not start the engine"))
     executor = RuntimeApplyCoordinator(engine, service, None,
         SimpleNamespace(is_active=False, process_alive=False), None)
     app = FastAPI()

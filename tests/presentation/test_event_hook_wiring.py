@@ -63,7 +63,7 @@ def _make_container() -> tuple[AppContainer, _RecordingEngine]:
         ),
         stimulation_service=StimulationAppService(engine),
         stimulation_process_manager=StimulationProcessManager(),
-        results_service=ResultsService(engine),
+        results_service=ResultsService(lambda: engine.generation),
         command_results=command_results,
     )
     return container, engine

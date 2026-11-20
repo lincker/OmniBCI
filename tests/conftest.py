@@ -62,9 +62,10 @@ class ImmediateCommandExecutor:
 def mock_engine():
     """A MagicMock that looks like NeuroEngine."""
     engine = MagicMock()
-    engine.event_bus = MagicMock()
-    engine.event_bus.put_event = MagicMock()
-    engine.event_bus.register_event_listener = MagicMock()
+    engine.dispatch = MagicMock()
+    engine.subscribe = MagicMock()
+    engine.is_peer_connected.return_value = False
+    engine.is_current_peer_channel.return_value = False
     engine.acquisition_worker = MagicMock()
     engine.acquisition_worker.is_alive.return_value = False
     engine.signal_processing_worker = MagicMock()
@@ -82,7 +83,7 @@ def mock_engine():
     engine.stop_module = AsyncMock(side_effect=stop_module)
     engine.set_actuation_active = AsyncMock()
     engine.ensure_output_ready = AsyncMock()
-    engine.should_stop = False
+    engine.shutdown_complete = True
     return engine
 
 
@@ -93,7 +94,7 @@ def mock_engine():
 @pytest.fixture()
 def engine_service(mock_engine):
     from omnibci.application.services.engine_service import NeuroEngineService
-    svc = NeuroEngineService(engine_factory=lambda: mock_engine)
+    svc = NeuroEngineService(engine_factory=lambda snapshot: mock_engine)
     svc._engine = mock_engine
     svc._running = False
     return svc

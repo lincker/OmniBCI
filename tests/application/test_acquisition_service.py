@@ -36,7 +36,7 @@ def test_command_executor_is_required():
 class TestAcquisitionConnect:
     def test_connect_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_connect(ConnectDataProviderCommand())
-        events = [call.args[0].type for call in mock_engine.event_bus.put_event.call_args_list]
+        events = [call.args[0].type for call in mock_engine.dispatch.call_args_list]
         assert events == [EventType.ConnectDataProvider, EventType.GetSourceMetadata]
 
     def test_connect_does_not_guess_state(self, acquisition_service):
@@ -47,14 +47,14 @@ class TestAcquisitionConnect:
 
     def test_disconnect_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_disconnect(DisconnectDataProviderCommand())
-        event = mock_engine.event_bus.put_event.call_args[0][0]
+        event = mock_engine.dispatch.call_args[0][0]
         assert event.type == EventType.DisconnectDataProvider
 
 
 class TestAcquisitionStream:
     def test_start_stream_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_start_stream(StartStreamCommand())
-        assert [item.args[0].type for item in mock_engine.event_bus.put_event.call_args_list] == [
+        assert [item.args[0].type for item in mock_engine.dispatch.call_args_list] == [
             EventType.GetSourceMetadata, EventType.StartStream,
         ]
 

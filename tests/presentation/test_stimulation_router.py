@@ -66,7 +66,7 @@ class TestStimulationTrial:
             json={"n_trials": 1, "trial_params": [{"event_id": 2}]},
         )
         from omnibci.shared.events import EventType
-        calls = mock_engine.event_bus.put_event.call_args_list
+        calls = mock_engine.dispatch.call_args_list
         trial_calls = [c for c in calls if c[0][0].type == EventType.StartStimTrial]
         assert len(trial_calls) == 1
         assert trial_calls[0][0][0].data == {"n_trials": 1, "trial_params": [{"event_id": 2}]}
@@ -95,4 +95,4 @@ def test_trial_endpoint_requires_explicit_stimulation_start(api_client, mock_eng
     response = api_client.post("/api/v1/stimulation/trial/start", json={"trial_params": [{"event_id": 0}]})
     assert response.status_code == 503
     assert response.json()["message"] == "Start stimulation before starting a trial"
-    mock_engine.event_bus.put_event.assert_not_called()
+    mock_engine.dispatch.assert_not_called()

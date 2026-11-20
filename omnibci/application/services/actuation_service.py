@@ -3,10 +3,11 @@ import asyncio
 from copy import deepcopy
 
 from omnibci.shared.events import EventType
+from omnibci.application.ports.output_process import OutputProcess
 
 
 class ActuationAppService:
-    def __init__(self, engine, process_manager=None, commands=None):
+    def __init__(self, engine, process_manager: OutputProcess | None = None, commands=None):
         self.engine = engine
         self.process_manager = process_manager
         self.commands = commands
