@@ -36,7 +36,7 @@ from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.infrastructure.outbound import make_actuation_ack, make_actuation_fault
-from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
+from omnibci.infrastructure.ipc.peer_channel import PeerChannel
 from omnibci.infrastructure.actuation.engine_channel import engine_peer_config
 from omnibci.infrastructure.actuation.actuator import Actuator
 from omnibci.application.commands.actuation_commands import (

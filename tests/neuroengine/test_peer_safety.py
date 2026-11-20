@@ -17,9 +17,9 @@ from __future__ import annotations
 import asyncio
 
 from omnibci.shared.events import Event, EventType
-from omnibci.infrastructure.neuroengine.gateway.routing import RouteSpec, PeerConfig
-from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
-from omnibci.infrastructure.neuroengine.gateway import peer_channel as peer_channel_module
+from omnibci.infrastructure.ipc.routing import RouteSpec, PeerConfig
+from omnibci.infrastructure.ipc.peer_channel import PeerChannel
+from omnibci.infrastructure.ipc import peer_channel as peer_channel_module
 from omnibci.infrastructure.neuroengine.gateway.peers import (
     actuation_peer_config, ACTUATION_LINK_LOST,
 )

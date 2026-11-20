@@ -17,7 +17,7 @@ from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
-from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
+from omnibci.infrastructure.ipc.peer_channel import PeerChannel
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.infrastructure.stimulation.engine_channel import engine_peer_config
 from omnibci.infrastructure.stimulation.stimulator import Stimulator

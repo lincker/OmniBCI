@@ -8,9 +8,9 @@ import pytest
 from omnibci.application.events import CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.network import PeerConnectionChanged
-from omnibci.infrastructure.neuroengine.gateway import peer_channel as channel_module
-from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
-from omnibci.infrastructure.neuroengine.gateway.routing import PeerConfig, RouteSpec
+from omnibci.infrastructure.ipc import peer_channel as channel_module
+from omnibci.infrastructure.ipc.peer_channel import PeerChannel
+from omnibci.infrastructure.ipc.routing import PeerConfig, RouteSpec
 from omnibci.shared.events import Event, EventType
 
 

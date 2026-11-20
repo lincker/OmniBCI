@@ -1,6 +1,6 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a runtime operations/generation-only Results access, S4b preparation/input receipts and S4c explicit command contracts and S4d Configuration query/apply ownership and S4e module-scoped host settings are implemented and verified. Remaining S4 work and S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
+Status: implementation plan and execution record. S0 and S1a–S1e software changes are complete. S1d was completed on this branch after the S2d checkpoint. S1f shared validation, constructors/SDK, static declarations and runtime payloads/callers are implemented and verified. S2a–S2e ownership changes and S3a–S3d artifact loading/reference/store ownership are implemented and verified. S4a–S4f runtime ports, preparation receipts, command contracts, Configuration queries, module-scoped settings and shared IPC ownership are implemented and verified. Remaining S4 work and S5–S6 are pending; target GPU/device and other-OS checks are not claimed.
 
 The [S2 first-batch review](#s2-first-batch-review-2026-11-20) was inspected at `b3fb981`. S2a–S2e are complete and verified (S2e: `cf30c57`).
 
@@ -435,6 +435,12 @@ One small projection in Configuration definitions copies the settings, revisions
 The same projection is used for signal preparation and staged pipeline commands, so later updates do not reintroduce a full-system snapshot. The controller and output managers retain their existing ownership/settlement state. Plugin constructors still receive only the existing narrow arguments; no SDK export, new snapshot class, compatibility path or sample-path operation was added.
 
 **Validation:** six failing cases reproduced disclosure through the two worker factories, two output subprocess factories and two Processing command boundaries. They now pass. The affected worker/host/pipeline group ran **663 cases**: **658 passed** and five fixture failures expected old full snapshots or embedded test-only spawn parameters. Those parameters now belong to a test entry-point partial, and snapshot assertions check the owning module. The complete output-process/snapshot group then passes **66 tests**, including both real spawn/forkserver environment cases; all five failures are matched to passing reruns. **9 import contracts** pass. Production files remained unchanged between the runs, and the final 457-file manifest records only fixture corrections. Evidence: `/private/tmp/omnibci-s4e-cx2o7x5j`. Physical device/GPU and other-OS execution remain unclaimed.
+
+#### S4f execution: shared peer transport ownership (2026-11-21)
+
+`PeerChannel`, `PeerConfig` and `RouteSpec` now live under infrastructure IPC. NeuroEngine retains peer orchestration and role routing/admission; Stimulation and Actuation import the shared mechanics directly. The old files and gateway re-exports are removed without aliases. The channel implementation, wire version, event IDs, connection-token checks, bounded outbound queues, watchdogs and delivery outcomes are unchanged.
+
+A new concrete import contract first failed on four output-to-NeuroEngine dependencies. After the move, **10 import contracts** pass. The peer framing/identity/quiescence/saturation/reconnection and output-host lifecycle group passes **564 tests** on the unchanged 457-file verification tree. Evidence: `/private/tmp/omnibci-s4f-ibg4ckeg`. S4c supplies command payload/result validation; this batch closes T01's shared transport placement. Artifact/environment readiness, output causality and presentation ownership continue in S4.
 
 ### S5 Finish the three plugin entry workflows
 

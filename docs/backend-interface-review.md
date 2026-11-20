@@ -404,13 +404,15 @@ Use one mutation authority per node/store; reject competing owners rather than a
 
 **P1 for payload contracts; P2 for placement.** [The IPC envelope](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/ipc/contracts.py:70) validates framing, protocol version and event ID, then leaves the payload generic. Role-specific checks exist, for example [actuation validation](/Users/lincker/workspace/OmniBCI/omnibci/application/commands/actuation_commands.py:64). This layered validation is appropriate; generic envelope acceptance must not be mistaken for complete command validation.
 
-Both output applications import [PeerChannel](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/neuroengine/gateway/peer_channel.py:1) from inside the NeuroEngine gateway subtree even though connection management and bounded outbound delivery are shared transport mechanisms.
+Both output applications import [PeerChannel](/Users/lincker/workspace/OmniBCI/omnibci/infrastructure/ipc/peer_channel.py:1) from inside the NeuroEngine gateway subtree even though connection management and bounded outbound delivery are shared transport mechanisms.
 
 **Adjustment:** retain wire protocol v1 and bounded framing. Connect A03's command definitions to role-specific codecs/validation before dispatch. Preserve generic plugin JSON only inside schema-validated payloads. Move shared peer connection, queue and delivery ownership into the IPC module without copying the implementation. Keep role-specific admission and failure policy with the owning module or gateway adapter.
 
 Preserve connection-token binding, generation/revision handshake checks, bounded outbound queues, and explicit definitely-unsent versus possibly-executed outcomes. Local queue payloads may remain efficient Python objects; external channels receive validated JSON, never arbitrary pickle objects.
 
 **Acceptance:** malformed envelopes and valid envelopes with invalid payloads are both rejected at the correct boundary; stale queued messages cannot cross a reconnection; outgoing saturation faults the affected channel without blocking the whole event bus; neither output module needs engine-assembly details.
+
+**S4f implementation (2026-11-21):** shared PeerChannel and routing values now live in IPC; old files and gateway re-exports are removed. Role policies remain with their owners. The new architecture rule forbids IPC/output hosts from depending on engine assembly. Together with S4c payload/result validation, the affected transport/host tests verify this boundary; see the [execution record](plugin-implementation-plan.md#s4f-execution-shared-peer-transport-ownership-2026-11-21).
 
 ### T02 Classification-to-actuation translation loses useful causality
 

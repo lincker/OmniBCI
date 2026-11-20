@@ -27,7 +27,7 @@ from omnibci.application.events import CommandRequest
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.network import PeerConnectionChanged
-from omnibci.infrastructure.neuroengine.gateway.routing import PeerConfig
+from omnibci.infrastructure.ipc.routing import PeerConfig
 
 logger = logging.getLogger(__name__)
 

@@ -158,3 +158,9 @@ forbidden_modules = [
     "omnibci.infrastructure.plugins.runtime_configuration",
     "omnibci.infrastructure.plugins.package_installer",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Shared IPC and output hosts must not depend on engine assembly"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.ipc", "omnibci.infrastructure.stimulation", "omnibci.infrastructure.actuation"]
+forbidden_modules = ["omnibci.infrastructure.neuroengine"]

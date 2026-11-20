@@ -15,8 +15,8 @@ import asyncio
 import pytest
 
 from omnibci.shared.events import Event, EventType
-from omnibci.infrastructure.neuroengine.gateway.routing import RouteSpec, PeerConfig
-from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
+from omnibci.infrastructure.ipc.routing import RouteSpec, PeerConfig
+from omnibci.infrastructure.ipc.peer_channel import PeerChannel
 from omnibci.infrastructure.neuroengine.gateway.peer_gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.gateway.peers import stimulation_peer_config, STIMULATION
 

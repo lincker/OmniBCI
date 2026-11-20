@@ -8,7 +8,7 @@ This is the single place the per-peer routing table lives.
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.peer_transport import ListenTransport
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
-from omnibci.infrastructure.neuroengine.gateway.routing import RouteSpec, PeerConfig
+from omnibci.infrastructure.ipc.routing import RouteSpec, PeerConfig
 
 # Stimulation peer name — single source is the application-layer port
 # vocabulary (application.ports.engine_port.STIMULATION_PEER); re-exported

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from omnibci.infrastructure.neuroengine.gateway.peer_gateway import PeerGateway
-from omnibci.infrastructure.neuroengine.gateway.routing import PeerConfig, RouteSpec
+from omnibci.infrastructure.ipc.routing import PeerConfig, RouteSpec
 from omnibci.shared.events import EventType
 from tests.neuroengine.test_neuro_engine import _make_engine
 from tests.neuroengine.test_peer_gateway import FakeBus, FakeTransport
