@@ -1,8 +1,8 @@
 # Plugin API v1 Implementation Plan
 
-Status: implementation plan and execution record. S0 and S1a–S1c are complete; S1d–S1f and subsequent steps remain pending.
+Status: implementation plan and execution record. S0, S1a–S1c and S1d's first batch are complete. Later S1d batches, S1e–S1f and subsequent steps remain pending.
 
-Updated: 2026-11-20. Inspected code baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`. Recheck the baseline before implementation; the working tree already contains documentation work.
+Updated: 2026-11-20. Original inspection baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`. S1d's first batch starts from `e81f825`, which commits the design and S1a–S1c work.
 
 This document owns implementation order, change boundaries and acceptance gates. The [architecture proposal](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries) owns terminology and module responsibilities; [Plugin API v1](plugin-api-v1.md) owns Python contracts; the [backend review](backend-interface-review.md) owns findings; the [Stimulation design](stimulation-interface-design.md) owns detailed rendering/lifecycle requirements. Do not maintain a second set of public signatures here.
 
@@ -117,6 +117,14 @@ Environment: macOS-14.8.3-x86_64-i386-64bit-Mach-O; Python 3.14.2; NumPy 2.4.4. 
 At 256 samples, 8/64-marker medians improve by about 2.8x/4.3x. The empty case is essentially unchanged, while a single marker at the final sample is about 2.54 microseconds slower: the old path avoids a second scan there, and the new path constructs a validated boundary value. Dense-path cost is O(N + K), without repeated suffix scans. This is a local microbenchmark, not an end-to-end latency or hard real-time guarantee. The script, captured baseline and complete median/p99 results are `compare_detector.py`, `before/` and `detector-performance.json` in the run directory below; the exploratory run during regression is kept separately.
 
 Commands, captured pre-S1c files, logs, JUnit reports and the S1c-only change inventory are in `/private/tmp/omnibci-s1c-q2232j3s`. Runs use isolated configuration and localhost proxy bypass. GUI/hardware and Windows/Linux execution were not exercised locally. No Git commit was created. S1d–S1f remain separate steps.
+
+**S1d first batch complete (2026-11-20):** [Paradigm](../omnibci/domain/ports/paradigm.py) now requires `render_frame(elapsed_seconds)` and `is_presenting()`. [Stimulator](../omnibci/infrastructure/stimulation/stimulator.py) calls readiness directly, requires a Python `bool`, rejects uninitialized paradigms, missing methods and invalid results, and propagates query exceptions. It no longer treats a failed query as idle.
+
+[Stimulation](../omnibci/infrastructure/stimulation/application.py) checks whether rendering ended before querying readiness. A closed renderer rejects queued trials even if its last state was busy, and discards feedback without invoking the released paradigm. An open renderer still admits one trial at a time and processes feedback while busy. Readiness failure sets the existing stop flag, refuses further trial/result admission, and sends pending trial failures through the existing awaited peer write before propagating the error into the existing shutdown path. Delivery failures are attached to the original exception. No new lifecycle owner, state framework or compatibility path is introduced.
+
+The first contract run reproduced **25 failures**; three additional receipt-delivery/shutdown tests also failed before implementation. After implementation, **270 focused tests**, **3718 full headless tests**, **36 integration tests** and all **8 import contracts** passed. Integration retained one Windows-only skip and the two existing WebSocket deprecation warnings. `git diff --check` passed. Test groups overlap and must not be summed. Runs used isolated configuration and localhost proxy bypass; GUI/hardware and Windows/Linux execution were not exercised. Commands, logs and JUnit reports are under `/private/tmp/omnibci-s1d-batch1-7qvx6tp2`.
+
+This batch changes only three production files and their required tests. Classic40 already implements both required methods. Narrow capabilities, setup/teardown ownership, the alternate thread path, trigger drivers/timing, graphics resources and method renames remain for later S1d batches. SDK exports, PluginContext, constructors, manifests and payload schemas remain unchanged; the shared S1f switch is still pending.
 
 Remove `signal_input_contract` dispatch while retaining decoder `channel_requirements`. Add the agreed local trial/result/command schemas and update the corresponding host validation and built-in payloads together. Package-wide domain restrictions no longer determine execution ownership; kind does. Keep unrelated transport and configuration functionality intact.
 

@@ -10,7 +10,9 @@ All external dependencies are mocked:
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch, call
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
@@ -173,6 +175,49 @@ class TestStimulatorPresent:
     def test_present_result_noop_without_paradigm(self):
         s = Stimulator(settings_snapshot={})
         s.present_result(0)  # should not raise
+
+
+class TestStimulatorReadiness:
+    @pytest.mark.parametrize("presenting", [False, True])
+    def test_returns_required_boolean_without_coercion(self, presenting):
+        s = Stimulator(settings_snapshot={})
+        s.paradigm = MagicMock()
+        s.paradigm.is_presenting.return_value = presenting
+
+        assert s.is_presenting is presenting
+        s.paradigm.is_presenting.assert_called_once_with()
+
+    def test_uninitialized_paradigm_is_not_ready(self):
+        s = Stimulator(settings_snapshot={})
+        with pytest.raises(RuntimeError, match="not been initialized"):
+            _ = s.is_presenting
+
+    def test_missing_readiness_method_is_not_ready(self):
+        s = Stimulator(settings_snapshot={})
+        s.paradigm = SimpleNamespace()
+        with pytest.raises(AttributeError, match="is_presenting"):
+            _ = s.is_presenting
+
+    @pytest.mark.parametrize("presenting", [
+        None, 0, 1, "", "busy", [], object(), np.bool_(False), np.bool_(True),
+    ])
+    def test_rejects_non_boolean_readiness(self, presenting):
+        s = Stimulator(settings_snapshot={})
+        s.paradigm = MagicMock()
+        s.paradigm.is_presenting.return_value = presenting
+
+        with pytest.raises(TypeError, match="is_presenting.*bool"):
+            _ = s.is_presenting
+
+    def test_propagates_readiness_error(self):
+        s = Stimulator(settings_snapshot={})
+        error = RuntimeError("readiness failed")
+        s.paradigm = MagicMock()
+        s.paradigm.is_presenting.side_effect = error
+
+        with pytest.raises(RuntimeError) as raised:
+            _ = s.is_presenting
+        assert raised.value is error
 
 
 # ---------------------------------------------------------------------------

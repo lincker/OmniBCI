@@ -253,16 +253,45 @@ class Stimulation:
         if getattr(self, "_external_node", False) and not self.peer_channel.is_connected:
             self._connection_lost()
             return
-        if getattr(self, "_paused", False):
+        if getattr(self, "_paused", False) or self._stop_requested():
             return
-        # Serialize trials: only pull the next StartStimTrial once the paradigm
-        # has finished presenting the current one.  Without this gate the whole
-        # queue is drained within a few loop iterations (~10 ms each) while a
-        # single trial's cue→stim sequence runs for seconds, so N queued trials
-        # collapse into one.  Paradigms that don't report busy-state fall back to
-        # the old immediate behaviour (getattr default False).
-        presenting = getattr(self.stimulator, "is_presenting", False)
-        if not presenting and not self.stim_command_queue.empty():
+        window_closed = self._render_task is None or self._render_task.done()
+        try:
+            # A closed renderer must reject queued trials without querying a
+            # released paradigm or waiting for its last busy state to change.
+            can_present = window_closed or not self.stimulator.is_presenting
+        except Exception as exc:
+            self.should_stop = True
+            while True:
+                try:
+                    queued = self.stim_command_queue.get_nowait().data
+                except Empty:
+                    break
+                params = queued.params if isinstance(queued, _QueuedStimTrial) else queued
+                request = queued.request if isinstance(queued, _QueuedStimTrial) else None
+                events = []
+                if request is not None:
+                    events.append(Event(EventType.CommandResult, CommandResult(
+                        request.command_id, EventType.StartStimTrial.name, ok=False,
+                        message=str(exc), error_code="STIMULATION_READINESS_FAILED",
+                        failure_kind=CommandFailureKind.EXECUTION_FAILED,
+                    )))
+                events.append(Event(EventType.StimulationAck, make_stimulation_ack(
+                    "StartStimTrial", status="error",
+                    target_index=params if isinstance(params, int) else None,
+                    message=str(exc),
+                )))
+                # Await terminal writes before serve() closes IPC. Queuing on
+                # the EventBus here could lose receipts during that shutdown.
+                for event in events:
+                    try:
+                        if not await self.peer_channel.send(event):
+                            exc.add_note(f"Could not deliver {event.type.name} after readiness failure")
+                    except Exception as delivery_error:
+                        exc.add_note(f"Could not deliver {event.type.name}: {delivery_error}")
+            raise
+        # Admit at most one trial per iteration, once the current one is idle.
+        if can_present and not self.stim_command_queue.empty():
             stim_command = self.stim_command_queue.get()
             if stim_command.type == EventType.StartStimTrial:
                 # Present the trial, then send an ack back to the engine.
@@ -277,7 +306,7 @@ class Stimulation:
                     params = queued
                     request = None
                 target = params if isinstance(params, int) else None
-                if self._render_task is None or self._render_task.done():
+                if window_closed:
                     # Report a closed window instead of stalling the paradigm.
                     ack = make_stimulation_ack(
                         "StartStimTrial", status="error", target_index=target,
@@ -322,7 +351,7 @@ class Stimulation:
 
         if not self.result_command_queue.empty():
             sys_command = self.result_command_queue.get()
-            if sys_command.type == EventType.TrialCompleted:
+            if not window_closed and sys_command.type == EventType.TrialCompleted:
                 # The TrialCompleted payload arrives over the engine→stimulation
                 # socket as a plain dict (decode_event_body does not rebuild domain
                 # VOs), so extract target_id from the dict shape.  Wrapped in
@@ -363,6 +392,14 @@ class Stimulation:
                     error_code="STIMULATION_PAUSED",
                 )
             return
+        if self._stop_requested():
+            if request is not None:
+                self._emit_command_result(
+                    request, EventType.StartStimTrial, ok=False,
+                    message="Stimulation is stopping",
+                    error_code="STIMULATION_STOPPING",
+                )
+            return
         spec = request.payload if request is not None else command.data
         try:
             if not isinstance(spec, dict):
@@ -399,7 +436,7 @@ class Stimulation:
             ))
 
     def _put_sys_command_queue(self, command: Event):
-        if getattr(self, "_paused", False):
+        if getattr(self, "_paused", False) or self._stop_requested():
             return
         if command.type == EventType.TrialCompleted:
             self.result_command_queue.put(command)

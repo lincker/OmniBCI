@@ -1,8 +1,8 @@
 # Stimulation Interface and Rendering Design
 
-Status: proposed backend design; no implementation changes.
+Status: target backend design. S1d's first batch is implemented and verified: required frame/readiness methods and strict trial admission. Lifecycle, capability and graphics-resource changes remain pending. See the [execution record](plugin-implementation-plan.md).
 
-Updated: 2026-11-19. Implementation baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`.
+Updated: 2026-11-20. Historical findings below describe inspection baseline `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`; the execution record identifies implemented changes.
 
 Stimulation needs complete plugin contracts and one owner for renderer, paradigm and trigger resources. Keep the existing rendering adapters and stimulus state machine; complete their boundaries and failure handling without adding a rendering framework or compatibility layer.
 
