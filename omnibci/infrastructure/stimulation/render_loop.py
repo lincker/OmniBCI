@@ -5,14 +5,13 @@
 from __future__ import annotations
 
 import asyncio
-import time
 
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.domain.ports.renderer import Renderer
 
 
 class RenderLoop:
-    """Poll, draw, submit, then yield; Stimulator owns resource cleanup."""
+    """Draw fresh display opportunities; Stimulator owns resource cleanup."""
 
     def __init__(self, renderer: Renderer, paradigm: Paradigm) -> None:
         self._renderer = renderer
@@ -24,10 +23,24 @@ class RenderLoop:
         self._stop_requested = True
 
     async def run_async(self) -> None:
-        t0 = time.perf_counter()
         while not self._stop_requested and not self._renderer.should_close():
-            t = time.perf_counter() - t0
             self._renderer.poll_events()
-            self._paradigm.render_frame(t)
-            self._renderer.end_frame()
-            await asyncio.sleep(0)
+            frame = self._renderer.begin_frame()
+            if frame is not None:
+                submit = False
+                try:
+                    if not self._stop_requested:
+                        submit = self._paradigm.render_frame(frame)
+                        if type(submit) is not bool:
+                            submit = False
+                            raise TypeError("Paradigm.render_frame must return a bool")
+                except BaseException as failure:
+                    try:
+                        self._renderer.end_frame(frame, submit=False)
+                    except BaseException as cleanup:
+                        raise BaseExceptionGroup("Drawing and frame discard failed", [failure, cleanup])
+                    raise
+                self._renderer.end_frame(frame, submit=submit)
+            # This sleep only yields to commands/window events. Native display
+            # samples, not this timer, determine whether another frame exists.
+            await asyncio.sleep(.001)

@@ -1,6 +1,6 @@
 # Plugin API v1 Domain Contracts
 
-Status: implemented Plugin API v1 contract. All seven kinds use the canonical 18-name SDK, two constructors and required role/payload contracts; no historical constructor or API adapter remains. S3–S5 complete prepared loading, execution evidence and the three source workflows. See the [execution record](plugin-implementation-plan.md) for verification and remaining target-platform limits, and the [developer guide](plugin-development.md) for supported author commands.
+Status: implemented Plugin API v1 contract. All seven kinds use the canonical 19-name SDK, two constructors and required role/payload contracts; no historical constructor or API adapter remains. The display-timing follow-up adds FrameTiming. S3–S5 complete prepared loading, execution evidence and the three source workflows. See the [execution record](plugin-implementation-plan.md) for verification and remaining target-platform limits, and the [developer guide](plugin-development.md) for supported author commands.
 
 Updated: 2026-11-21. Historical inspection baseline: `0bdd1dd2a296fea4b919d7f1a186a6fb76477b8e` on `refactor/module-interface`.
 
@@ -25,7 +25,7 @@ Use the [canonical plugin terminology and module names](plugin-marketplace-desig
 
 ## 2. Public export inventory
 
-The target has **18 public names**. Each is required by a role, a structured boundary value, or a narrow injected capability.
+The API has **19 public names**. Each is required by a role, a structured boundary value, or a narrow injected capability.
 
 | Group | Public names | Purpose |
 | --- | --- | --- |
@@ -34,11 +34,12 @@ The target has **18 public names**. Each is required by a role, a structured bou
 | Acquisition results | `SourceObservation`, `SourceCheckpoint` | Keep metadata inspection and resumable source state complete. |
 | Processing results | `Prediction`, `EpochBoundary` | Return validated predictions and ordered sample boundaries. |
 | Drawing | `RenderSurface`, `Color`, `Rect`, `TextureHandle` | Draw and manage textures without controlling the window or submission loop. |
+| Display timing | `FrameTiming` | Select content using the target refresh index, session-relative target time and refresh period. |
 | Trigger capability | `TriggerOutput` | Allow a paradigm to send/clear through the selected trigger without owning its lifecycle. |
 
 The SDK exports the same objects the host uses, not duplicate public models. Canonical definitions stay with the corresponding domain ports/values. Standard-library and NumPy types keep their own import paths.
 
-At the inspected baseline, the [SDK](../omnibci/sdk/__init__.py) had 17 exports. Relative to that baseline, the target retains 12 names, removes `Renderer`, `SignalChunk`, `FilterContext`, `PluginContext` and `PluginParameters`, and adds six required values/capabilities. S1c replaces `FilterContext` with `EpochBoundary`. S1d replaces full Renderer with RenderSurface and adds TriggerOutput. The first S1f batch publishes all 18 names and removes `PluginContext`, `PluginParameters` and the public `SignalChunk` export. Generic contexts, a checkpoint subclass, decode-attempt/frame-phase wrappers, SDK-specific JSON aliases and an exception hierarchy are unnecessary for this contract.
+At the inspected baseline, the [SDK](../omnibci/sdk/__init__.py) had 17 exports. The first API replacement retained 12 names from that baseline, removed `Renderer`, `SignalChunk`, `FilterContext`, `PluginContext` and `PluginParameters`, and added six required values/capabilities. S1c replaces `FilterContext` with `EpochBoundary`. S1d replaces full Renderer with RenderSurface and adds TriggerOutput. The first S1f batch published 18 names and removed `PluginContext`, `PluginParameters` and the public `SignalChunk` export. The display-timing follow-up adds `FrameTiming`, bringing the current inventory to 19. Generic contexts, a checkpoint subclass, decode-attempt/frame-phase wrappers, SDK-specific JSON aliases and an exception hierarchy are unnecessary for this contract.
 
 The following remain private: internal `SignalChunk` timestamps/counters, retained `Epoch`, host-enriched `Classification`, source/connection/generation IDs, configuration revisions, mapping plans, fingerprints, command envelopes, runtime receipts, artifact locks, event buses, workers and repositories. Removing a public export does not remove its host functionality.
 
@@ -284,12 +285,14 @@ The trigger plugin owns device implementation; Stimulation owns its setup/clear/
 
 ### 5.6 Paradigm
 
+The [display-timing follow-up](stimulation-interface-design.md#9-display-timing-follow-up) passes immutable `FrameTiming(refresh_index, target_time, refresh_period)` and returns whether content is ready for submission. Time values are monotonic seconds relative to the rendering-session origin; the refresh index preserves gaps in the native display timeline. Image selection and future video playback policy belong to the Paradigm. Classic40 omits expired images and continues on the original timeline, without a host-wide stop-on-one-miss rule or compatibility layer.
+
 ```python
 class Paradigm(ABC):
     def setup(self, *, renderer: RenderSurface, trigger: TriggerOutput) -> None: ...
     def present_trial(self, parameters: Mapping[str, object]) -> None: ...
     def present_result(self, result: Mapping[str, object]) -> None: ...
-    def render_frame(self, elapsed_seconds: float) -> None: ...
+    def render_frame(self, frame: FrameTiming) -> bool: ...
     def is_presenting(self) -> bool: ...
     def teardown(self) -> None: ...
 ```
@@ -298,7 +301,7 @@ All methods run serially on the renderer owner thread. Setup receives required c
 
 Classic40 uses `{"event_id": 1..40}` for cued trials, `{"event_id": 0}` for explicit free run and `{"target_id": 1..40}` for result feedback. A separate mode field is unnecessary. Host validation copies the declared JSON object without applying defaults; missing/malformed payloads do not silently select a different operation. REST/IPC batches retain `n_trials` and require an equally sized `trial_params` object list (1–10000 trials, aggregate JSON at most 1 MiB). Numeric frontend controls declare `payload_key`; acknowledgements return the trial object, while operation identity stays host-owned.
 
-Declare the frame callback and readiness methods already required by the runtime. `is_presenting()` returns a Python boolean: true while a trial or feedback is active, false when another trial may be admitted. An exception or invalid return faults the instance; it cannot become synthetic readiness. Elapsed time is a monotonic duration since the rendering session began. Accepted requests, generic frame submissions and completion remain distinct host observations. No public `FramePhase` type or new claim of exact first-stimulus/physical-display timing is needed for existing functionality.
+`render_frame()` returns a Python boolean: true when content is ready to submit, false when no new image should be submitted. The host also discards work whose opportunity expires during drawing. A true result is not a presentation receipt; old `None` returns are errors. `is_presenting()` returns a Python boolean: true while a trial or feedback is active, false when another trial may be admitted. An exception or invalid return faults the instance; it cannot become synthetic readiness. Accepted requests, generic frame submissions and completion remain distinct host observations. No public `FramePhase` type or claim of measured first-stimulus/physical-display timing is introduced.
 
 **Adjustment:** update [Paradigm](../omnibci/domain/ports/paradigm.py), [Classic40SSVEP](../omnibci/infrastructure/plugins/paradigms/classic40SSVEP/ssvep.py), Stimulator, render loop and dispatch schemas/callers together. Preserve cue/stimulus/feedback behavior and target numbering while removing duck-typed readiness and the separate hidden trigger-binding step.
 

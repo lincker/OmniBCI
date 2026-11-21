@@ -8,6 +8,8 @@ Stimulation needs complete plugin contracts and one owner for renderer, paradigm
 
 This document records the module responsibilities, current defects, target lifecycle, timing semantics and acceptance criteria. The [Plugin API v1 contracts](plugin-api-v1.md) remain authoritative for public signatures and values. The [backend review](backend-interface-review.md) tracks these findings as D07–D09 and R03; the [plugin architecture proposal](plugin-marketplace-design.md) owns packaging and distribution rules.
 
+The implemented display-timing follow-up in [section 9](#9-display-timing-follow-up) separates host presentation timing from plugin content policy. It replaces the earlier diagnostic recommendation to stop a run after any missed refresh. Native macOS tests cover scheduling and submission; measured optical presentation remains a separate acceptance check.
+
 Follow the [canonical plugin terminology and module names](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries). Stimulation Host creates Instances from the selected `paradigm` and `trigger` Contributions, which may come from one or different Plugin Packages. `Paradigm` and `TriggerEmitter` name the role contracts; runtime calls below target their Instances. The renderer is a host adapter, not another Contribution kind or Plugin Management responsibility.
 
 ## 1. Scope and constraints
@@ -45,7 +47,7 @@ flowchart LR
     Paradigm -->|TriggerOutput| Trigger
 ```
 
-The [current application](../omnibci/infrastructure/stimulation/application.py:108) creates a task for `Stimulator.start_async()`. Setup and `RenderLoop.run_async()` execute on that event-loop thread. Each iteration polls events, calls `render_frame(t)`, calls `end_frame()`, then yields to other coroutines. The application also [awaits the rendering task during shutdown](../omnibci/infrastructure/stimulation/application.py:172).
+The [current application](../omnibci/infrastructure/stimulation/application.py:108) creates a task for `Stimulator.start_async()`. Setup and `RenderLoop.run_async()` execute on that event-loop thread. Each iteration polls events and acquires a fresh display opportunity with `begin_frame()`. When one exists, the loop calls `render_frame(frame)` and `end_frame(frame, submit=...)`, then yields to other coroutines. The application also [awaits the rendering task during shutdown](../omnibci/infrastructure/stimulation/application.py:172).
 
 At the inspection baseline, the alternative `Stimulator.start()` created resources on its caller's thread and then started a background render thread. S1d removed that path. Its historical defects below must not be attributed to the current asynchronous application.
 
@@ -109,7 +111,7 @@ Paradigm and trigger constructors receive only keyword `parameters` and `resourc
 | `TriggerOutput` | `send`, `clear` | Borrow the selected trigger's emission capability. |
 | `TriggerEmitter` | `setup`, `send`, `clear`, `teardown` | Own driver resources under the host's lifecycle ordering. |
 
-Use the exact [drawing/trigger signatures](plugin-api-v1.md#55-drawing-and-trigger-capabilities) and [Paradigm signatures](plugin-api-v1.md#56-paradigm). `Color`, `Rect` and opaque `TextureHandle` are the necessary drawing values; this module adds no SDK names beyond the shared 18-name inventory. Full `Renderer`, `Stimulator`, `RenderLoop`, GPU objects and host receipts remain internal.
+Use the exact [drawing/trigger signatures](plugin-api-v1.md#55-drawing-and-trigger-capabilities) and [Paradigm signatures](plugin-api-v1.md#56-paradigm). `Color`, `Rect` and opaque `TextureHandle` are the drawing values; `FrameTiming` is the display-timing input in the shared 19-name inventory. Full `Renderer`, `Stimulator`, `RenderLoop`, GPU objects and host receipts remain internal.
 
 Keep the existing NDC coordinate system: the origin is at the center and y increases upward. `Rect.x/y` identifies the rectangle's lower-left corner within those coordinates. Texture layout, ownership and validation follow the shared drawing contract.
 
@@ -134,7 +136,7 @@ All paradigm and trigger operations use this same owner thread, including trial/
 
 ### Rendering and trial admission
 
-Each iteration polls events, invokes `render_frame(elapsed_seconds)` and submits the frame. Elapsed time is monotonic time since the rendering session began. The host owns submission; the paradigm owns what is drawn.
+Each iteration polls events and acquires the latest usable native display opportunity. Only a new opportunity invokes `render_frame(frame)`. The host submits ready content if its opportunity is still current; unavailable or expired content is discarded. The paradigm owns image selection and playback state. A short asynchronous sleep only allows commands/events to progress; it does not generate display refreshes.
 
 `is_presenting()` returns true while a trial or feedback is active, and false when another trial can be admitted. Query failure faults the instance and stops further admission. Preserve result feedback and serialized trial behavior without passing the host's trial envelope into the plugin.
 
@@ -232,3 +234,122 @@ The graphics batch is implemented against `854ba37`: 81 initial failures were re
 - Keep trial/result method and payload migration coordinated with their actual consumers; do not add old/new method aliases or payload dispatch. The shared constructor, PluginContext removal, manifest/API-version and payload-schema switch were completed in S1f.
 - Do not rewrite Classic40's stimulus state machine, remove unrelated locks or add a general lifecycle manager merely to perform the interface changes.
 - S1f completed the seven-kind transition without a compatibility layer. Physical display, trigger and actuator timing remain target-specific acceptance work.
+
+## 9. Display-timing follow-up
+
+Status: implemented, 2026-11-21. Precise image-sequence scheduling is currently a Classic40 SSVEP requirement. Other Paradigm plugins may play video and must not inherit Classic40's image-count or 60 Hz assumptions. No video player or compatibility path is introduced. Platform capabilities and local verification are recorded below.
+
+### 9.1 Required behavior
+
+The image sequence follows the display timeline. If the image assigned to a refresh cannot be presented for that refresh, discard that image's expired opportunity. At the next available refresh, select the image assigned to that refresh. Do not retry expired images, extend the sequence to recover them, or submit a burst of intermediate images. A missed refresh alone does not stop the host or invalidate every subsequent trial.
+
+For a 60 Hz sequence whose first stimulus image is assigned to refresh 100:
+
+| Display refresh | Assigned image | Action |
+| --- | --- | --- |
+| 100 | 0 | Draw and submit image 0 if ready and within its deadline. |
+| 101 | 1 | If unavailable or late, omit its submission; the display may retain its previous content. |
+| 102 | 2 | Draw image 2; do not retry image 1. |
+| 105, after notifications 103–104 were not serviced | 5 | Draw image 5 once; do not replay images 3–4. |
+
+Normally, 60 refresh slots receive 60 successive images. With missed slots, fewer new images are displayed in that second; keeping the intended timeline does not recover the omitted visual stimulation. Record misses and presentation uncertainty rather than reporting an undisturbed stimulus. An uninterrupted 240-image sequence occupies 240 slots, about four seconds at 60 Hz, whether or not every assigned image is successfully displayed. An explicit feedback/stop transition may end the sequence earlier.
+
+### 9.2 Responsibilities
+
+| Component | Responsibility | Excluded responsibility |
+| --- | --- | --- |
+| Host renderer and render loop | Observe the selected display clock; expose timing for the next usable refresh; keep notifications bounded; draw and submit on the resource owner thread; discard unsubmitted work whose target has expired; record submission/presentation evidence. | Image indices, cue durations, target IDs, video decoding and SSVEP-specific acceptance policy. |
+| Classic40 Paradigm | Load its resources before the trial, verify its required display mode, assign cue/stimulus/feedback intervals, select the image for the current refresh and omit expired images. | Native display callbacks, window/context ownership and buffer swaps. |
+| Future video Paradigm | Own media playback position, decoded-frame availability and selection by media presentation timestamp; repeat or omit video frames as the media timeline requires. | Assume that one display refresh must consume one new video frame. |
+| Domain/SDK | Define and re-export only the timing value and the Paradigm call contract. | Native clock objects, GPU handles, a playback service, a generic plugin context or a new Contribution kind. |
+
+The timing policy belongs to the plugin; the ability to schedule and observe presentation remains a host responsibility. Giving each plugin its own native display loop would duplicate platform code and compete with the host's window and resource ownership. Keep one Paradigm contract and the existing RenderSurface drawing capability. Do not add ImageParadigm/VideoParadigm base classes or a generic media framework for this change.
+
+### 9.3 Minimal call contract
+
+Replace the current elapsed-time argument with one immutable timing value:
+
+```python
+@dataclass(frozen=True, slots=True)
+class FrameTiming:
+    refresh_index: int
+    target_time: float
+    refresh_period: float
+
+class Paradigm(ABC):
+    def render_frame(self, frame: FrameTiming) -> bool: ...
+```
+
+- `refresh_index` identifies the target display refresh within the rendering session. It advances with the display timeline even when callbacks are not serviced. It is not the number of Python callbacks, draws or successful swaps. Derive it from the native display timeline, preserving gaps.
+- `target_time` is the predicted presentation time in monotonic seconds relative to a fixed rendering-session origin. It is not callback arrival time, GPU completion or an observation that content appeared. It allows a video plugin to align media timestamps with display time.
+- `refresh_period` is the display period in seconds for this timing sample. Classic40 uses it to check that the selected display mode matches its 60 Hz image sequence. Keep this requirement in Classic40; do not make 60 Hz a universal host constant. Do not expose an additional redundant FPS field.
+
+Each field has a separate use: exact slot arithmetic, media-time alignment and display-rate validation. Native clock values and platform handles remain private. The host rejects an invalid/discontinuous clock instead of fabricating a successful display sequence from wall-clock sleeps or callback counts. A display/mode change requires re-establishing the timing session and plugin suitability; do not silently reinterpret an active Classic40 timeline.
+
+Return `True` when this call has drawn content ready for submission; return `False` when this opportunity should receive no new frame. This is the smallest explicit way to avoid submitting a partial or unavailable image without adding a result class, extra readiness query or recoverable-error exception. The host must still check its deadline after drawing. `True` establishes neither actual presentation nor that the deadline was met. Resource/driver failures remain errors, not ordinary `False` results.
+
+This replaces `render_frame(elapsed_seconds) -> None` in the pre-launch API v1 and adds only `FrameTiming` to SDK exports. Actual implementations and callers are updated together. The old signature and `None` result have no compatibility path. RenderSurface and the existing constructor/setup capabilities remain unchanged.
+
+### 9.4 Classic40 implementation location and state
+
+Implement image selection in `infrastructure/plugins/paradigms/classic40SSVEP/ssvep.py`, not in RenderLoop, Plugin Management or the frame-pack reader:
+
+```python
+image_index = frame.refresh_index - stimulus_start_refresh
+```
+
+The first usable frame after a trial request establishes its cue origin, or its stimulus origin for free run. For a cued trial, assign the stimulus origin from the cue origin plus the cue duration. Once assigned, origins do not move because an image was unavailable or a callback was late. If the first stimulus opportunity is missed, the next opportunity selects image 1, not image 0 with a shifted origin. Classic40 accepts a fixed 60 Hz mode within 0.01 Hz of the native reported rate; 59.94 Hz, 75 Hz and 120 Hz require different stimulus assets and are rejected.
+
+Derive the active cue/stimulus/result interval from the same display timeline, rather than decrementing a counter once per callback. A gap crossing a phase boundary must select the content belonging to the current interval. End the stimulus interval when its assigned slots are exhausted; do not wait until every texture has been successfully submitted. Reuse the existing state machine and pre-uploaded texture list; no sequence-player service is needed.
+
+Keep the current pack's 60 Hz requirement explicit in this plugin. A generic pack-format migration is unnecessary for this fixed built-in asset. Support for externally generated packs with different timing would need explicit asset timing metadata when that feature is implemented.
+
+Trigger operations remain separate from display evidence. A missed image does not repeatedly emit a start marker or rebase the stimulus phase. Normal last-cue-frame marker placement is preserved and still needs hardware alignment validation. If that marker opportunity was missed, emit once at the first serviced stimulus opportunity and log the delay; if the entire stimulus interval elapsed, omit the expired start marker. Neither case establishes measured optical onset or backdates a marker.
+
+### 9.5 Host scheduling and presentation limits
+
+Use the existing host renderer boundary for acquiring a frame opportunity and ending it with submission or discard. Keep these operations private to the host; plugins continue to receive only RenderSurface. Their backend implementation owns any drawable/buffer cleanup on the discard path.
+
+1. The native display source records the latest timing. The render owner samples it while yielding to commands and events. Native callbacks do not call plugin drawing methods or manage plugin teardown.
+2. The owner processes window events, then obtains fresh timing for a usable target. Keep the last consumed refresh across iterations; do not reset the baseline after polling and accidentally wait past a notification that already arrived.
+3. Invoke the plugin at most once for that target. Coalesce stale notifications into the newest usable target; preserve skipped refresh numbers. Do not build a callback backlog or run catch-up draws.
+4. If the plugin returns `False`, or the target expires before submission, discard the pending output. Acquire a new opportunity and let the plugin select that opportunity's content. Do not carry an expired rendered image forward under a new target number.
+5. If submitted, retain the target identity in host diagnostics and obtain presentation evidence where the backend supports it. Distinguish a known skipped submission, a known late presentation and an unverified presentation. Waiting must allow the existing async command/stop path to progress.
+
+The preceding macOS experiments found event-poll and swap calls longer than the 16.67 ms budget, including swap outliers around 55–75 ms. Persistent display-clock accounting removed an avoidable wait but did not remove native stalls. These measurements concern API durations and display-clock gaps; they are not optical proof of which image appeared. Content selection and native pacing therefore require separate validation.
+
+An expired unsubmitted frame can be discarded. A frame already queued to the GPU/compositor may not be cancellable; a post-draw deadline check alone cannot guarantee that it never appears late. Do not accumulate a queue of old frames, and do not claim that changing to Metal automatically solves this issue: Apple's [scheduled presentation contract](https://developer.apple.com/documentation/metal/mtldrawable/present(at:)) explicitly allows late GPU work to present as soon as possible. Its [presentedTime](https://developer.apple.com/documentation/metal/mtldrawable/presentedtime) provides presentation observations, not a deadline guarantee. Validate any backend change against the same missed-slot policy and actual workload before integration.
+
+Likewise, [GLFW swap interval](https://www.glfw.org/docs/latest/group__context.html) is not reliable evidence of every image appearing on its assigned refresh. Apple's [display callback](https://developer.apple.com/documentation/corevideo/cvdisplaylinkoutputcallback) distinguishes current time from the frame's target display time; preserve that distinction in FrameTiming.
+
+Normal missed opportunities continue according to plugin content policy. Clock loss, device/context failure and invalid resources retain the existing fault/cleanup behavior. Do not add a universal stop-on-one-miss rule, automatic decoder cancellation, new quality thresholds or a second lifecycle owner as part of this change.
+
+### 9.6 Video fit and review-sized implementation batches
+
+A 30 fps video on a 60 Hz display normally repeats each video frame over two refresh slots. Its plugin selects a decoded frame by `frame.target_time - playback_origin` and the media presentation timestamps, not by incrementing a decoded-frame index on every callback. Decode ahead outside the draw callback, retain a bounded set of frames, and discard media frames that are already obsolete. If no suitable new frame is ready, the plugin can retain the current displayed content. The same timing contract permits this without adding a video decoder to the host now.
+
+| Batch | Specific locations | Verification |
+| --- | --- | --- |
+| A: timing contract and Classic40 selection | `domain/ports/renderer.py`, `domain/ports/paradigm.py`, SDK export, `classic40SSVEP/ssvep.py` and their direct callers/tests | Fail first for a skipped refresh, an unavailable image, duplicate notification, a phase-boundary gap and a missed first stimulus image. Verify current-slot selection, fixed origins and no extension of the 240-slot interval. |
+| B: host opportunity/submission path | `infrastructure/stimulation/render_loop.py`, renderer adapters and their initialization/cleanup | Verify latest-timing consumption after event polling, one draw per target, discard on `False`/expired target, no backlog, and responsive stop/clock-failure cleanup. Preserve one resource owner. |
+| C: native acceptance | Real selected display, actual framebuffer dimensions and representative texture workload | Record target refresh, content identity and available presentation evidence. Normal operation must follow the intended image order; injected stalls must omit expired images and recover to the current slot without catch-up. Averages alone do not pass. Optical/trigger checks remain necessary for claims about stimulus onset. |
+
+These are review-sized parts of one coordinated change, not independently supported old/new interfaces. Do not ship batch A wired to a fabricated display counter while batch B is absent. Start with a deterministic timing source in tests; complete the real timing/submission path before presenting the result as a precision fix. No video player, generic scheduling framework, compatibility layer or automatic Metal migration is included.
+
+### 9.7 Implemented platform boundary and verification
+
+The two GL adapters share one private FrameClock. `begin_frame()` is nonblocking and returns `None` until a new usable native sample exists. `end_frame(frame, submit=...)` consumes the acquired opportunity exactly once, refuses expired/superseded output, and reports only whether the swap call completed. Native timing sources close before their window/context. Clock loss for one second faults the existing owner path; ordinary missed opportunities continue. Shutdown logs skipped opportunities, discarded frames and submission attempts without labeling them physical presentations.
+
+| Platform | Native source | Current boundary |
+| --- | --- | --- |
+| macOS | CoreVideo output video/host timestamps for the monitor containing most of the window | Native tests completed locally. Display/mode changes require restart. |
+| Windows | DWM refresh counter and QPC timestamps | Single active display; binding/layout and conversion tested with fakes, native execution not verified locally. |
+| Linux/X11 | GLX_OML_sync_control MSC/UST and reported refresh rate | Single active display, extension required, current monotonic-microsecond UST required. Conversion/failure tests use fakes; native execution not verified locally. Wayland timing is unsupported. |
+
+These limits are explicit errors, not silent 60 Hz timer fallbacks. Multi-output Windows/Linux timing and additional native presentation APIs require target-specific work; neither is implied by the shared Python interface. No new runtime dependency is required.
+
+The first regression batches reproduced 30 failures in timing values/Classic40, two render-loop failures, ten host-clock failures, three native-source contract failures and two adapter failures before their corresponding implementations. Existing elapsed-time/countdown fixtures were migrated to the single new contract.
+
+Native static-content checks exercise both adapters, including deliberate stalls of 3.5 display periods. With the real Classic40 state machine, 240 pre-uploaded 1920×990 grey textures and a 1920×1080 window, both target timelines ended after 4.0000212 seconds on this 60 Hz macOS display. PyOpenGL drew 236 stimulus images with four skipped opportunities; ModernGL drew 232 with eight skipped opportunities. Each discarded one in-progress submission. Every selected image matched its display-slot offset; none was replayed and the 240-slot interval was not extended. These counts are drawing/submission observations, not counts of optically verified images. Static textures avoid flashing stimuli during automated native checks.
+
+Final local verification: 811 relevant headless tests passed, all eight distinct native GUI cases passed across the focused runs, and all 11 import-layer contracts passed. The previous PyOpenGL shader-startup regression remains covered. Windows/Linux native execution and electrical/optical timing are not established by these results.

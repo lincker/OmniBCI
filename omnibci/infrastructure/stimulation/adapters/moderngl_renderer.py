@@ -21,8 +21,9 @@ import moderngl as mgl
 import glfw
 
 from omnibci.domain.ports.renderer import (
-    Color, Rect, TextureHandle,
+    Color, FrameTiming, Rect, TextureHandle,
 )
+from omnibci.infrastructure.stimulation.frame_clock import create_frame_clock
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +81,7 @@ class ModernGLRenderer:
     def __init__(self) -> None:
         self._glfw_started = False
         self._window = None
+        self._clock = None
         self._textures: dict[TextureHandle, mgl.Texture] = {}
         self._texture_owner = object()
         self._started = False
@@ -111,7 +113,7 @@ class ModernGLRenderer:
             raise RuntimeError("glfw.create_window() failed")
 
         glfw.make_context_current(self._window)
-        glfw.swap_interval(1)           # VSync: lock to display refresh rate
+        glfw.swap_interval(1)           # Request synchronized swaps; clock samples gate drawing.
         glfw.set_window_pos(self._window, 0, 0)
 
         # moderngl wraps the current GL context
@@ -149,6 +151,7 @@ class ModernGLRenderer:
             self._ibo,
         )
 
+        self._clock = create_frame_clock(self._window)
         self._ready = True
 
     def shutdown(self) -> None:
@@ -157,6 +160,11 @@ class ModernGLRenderer:
         if self._closed:
             return
         errors = []
+        if self._clock is not None:
+            try:
+                self._clock.close()
+            except Exception as exc:
+                errors.append(exc)
         resources = list(self._textures.values()) + [getattr(self, name) for name in (
             "_vao_tex", "_vao_col", "_vbo_tex", "_vbo_col", "_ibo", "_prog_tex", "_prog_col", "_ctx")]
         for resource in resources:
@@ -191,9 +199,16 @@ class ModernGLRenderer:
         self._ensure_open()
         return glfw.window_should_close(self._window)
 
-    def end_frame(self) -> None:
+    def begin_frame(self) -> FrameTiming | None:
         self._ensure_open()
+        return self._clock.begin_frame()
+
+    def end_frame(self, frame: FrameTiming, *, submit: bool) -> bool:
+        self._ensure_open()
+        if not self._clock.end_frame(frame, submit=submit):
+            return False
         glfw.swap_buffers(self._window)
+        return True
 
     # ── Texture management ──────────────────────────────────────────────────
 

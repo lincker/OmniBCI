@@ -156,7 +156,7 @@ Define every contract once. The SDK re-exports those same objects rather than wr
 | Constructor inputs | Standard-library mapping/path types and domain `SignalInfo` | Pass plugin parameters and its own resources; processing also requires the actual input layout. Do not publish generic contexts or host identities. |
 | Workers, engine handles, configuration repositories, buses, peer channels and concrete adapters | Application/infrastructure internals | Never export through the plugin SDK or require authors to import them directly. |
 
-The [proposed 18-name inventory](plugin-api-v1.md#2-public-export-inventory) contains the seven roles, necessary structured values and narrow drawing/trigger capabilities. It excludes construction contexts, SDK-specific mapping aliases, a decode-attempt wrapper, frame phases and a custom error hierarchy. Standard-library and third-party types keep their own import paths. The full `Renderer` stays internal; a narrow Python protocol defines supported use without creating a security sandbox or compatibility wrapper.
+The [19-name inventory](plugin-api-v1.md#2-public-export-inventory) contains the seven roles, necessary structured values and narrow drawing/trigger capabilities. It excludes construction contexts, SDK-specific mapping aliases, a decode-attempt wrapper, frame phases and a custom error hierarchy. Standard-library and third-party types keep their own import paths. The full `Renderer` stays internal; a narrow Python protocol defines supported use without creating a security sandbox or compatibility wrapper.
 
 ```mermaid
 flowchart LR
@@ -220,7 +220,7 @@ Each kind has its own contract. Do not impose one universal `Plugin.activate()` 
 | `filter` / Processing | Transform a borrowed, read-only epoch window. API v1 preserves channel order/count, sample count, and sampling rate; configuration chooses channels before the filter chain. Shape-changing transforms need an explicit metadata transformation contract before support is advertised. |
 | `epoch_detector` / Processing | Find ordered boundaries with documented sample-index semantics, including multiple markers in one chunk. Use explicit absence/results and bounded scanning behavior. |
 | `decoder` / Processing | Setup/teardown model resources, reset with `begin_epoch()`, gate on the raw window and receive filtered/latest-raw arrays through named arguments. The host owns event/forced/correlation metadata. Preserve one active epoch and window semantics. |
-| `paradigm` / Stimulation | Setup with drawing/trigger capabilities, teardown, schema-validated trial/result input, `render_frame -> None` and required readiness. Serialize calls on the renderer owner thread. Preserve cued/free-run/feedback behavior without adding a public phase enum. |
+| `paradigm` / Stimulation | Setup with drawing/trigger capabilities, teardown, schema-validated trial/result input, `render_frame(FrameTiming) -> bool` and required readiness. Serialize calls on the renderer owner thread. Preserve cued/free-run/feedback behavior without adding a public phase enum. |
 | `trigger` / Stimulation | Explicit setup/teardown, send and clear as completion-or-error operations. Inject only the `TriggerOutput` capability into the paradigm. A device-driver package may also provide this contribution. |
 | `effector` / Actuation | Setup, execute a schema-validated command, quiesce, and teardown. Quiescence means physical output has stopped or a failure is reported. Specify serialization, replacement of pending commands, and uncertain execution outcomes. |
 

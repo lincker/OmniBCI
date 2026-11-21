@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
-from omnibci.domain.ports.renderer import RenderSurface
+from omnibci.domain.ports.renderer import FrameTiming, RenderSurface
 from omnibci.domain.ports.acquisition import TriggerOutput
 
 
@@ -34,10 +34,12 @@ class Paradigm(ABC):
         """Present feedback using the declared, host-validated JSON object."""
 
     @abstractmethod
-    def render_frame(self, elapsed_seconds: float) -> None:
-        """Draw on the renderer owner thread; the host submits the frame.
+    def render_frame(self, frame: FrameTiming) -> bool:
+        """Draw for this display opportunity on the renderer owner thread.
 
-        Elapsed seconds use a monotonic clock since this rendering session began.
+        Return True for ready content, False to retain the displayed content.
+        The host discards expired output; a successful return is not evidence
+        of presentation. Select content from timing, not callback counts.
         """
 
     @abstractmethod

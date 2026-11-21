@@ -12,6 +12,7 @@ from omnibci.domain.ports.renderer import Rect, TextureHandle
 def surfaces(request, monkeypatch):
     module = importlib.import_module(
         'omnibci.infrastructure.stimulation.adapters.' + request.param + '_renderer')
+    monkeypatch.setattr(module, 'create_frame_clock', Mock(side_effect=lambda window: Mock()))
     if request.param == 'pyopengl':
         implementation = module.PyOpenGLRenderer
         for name, value in vars(module).copy().items():
