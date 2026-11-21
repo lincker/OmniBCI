@@ -7,7 +7,8 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from omnibci.application.node_configuration import NodeConfiguration
-from omnibci.application.configuration.models import PluginSelection, ProfileBinding
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import ProfileBinding
 from omnibci.infrastructure.plugins import node_client
 
 
@@ -17,6 +18,7 @@ def configuration(*, generation="run-1"):
         {},
         (ProfileBinding("actuation.effector", "effector", None,
                         PluginSelection("test.effector", "logger", "1.0.0"), {}),),
+        operation_id="prepare-1" if generation is not None else None,
     )
 
 
@@ -180,12 +182,17 @@ def test_supervisor_retries_before_application_and_refetches_only_after_clean_ex
         return Mock(run=run)
 
     monkeypatch.setattr(node_client, "fetch_node_configuration", fetch)
+    def prepare(snapshot, modules):
+        assert modules == ("actuation",)
+        calls.append("prepare")
+        return snapshot
+    monkeypatch.setattr(node_client, "PluginArtifactPreparer", lambda store: Mock(prepare_snapshot=prepare))
     monkeypatch.setattr(node_client, "materialize_node_configuration", materialize)
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     monkeypatch.setattr(node_client.time, "sleep", lambda _: calls.append("wait"))
     node_client.run_configured_node("actuation", application, server_url="http://server")
-    assert calls == ["fetch", "wait", "fetch", "validate", "construct", "run-cleanup", "wait",
-                     "fetch", "validate", "construct", "run-cleanup"]
+    assert calls == ["fetch", "wait", "fetch", "validate", "prepare", "construct", "run-cleanup", "wait",
+                     "fetch", "validate", "prepare", "construct", "run-cleanup"]
     assert snapshots == [{"CONFIG.generation": "run-1"}, {"CONFIG.generation": "run-2"}]
 
 
@@ -193,7 +200,7 @@ def test_supervisor_retries_before_application_and_refetches_only_after_clean_ex
 def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monkeypatch, stage):
     error = RuntimeError("invalid config or hardware cleanup")
     fetch = Mock(return_value=configuration())
-    validate = Mock(return_value={})
+    validate = Mock(return_value={"PLUGINS.bindings": []})
     application = Mock(return_value=Mock(run=Mock(side_effect=error if stage == "run" else None)))
     if stage == "fetch":
         fetch.side_effect = error
@@ -210,3 +217,70 @@ def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monk
         node_client.run_configured_node("actuation", application, server_url="http://server")
     fetch.assert_called_once()
     sleeper.assert_not_called()
+
+
+@pytest.mark.parametrize('failure', [None, 'prepare', 'run'])
+def test_node_reserves_resources_before_construction_and_retains_failed_cleanup(monkeypatch, tmp_path, failure):
+    from omnibci.application.plugin_packages import PluginPackageConflictError
+    from tests.infrastructure.test_plugin_store_ownership import claim
+    root = tmp_path / 'plugins'
+    monkeypatch.setattr(node_client, 'fetch_node_configuration', lambda *args: configuration())
+    monkeypatch.setattr(node_client, 'materialize_node_configuration', lambda *args: {'PLUGINS.bindings': []})
+
+    def prepare(snapshot, modules):
+        if failure == 'prepare':
+            raise RuntimeError('static preparation failed')
+        return snapshot
+
+    def construct(**kwargs):
+        controller = claim(root)
+        try:
+            with pytest.raises(PluginPackageConflictError, match='owner'):
+                with controller.mutation():
+                    pytest.fail('Node resources were not protected')
+        finally:
+            controller.close()
+        return Mock(run=Mock(return_value=False, side_effect=RuntimeError('cleanup failed') if failure == 'run' else None))
+
+    factory = Mock(side_effect=construct)
+    monkeypatch.setattr(node_client, 'PluginArtifactPreparer', lambda store: Mock(prepare_snapshot=prepare))
+    if failure:
+        with pytest.raises(RuntimeError, match='failed'):
+            node_client.run_configured_node('actuation', factory, server_url='http://server')
+    else:
+        node_client.run_configured_node('actuation', factory, server_url='http://server')
+    if failure == 'prepare':
+        factory.assert_not_called()
+    if failure == 'run':
+        owner = claim(root)
+        try:
+            with pytest.raises(PluginPackageConflictError, match='unconfirmed shutdown'):
+                with owner.mutation():
+                    pytest.fail('Cleanup failure admitted a package mutation')
+        finally:
+            owner.close()
+    else:
+        owner = claim(root)
+        owner.close()
+
+
+def test_supervisor_keeps_its_store_when_a_clean_restart_changes_the_environment(monkeypatch, tmp_path):
+    from omnibci.application.plugin_packages import PluginPackageConflictError
+    from tests.infrastructure.test_plugin_store_ownership import claim
+    root = tmp_path / 'plugins'
+    monkeypatch.setattr(node_client, 'fetch_node_configuration', lambda *args: configuration())
+    monkeypatch.setattr(node_client, 'materialize_node_configuration', lambda *args: {'PLUGINS.bindings': []})
+    monkeypatch.setattr(node_client.time, 'sleep', lambda _: None)
+    starts = []
+
+    def construct(**kwargs):
+        with pytest.raises(PluginPackageConflictError, match='owner'):
+            claim(root, role='actuation')
+        starts.append(kwargs['settings_snapshot'])
+        def run():
+            monkeypatch.setenv('OMNIBCI_PLUGIN_DIR', str(tmp_path / 'other-plugins'))
+            return len(starts) == 1
+        return Mock(run=run)
+
+    node_client.run_configured_node('actuation', construct, server_url='http://server')
+    assert len(starts) == 2

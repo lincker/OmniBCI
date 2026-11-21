@@ -6,12 +6,11 @@ from fastapi import APIRouter, Depends, Request, status
 
 from omnibci.presentation.dependencies import get_stimulation_service
 from omnibci.presentation.routers.runtime_config import get_runtime_configuration
-from omnibci.presentation.routers.plugin_config import _configuration_errors
 from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
 from omnibci.presentation.errors import (
     ApiError,
     COMMAND_EXECUTION_RESPONSES,
-    command_error_to_api_error,
+    command_error_to_api_error, configuration_errors,
 )
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.stimulation import (
@@ -57,7 +56,7 @@ async def start_stimulation(
     body: ModuleActionRequest,
     runtime=Depends(get_runtime_configuration),
 ):
-    with _configuration_errors():
+    with configuration_errors():
         result = await runtime.execute_current("stimulation", "start", **body.model_dump())
         return ApiResponse(data=result)
 
@@ -87,7 +86,7 @@ def stop_stimulation(svc: StimulationAppService = Depends(get_stimulation_servic
     summary="Trigger a stimulation trial",
 )
 def start_trial(
-    body: StartTrialRequest = StartTrialRequest(),
+    body: StartTrialRequest,
     svc: StimulationAppService = Depends(get_stimulation_service),
 ):
     try:

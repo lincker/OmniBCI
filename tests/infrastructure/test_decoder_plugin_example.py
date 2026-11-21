@@ -7,11 +7,11 @@ import numpy as np
 import pytest
 
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
-from omnibci.infrastructure.plugins.descriptors import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
 from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
-from omnibci.sdk import Decoder, PluginContext
+from omnibci.sdk import Decoder
 
 
 STARTER = Path(__file__).resolve().parents[2] / "examples" / "decoder_plugin"
@@ -33,43 +33,47 @@ def descriptor(tmp_path):
 
 
 def context(*names):
-    source = SignalInfo("tutorial", 4, tuple(
-        ChannelDescriptor(index, name, signal_type="eeg", unit="uV")
+    source = SignalInfo(sample_rate=4, channels=tuple(
+        ChannelDescriptor(index, name, signal_type="eeg", unit="uV", channel_id=f"channel-{index}")
         for index, name in enumerate(("Oz", "O2", "O1"))
-    ), 3)
+    ))
     mapped = replace(source, channels=tuple(
         replace(next(channel for channel in source.channels if channel.name == name), index=index)
         for index, name in enumerate(names)
-    ), trigger_row_index=len(names))
-    return PluginContext(sample_rate=4, acquired_signal=source, input_signal=mapped)
+    ))
+    return mapped
 
 
 def test_starter_installs_and_decodes_mapped_named_input(descriptor):
-    assert descriptor.signal_input_contract == 2
     assert descriptor.channel_requirements.required_names == ("Oz",)
     assert descriptor.channel_requirements.default_names == ("Oz",)
     prepared = context("O2", "Oz")
-    assert tuple(channel.channel_id for channel in prepared.input_signal.channels) == ("channel-1", "channel-0")
-    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=prepared)
+    assert tuple(channel.channel_id for channel in prepared.channels) == ("channel-1", "channel-0")
+    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, input_signal=prepared)
+    decoder.setup()
+    decoder.begin_epoch()
     # Oz was source row 0 and is mapped row 1. The unrelated row has the opposite sign.
     window = np.array([[-100.0] * 4, [2.0] * 4])
     assert decoder.should_decode(window)
-    assert decoder.decode(window, window[:, -1:]).target_id == 1
-    assert decoder.decode(-window, -window[:, -1:]).target_id == 2
-    assert decoder.for_new_epoch() is decoder  # The tutorial has no mutable epoch state.
+    assert decoder.decode(window, latest_raw_segment=window[:, -1:]).target_id == 1
+    assert decoder.decode(-window, latest_raw_segment=-window[:, -1:]).target_id == 2
+    decoder.teardown()
 
 
 def test_starter_declines_forced_short_and_nonfinite_windows(descriptor):
-    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=context("Oz"))
+    decoder = PluginLoader.instantiate(descriptor, Decoder, parameters={}, input_signal=context("Oz"))
+    decoder.setup()
+    decoder.begin_epoch()
     short = np.ones((1, 3))
     assert not decoder.should_decode(short)
-    assert decoder.decode(short, short) is None
+    assert decoder.decode(short, latest_raw_segment=short) is None
     invalid = np.full((1, 4), np.nan)
-    assert decoder.decode(invalid, invalid) is None
+    assert decoder.decode(invalid, latest_raw_segment=invalid) is None
+    decoder.teardown()
 
 
 def test_starter_rejects_unprepared_or_missing_named_input(descriptor):
-    with pytest.raises(PluginLoadError, match="prepared input metadata"):
-        PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=PluginContext(sample_rate=4))
+    with pytest.raises(PluginLoadError, match="prepared input_signal"):
+        PluginLoader.instantiate(descriptor, Decoder, parameters={}, input_signal=None)
     with pytest.raises(PluginLoadError, match="Oz"):
-        PluginLoader.instantiate(descriptor, Decoder, parameters={}, context=context("O2"))
+        PluginLoader.instantiate(descriptor, Decoder, parameters={}, input_signal=context("O2"))

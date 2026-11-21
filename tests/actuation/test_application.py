@@ -1,5 +1,5 @@
 """
-Actuation application loop: command → play + Ack; play failure → Fault and
+Actuation application loop: command → execute + Ack; execution failure → Fault and
 the loop survives; heartbeat publishes ActuationState; failed setup exits
 with a Fault as its last word.
 """
@@ -7,6 +7,10 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from tests.execution_helpers import synthetic_execution_snapshot
+from tests.actuation_helpers import actuation_payload
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.actuation.application import Actuation
@@ -69,9 +73,14 @@ class _FakeActuator:
     def teardown(self):
         self.torn_down = True
 
+    def quiesce(self):
+        pass
+
 
 def _app(fail_on=frozenset()) -> Actuation:
     app = Actuation.__new__(Actuation)          # skip __init__: no settings/socket
+    app._runtime_snapshot = {"CONFIG.generation": "test-run", "CONFIG.operation_id": "host-operation",
+                             "CONFIG.module_revisions": {"actuation": "a" * 64}}
     app.event_bus = _SpyBus()
     app.command_queue = __import__("queue").Queue(maxsize=1)
     app.actuator = _FakeActuator(fail_on=fail_on)
@@ -79,6 +88,13 @@ def _app(fail_on=frozenset()) -> Actuation:
     app._max_command_age = 0.0        # age gate disabled by default (as in prod)
     app.should_stop = False
     app._stop_event = None
+    app._paused = False
+    app._settlement_tasks = set()
+    app._settlement_lock = asyncio.Lock()
+    app._device_executor = None
+    app._device_ready = False
+    app._outputs_settled = False
+    app._settlement_error = None
     return app
 
 
@@ -90,7 +106,7 @@ class TestCommandExecution:
     def test_command_is_executed_and_acked(self):
         app = _app()
         app._enqueue_command(Event(EventType.ActuationCommand,
-                                   {"target_id": 5, "event_id": 2, "confidence": 0.8}))
+                                   actuation_payload({'target_id': 5, 'event_id': 2, 'confidence': 0.8})))
         _run(app.execute_command())
         assert app.actuator.executed == [{"target_id": 5, "event_id": 2, "confidence": 0.8}]
         acks = _typed(app.event_bus, EventType.ActuationAck)
@@ -101,9 +117,9 @@ class TestCommandExecution:
         # Sequential arrivals (not a backlog): 7 fails, the loop survives and
         # the later 8 executes normally.
         app = _app(fail_on={7})
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7}))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 7})))
         _run(app.execute_command())
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 8}))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 8})))
         _run(app.execute_command())
         faults = _typed(app.event_bus, EventType.ActuationFault)
         assert len(faults) == 1
@@ -116,8 +132,8 @@ class TestCommandExecution:
         # Backlog semantics: a failing command that was already superseded in
         # the queue never reaches the device at all.
         app = _app(fail_on={7})
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7}))
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 8}))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 7})))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 8})))
         _run(app.execute_command())
         assert _typed(app.event_bus, EventType.ActuationFault) == []
         assert app.actuator.executed == [{"target_id": 8}]
@@ -136,18 +152,18 @@ class TestCommandExecution:
         None,
         [],
         "not-a-command",
-        {},
-        {"target_id": True},
-        {"target_id": -1},
-        {"target_id": 1.0},
-        {"target_id": 1, "seq": True},
-        {"target_id": 1, "seq": -1},
-        {"target_id": 1, "issued_at": "yesterday"},
-        {"target_id": 1, "issued_at": float("nan")},
-        {"target_id": 1, "event_id": True},
-        {"target_id": 1, "event_id": -1},
-        {"target_id": 1, "confidence": float("inf")},
-        {"target_id": 1, "confidence": 1.01},
+        actuation_payload({}),
+        actuation_payload({'target_id': True}),
+        actuation_payload({'target_id': -1}),
+        actuation_payload({'target_id': 1.0}),
+        actuation_payload({'target_id': 1}, command_id=True),
+        actuation_payload({'target_id': 1}, command_id=-1),
+        actuation_payload({'target_id': 1}, issued_at='yesterday'),
+        actuation_payload({'target_id': 1}, issued_at=float('nan')),
+        actuation_payload({'target_id': 1, 'event_id': True}),
+        actuation_payload({'target_id': 1, 'event_id': -1}),
+        actuation_payload({'target_id': 1, 'confidence': float('inf')}),
+        actuation_payload({'target_id': 1, 'confidence': 1.01}),
     ])
     def test_invalid_command_faults_without_touching_device_or_loop(self, payload):
         app = _app()
@@ -160,25 +176,23 @@ class TestCommandExecution:
         assert faults[0].data["code"] == "INVALID_COMMAND"
 
         # A bad frame is isolated to that command; a later valid intent still runs.
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 9}))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 9})))
         _run(app.execute_command())
         assert app.actuator.executed == [{"target_id": 9}]
 
     def test_invalid_fault_echoes_only_valid_correlation_fields(self):
         app = _app()
-        app._enqueue_command(Event(EventType.ActuationCommand, {
-            "target_id": 4, "seq": 12, "confidence": 2.0,
-        }))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 4, 'confidence': 2.0}, command_id='12')))
         fault = _typed(app.event_bus, EventType.ActuationFault)[0]
         assert fault.data["code"] == "INVALID_COMMAND"
-        assert fault.data["target_id"] == 4 and fault.data["seq"] == 12
+        assert fault.data["target_id"] == 4 and fault.data["command_id"] == '12'
 
 
 class TestBacklogDrainsToLatest:
     def test_backlog_executes_only_newest(self):
         app = _app()
         for tid in (1, 2, 3):
-            app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": tid}))
+            app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': tid})))
         assert app.command_queue.qsize() == 1
         # Replacement accounting is emitted immediately by the mailbox.
         assert [a.data["target_id"] for a in
@@ -195,7 +209,7 @@ class TestBacklogDrainsToLatest:
 
     def test_single_command_has_no_superseded_acks(self):
         app = _app()
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 9}))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 9})))
         _run(app.execute_command())
         acks = _typed(app.event_bus, EventType.ActuationAck)
         assert [a.data["status"] for a in acks] == ["ok"]
@@ -203,21 +217,21 @@ class TestBacklogDrainsToLatest:
     def test_invalid_new_command_does_not_displace_valid_pending_intent(self):
         app = _app()
         app._enqueue_command(Event(EventType.ActuationCommand,
-                                   {"target_id": 1, "seq": 1}))
+                                   actuation_payload({'target_id': 1}, command_id='1')))
         app._enqueue_command(Event(EventType.ActuationCommand,
-                                   {"target_id": 2, "seq": 2, "confidence": 3.0}))
+                                   actuation_payload({'target_id': 2, 'confidence': 3.0}, command_id='2')))
 
         assert _typed(app.event_bus, EventType.ActuationAck) == []
         _run(app.execute_command())
-        assert app.actuator.executed == [{"target_id": 1, "seq": 1}]
-        assert _typed(app.event_bus, EventType.ActuationFault)[0].data["seq"] == 2
+        assert app.actuator.executed == [{"target_id": 1}]
+        assert _typed(app.event_bus, EventType.ActuationFault)[0].data["command_id"] == '2'
 
     def test_payload_is_snapshotted_when_it_enters_mailbox(self):
         app = _app()
-        payload = {"target_id": 1, "device_option": "left"}
+        payload = actuation_payload({"target_id": 1, "device_option": "left"})
         app._enqueue_command(Event(EventType.ActuationCommand, payload))
-        payload["target_id"] = 99
-        payload["device_option"] = "right"
+        payload["parameters"]["target_id"] = 99
+        payload["parameters"]["device_option"] = "right"
 
         _run(app.execute_command())
         assert app.actuator.executed == [
@@ -225,30 +239,30 @@ class TestBacklogDrainsToLatest:
         ]
 
 
-class TestSeqEcho:
-    def test_ok_ack_echoes_seq(self):
+class TestCommandIdentityEcho:
+    def test_ok_ack_echoes_command_id(self):
         app = _app()
         app._enqueue_command(Event(EventType.ActuationCommand,
-                                   {"target_id": 1, "seq": 41}))
+                                   actuation_payload({'target_id': 1}, command_id='41')))
         _run(app.execute_command())
         acks = _typed(app.event_bus, EventType.ActuationAck)
-        assert acks[0].data["seq"] == 41
+        assert acks[0].data["command_id"] == '41'
 
-    def test_superseded_and_ok_echo_their_own_seqs(self):
+    def test_superseded_and_ok_echo_their_own_command_ids(self):
         app = _app()
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1, "seq": 1}))
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 2, "seq": 2}))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 1}, command_id='1')))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 2}, command_id='2')))
         _run(app.execute_command())
         acks = _typed(app.event_bus, EventType.ActuationAck)
-        assert [(a.data["status"], a.data["seq"]) for a in acks] == [
-            ("superseded", 1), ("ok", 2)]
+        assert [(a.data["status"], a.data["command_id"]) for a in acks] == [
+            ("superseded", "1"), ("ok", "2")]
 
-    def test_fault_echoes_seq(self):
+    def test_fault_echoes_command_id(self):
         app = _app(fail_on={7})
-        app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 7, "seq": 9}))
+        app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 7}, command_id='9')))
         _run(app.execute_command())
         faults = _typed(app.event_bus, EventType.ActuationFault)
-        assert faults[0].data["seq"] == 9
+        assert faults[0].data["command_id"] == '9'
 
 
 class TestAgeGate:
@@ -256,8 +270,7 @@ class TestAgeGate:
         import time
         app = _app()          # _max_command_age = 0
         app._enqueue_command(Event(EventType.ActuationCommand,
-                                   {"target_id": 1, "seq": 1,
-                                    "issued_at": time.time() - 3600}))
+                                   actuation_payload({'target_id': 1}, command_id='1', issued_at=time.time() - 3600)))
         _run(app.execute_command())
         assert app.actuator.executed and app.actuator.executed[0]["target_id"] == 1
 
@@ -266,28 +279,26 @@ class TestAgeGate:
         app = _app()
         app._max_command_age = 0.5
         app._enqueue_command(Event(EventType.ActuationCommand,
-                                   {"target_id": 1, "seq": 7,
-                                    "issued_at": time.time() - 10}))
+                                   actuation_payload({'target_id': 1}, command_id='7', issued_at=time.time() - 10)))
         _run(app.execute_command())
         assert app.actuator.executed == []
         acks = _typed(app.event_bus, EventType.ActuationAck)
-        assert acks[0].data["status"] == "stale" and acks[0].data["seq"] == 7
+        assert acks[0].data["status"] == "stale" and acks[0].data["command_id"] == '7'
 
     def test_fresh_command_passes_enabled_gate(self):
         import time
         app = _app()
         app._max_command_age = 5.0
         app._enqueue_command(Event(EventType.ActuationCommand,
-                                   {"target_id": 2, "seq": 8,
-                                    "issued_at": time.time()}))
+                                   actuation_payload({'target_id': 2}, command_id='8', issued_at=time.time())))
         _run(app.execute_command())
         assert app.actuator.executed[0]["target_id"] == 2
 
-    def test_command_without_issued_at_is_never_gated(self):
+    def test_current_command_passes_enabled_age_gate(self):
         app = _app()
         app._max_command_age = 0.5
         app._enqueue_command(Event(EventType.ActuationCommand,
-                                   {"target_id": 3, "seq": 9}))
+                                   actuation_payload({'target_id': 3}, command_id='9')))
         _run(app.execute_command())
         assert app.actuator.executed[0]["target_id"] == 3
 
@@ -308,7 +319,7 @@ class TestSlowPlayDoesNotStarveHeartbeat:
 
         async def scenario():
             hb = asyncio.create_task(app._heartbeat())
-            app._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1}))
+            app._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 1})))
             await app.execute_command()          # blocks ~0.15s in a thread
             hb.cancel()
             try:
@@ -357,8 +368,10 @@ class TestSetupFailure:
         monkeypatch.setattr(app, "start", _bad_start)
         monkeypatch.setattr(app, "stop", _stop)
 
+        sleep = asyncio.sleep
+
         async def fast_sleep(_):
-            return None
+            await sleep(0)
         monkeypatch.setattr(asyncio, "sleep", fast_sleep)
 
         with pytest.raises(RuntimeError, match="no effector configured"):
@@ -395,6 +408,9 @@ class TestSetupFailure:
 
     def test_managed_start_reports_ready_after_link_connection(self):
         app = _app()
+        app._runtime_snapshot = synthetic_execution_snapshot({
+            "CONFIG.module_revisions": {"actuation": "a" * 64},
+            "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run-1"})
         app._startup_reporter = MagicMock()
         app.peer_channel = MagicMock()
         app.peer_channel.wait_until_connected = AsyncMock()
@@ -414,7 +430,7 @@ class TestSetupFailure:
         _run(app.serve())
 
         app.peer_channel.wait_until_connected.assert_awaited_once()
-        app._startup_reporter.ready.assert_called_once_with()
+        app._startup_reporter.ready.assert_called_once_with(execution=execution_receipt(app._runtime_snapshot, "actuation", "prepare-1"))
         app._startup_reporter.failed.assert_not_called()
 
     def test_managed_connection_failure_reports_failed(self, monkeypatch):
@@ -427,8 +443,10 @@ class TestSetupFailure:
         app.start = AsyncMock()
         app.stop = AsyncMock()
 
+        sleep = asyncio.sleep
+
         async def fast_sleep(_):
-            return None
+            await sleep(0)
 
         monkeypatch.setattr(asyncio, "sleep", fast_sleep)
 

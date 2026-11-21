@@ -18,6 +18,7 @@ from omnibci.domain.epoch import Epoch
 from omnibci.domain.ports.algorithm import Decoder, Filter, Prediction
 from omnibci.infrastructure.signal_processing.epoch.pipeline import ProcessingPipeline
 from omnibci.domain.signal import SignalChunk
+from omnibci.infrastructure.signal_processing.arrays import readonly
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class EpochProcessor:
         self.acquisition_revision = acquisition_revision
         # Ordered preprocessing followed by the terminal decoder.
         self.pipeline = ProcessingPipeline(
-            decoder=decoder, filters=filters, sample_rate=sample_rate
+            decoder=decoder, filters=filters
         )
 
         # Accumulated post-trigger samples before epoch filters; pre-trigger
@@ -101,6 +102,7 @@ class EpochProcessor:
         if start_idx < 0:
             raise ValueError(f"Cannot initialize epoch: invalid start index {start_idx}")
 
+        self.decoder.begin_epoch()
         self._epoch_data = chunk.data[:, start_idx:]
         # Borrow the initial slice; the first nonempty append allocates storage.
         self._epoch_storage = self._epoch_data
@@ -198,7 +200,10 @@ class EpochProcessor:
         """
         if self._epoch_data.size == 0 or self._event_id is None:
             return False
-        return self.decoder.should_decode(self._epoch_data)
+        ready = self.decoder.should_decode(readonly(self._epoch_data))
+        if not isinstance(ready, (bool, np.bool_)):
+            raise TypeError(f"{type(self.decoder).__qualname__}.should_decode must return a boolean scalar")
+        return bool(ready)
 
     def process_chunk(self, chunk: SignalChunk) -> Tuple[bool, Optional[Classification]]:
         """
@@ -230,22 +235,26 @@ class EpochProcessor:
         if self._epoch_data.size == 0 or self._event_id is None:
             return False, None
         self._pending_decode = False
-        prediction = self.pipeline.run(
-            self._epoch_data,
-            event_id=self._event_id,
-            baseline=self._pre_trigger_data,
-            latest_samples=self._current_chunk_data,  # most recently appended segment
-        )
+        try:
+            prediction = self.pipeline.run(
+                self._epoch_data,
+                pre_trigger_data=self._pre_trigger_data,
+                latest_raw_segment=self._current_chunk_data,  # most recently appended segment
+            )
+        except Exception as exc:
+            decoder_type = type(self.decoder)
+            exc.add_note(
+                f"Processing pipeline with {decoder_type.__module__}.{decoder_type.__qualname__} "
+                f"(event_id={self._event_id}, processing_revision={self.processing_revision!r})"
+            )
+            raise
         if prediction is None:
             return False, None
         try:
             if not isinstance(prediction, Prediction):
                 raise TypeError(f"Decoder must return Prediction or None, got {type(prediction).__name__}")
-            target_id = prediction.target_id
-            if isinstance(target_id, (bool, np.bool_)) or not isinstance(target_id, (int, np.integer)):
-                raise TypeError(f"Prediction.target_id must be an integer scalar, got {type(target_id).__name__}")
             classification = Classification(
-                target_id=int(target_id),
+                target_id=prediction.target_id,
                 event_id=self._event_id,
                 confidence=prediction.confidence,
                 forced=forced,

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application import plugin_identity
 from omnibci.domain.decoder_input import DecoderChannelRequirements
 
 
@@ -31,11 +31,6 @@ class PluginEntrypoint:
         module, separator, attribute = value.strip().partition(":")
         if not separator or not module or not attribute:
             raise ValueError("entrypoint must be in 'module:Attribute' form")
-
-        # Accept the earlier documented ``driver.py:Class`` spelling while
-        # storing the canonical dotted-module form internally.
-        if module.endswith(".py"):
-            module = module[:-3]
 
         if any(char in module for char in ("/", "\\")):
             raise ValueError("entrypoint module must be dotted, not a file path")
@@ -71,6 +66,8 @@ class PluginPackageDescriptor:
     host_version: str | None = None
     requires: tuple[tuple[str, str], ...] = ()
     platforms: tuple[str, ...] = ()
+    # Derived during preparation, never supplied by package authors.
+    content_sha256: str | None = field(default=None, repr=False, compare=False)
     # Catalog metadata: lower values have higher priority.  It is intentionally
     # excluded from equality/repr because it is not plugin identity.
     precedence: int = field(default=0, repr=False, compare=False)
@@ -110,8 +107,8 @@ class PluginDescriptor:
 
     configuration_schema: Mapping[str, Any] | None = None
     configuration_version: int | None = None
-    signal_input_contract: int | None = None
     channel_requirements: DecoderChannelRequirements | None = None
+    payload_schemas: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def supports_platform(self, platform_name: str) -> bool:
         """Both package and contribution constraints must permit the host."""
@@ -120,8 +117,8 @@ class PluginDescriptor:
         )
 
     @property
-    def selection(self) -> PluginSelection:
-        return PluginSelection(self.identifier, self.contribution_id, self.version)
+    def selection(self) -> plugin_identity.PluginSelection:
+        return plugin_identity.PluginSelection(self.identifier, self.contribution_id, self.version)
 
     @property
     def identifier(self) -> str:

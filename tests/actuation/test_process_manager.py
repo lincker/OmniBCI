@@ -6,6 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from omnibci.infrastructure.plugins.preparation import execution_receipt
+from tests.execution_helpers import output_bindings, synthetic_execution_snapshot
+
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError,
     ChildProcessStartupTimeout,
@@ -20,8 +23,8 @@ from omnibci.infrastructure.actuation.process_manager import (
 
 
 def _effector_snapshot(effector="logger"):
-    return {"ACTUATION.effector": effector, "CONFIG.module_revisions": {"actuation": "revision"},
-            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"}
+    return synthetic_execution_snapshot({"ACTUATION.effector": effector, "CONFIG.module_revisions": {"actuation": "a" * 64},
+            "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run", "PLUGINS.bindings": [output_bindings()[1]]})
 
 
 def _cooperative_child(stop_event, stopped_flag):
@@ -51,10 +54,12 @@ def _mock_process(*, exits_after_join=None, alive=True, pid=1234):
 @pytest.fixture(autouse=True)
 def startup_pipe(monkeypatch):
     """Every mocked child reports READY unless a test overrides the receiver."""
+    monkeypatch.setattr(process_manager_module, "uuid4", lambda: SimpleNamespace(hex="prepare-1"))
     receiver = MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        "Actuation", module_revisions={"actuation": "revision"}, engine_revision="engine", generation="run")
+        "Actuation", module_revisions={"actuation": "a" * 64}, engine_revision="b" * 64, generation="run",
+        execution=execution_receipt(_effector_snapshot(), "actuation", "prepare-1"))
     sender = MagicMock()
     pipe = MagicMock(return_value=(receiver, sender))
     monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
@@ -71,6 +76,41 @@ class TestNoSpawnMode:
 
 
 class TestSpawnMode:
+    @pytest.mark.parametrize("exitcode", [1, -15, None])
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_unclean_exit_keeps_failure_and_blocks_replacement(self, process_factory, exitcode):
+        process, state = _mock_process()
+        process_factory.return_value = process
+        manager = ActuationProcessManager()
+        manager.start(settings_snapshot=_effector_snapshot())
+        state["alive"] = False
+        process.exitcode = exitcode
+
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.stop()
+        assert manager.state is ChildProcessState.FAILED
+        assert not manager.is_alive
+        process.close.assert_called_once()
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.start(settings_snapshot=_effector_snapshot("replacement"))
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.stop()
+        assert process_factory.call_count == 1
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_forced_exit_cannot_claim_cleanup_even_with_zero_exitcode(self, process_factory):
+        process, _ = _mock_process(exits_after_join=2)
+        process_factory.return_value = process
+        manager = ActuationProcessManager()
+        manager.start(settings_snapshot=_effector_snapshot())
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.stop()
+        process.terminate.assert_called_once()
+        assert manager.state is ChildProcessState.FAILED
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.start(settings_snapshot=_effector_snapshot("replacement"))
+        assert process_factory.call_count == 1
+
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
     def test_start_spawns_with_effector_and_stop_event(
@@ -168,7 +208,7 @@ class TestSpawnMode:
 
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
-    def test_stop_escalates_to_terminate_then_clears_state(
+    def test_stop_escalates_to_terminate_and_retains_failed_ownership(
         self, mock_proc_cls, mock_event_cls
     ):
         proc, _ = _mock_process(exits_after_join=2)
@@ -178,7 +218,8 @@ class TestSpawnMode:
         m = ActuationProcessManager()
         m.start(settings_snapshot=_effector_snapshot())
 
-        m.stop()
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            m.stop()
 
         assert [call.kwargs["timeout"] for call in proc.join.call_args_list] == [
             m._GRACEFUL_TIMEOUT_S,
@@ -187,7 +228,7 @@ class TestSpawnMode:
         proc.terminate.assert_called_once_with()
         proc.kill.assert_not_called()
         assert m._process is None and m._stop_event is None
-        assert m.state is ChildProcessState.STOPPED
+        assert m.state is ChildProcessState.FAILED
 
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
@@ -200,7 +241,8 @@ class TestSpawnMode:
         m = ActuationProcessManager()
         m.start(settings_snapshot=_effector_snapshot())
 
-        m.stop()
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            m.stop()
 
         proc.terminate.assert_called_once_with()
         proc.kill.assert_called_once_with()
@@ -276,7 +318,7 @@ class TestSpawnMode:
             "Actuation",
             stage="initialization",
             error=RuntimeError("effector unavailable"),
-            module_revisions={"actuation": "revision"}, engine_revision="engine", generation="run",
+            module_revisions={"actuation": "a" * 64}, engine_revision="b" * 64, generation="run",
         )
         manager = ActuationProcessManager()
 
@@ -449,13 +491,14 @@ class TestEngineLifecycleHook:
         engine.set_actuation_active = AsyncMock()
         engine.ensure_output_ready = AsyncMock()
         engine.is_module_running.return_value = False
-        engine.peer_gateway.peer.return_value.is_connected = False
+        engine.is_peer_connected.return_value = False
+        engine.shutdown_complete = True
         stopped = threading.Event()
         engine.run.side_effect = stopped.wait
         svc = NeuroEngineService(engine_factory=lambda snapshot: engine,
                                  snapshot_provider=lambda: {"PLUGINS.bindings": [],
                                                            "CONFIG.module_revisions": {"actuation": "actuation"},
-                                                           "CONFIG.engine_revision": "engine"},
+                                                           "CONFIG.engine_revision": "b" * 64},
                                  actuation_process_manager=manager)
         asyncio.run(svc.startup())
         asyncio.run(svc.handle_start_engine(StartEngineCommand()))

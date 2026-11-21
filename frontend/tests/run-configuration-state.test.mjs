@@ -553,7 +553,7 @@ for (const module of ["processing", "actuation"]) test(`Stop ${module} leaves th
 
 test("unrelated module revisions preserve edited trial controls", async () => {
   let accepted = complete;
-  const controls = { trials: { field: "n_trials", type: "int", default: 1 }, cue: { field: "trial_params", type: "int", default_sequence: "1-3", min: 1, max: 10 } };
+  const controls = { trials: { field: "n_trials", type: "int", default: 1 }, cue: { field: "trial_params", payload_key: "event_id", type: "int", default_sequence: "1-3", min: 1, max: 10 } };
   await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
     stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type },
     catalog: async () => [{ ...paradigm, controls }] }, async ({ harness, serverStatus }) => {
@@ -717,7 +717,7 @@ for (const available of [true, false]) {
         assert.equal(trigger.props.disabled, false);
         elements(harness.tree).find((item) => item.type === "form" && item.props.className.includes("trial-controls")).props.onSubmit({ preventDefault: noop });
         await harness.settle();
-        assert.deepEqual(calls, [["trialStart", 1, undefined]]);
+        assert.deepEqual(calls, [["trialStart", 1, [{}]]]);
       });
   });
 }

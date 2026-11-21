@@ -1,16 +1,21 @@
-from typing import List, Optional
-from pydantic import BaseModel
+from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+
+from omnibci.application.commands.stimulation_commands import StartStimTrialCommand
 
 
 class StartTrialRequest(BaseModel):
-    """Trigger one or more stimulation trials.
+    """Start an explicit batch of per-trial JSON objects."""
+    model_config = ConfigDict(extra="forbid")
 
-    n_trials     — how many trials to run (paradigm-agnostic base parameter).
-    trial_params — per-trial target/event ids; len must equal n_trials when
-                   provided.  None → each trial uses the paradigm default.
-    """
-    n_trials: int = 1
-    trial_params: Optional[List[int]] = None
+    n_trials: int = Field(1, strict=True, ge=1, le=10000)
+    trial_params: list[dict[str, JsonValue]] = Field(min_length=1, max_length=10000)
+
+    @model_validator(mode="after")
+    def validate_batch(self):
+        command = StartStimTrialCommand(n_trials=self.n_trials, trial_params=self.trial_params)
+        self.trial_params = command.trial_params
+        return self
 
 
 class StimulationStatusResponse(BaseModel):

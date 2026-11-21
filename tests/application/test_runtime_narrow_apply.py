@@ -331,11 +331,11 @@ async def test_module_unknown_attachment_never_recreates_outputs_or_rewinds(narr
 @pytest.mark.asyncio
 @pytest.mark.parametrize("strategy", ["module", "rebuild"])
 @pytest.mark.parametrize("checkpoint_data", [
-    {"supported": False, "checkpoint": None},
-    {"supported": False, "checkpoint": None, "resume_without_checkpoint_safe": "true"},
-    {"supported": True, "checkpoint": None},
-    {"supported": True, "checkpoint": None, "resume_without_checkpoint_safe": True},
-    {"supported": "true", "checkpoint": {}},
+    {"resume_mode": "restart-only", "checkpoint": None},
+    {"resume_mode": "invalid", "checkpoint": None},
+    {"resume_mode": "checkpoint", "checkpoint": None},
+    {"resume_mode": "live-current", "checkpoint": {}},
+    {"checkpoint": {}},
 ])
 async def test_streaming_source_without_confirmed_checkpoint_is_not_automatically_restarted(
     narrow, rebuild_harness, monkeypatch, strategy, checkpoint_data,
@@ -384,7 +384,7 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
                 "engine_revision": h.engine.applied_revisions["engine"],
-                "supported": False, "checkpoint": None, "resume_without_checkpoint_safe": True,
+                "resume_mode": "live-current", "checkpoint": None,
             })
         return request(event_type, payload, **kwargs)
 
@@ -408,9 +408,9 @@ async def test_declared_live_source_resumes_without_replay_checkpoint(narrow, re
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", [
-    {"resume_without_checkpoint_safe": False}, {"resume_without_checkpoint_safe": None},
+    {"resume_mode": "restart-only"}, {"resume_mode": None},
     {"generation": "another-generation"}, {"acquisition_revision": "another-revision"}, {"engine_revision": "another-engine"},
-    {"supported": True, "checkpoint": None},
+    {"resume_mode": "checkpoint", "checkpoint": None},
 ])
 async def test_same_source_replacement_must_reconfirm_live_resume_before_start(rebuild_harness, monkeypatch, invalid):
     h = rebuild_harness()
@@ -422,7 +422,7 @@ async def test_same_source_replacement_must_reconfirm_live_resume_before_start(r
             revision = h.engine.applied_revisions[h.module]
             inspected.append(revision)
             data = {"generation": h.engine.generation, "acquisition_revision": revision, "engine_revision": h.engine.applied_revisions["engine"],
-                    "supported": False, "checkpoint": None, "resume_without_checkpoint_safe": True}
+                    "resume_mode": "live-current", "checkpoint": None}
             if revision == h.plan.target_revisions[h.module]:
                 data.update(invalid)
             return CommandResult("checkpoint", event_type.name, True, data=data)
@@ -447,8 +447,8 @@ async def test_live_rollback_also_requires_recreated_source_capability(rebuild_h
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
                 "engine_revision": h.engine.applied_revisions["engine"],
-                "supported": False, "checkpoint": None,
-                "resume_without_checkpoint_safe": not h.engine.starts,
+                "checkpoint": None,
+                "resume_mode": "live-current" if not h.engine.starts else "restart-only",
             })
         return request(event_type, payload, **kwargs)
 
@@ -478,8 +478,8 @@ async def test_explicit_different_source_can_start_fresh_after_live_source(rebui
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
                 "engine_revision": h.engine.applied_revisions["engine"],
-                "supported": False, "checkpoint": None,
-                "resume_without_checkpoint_safe": h.engine.applied_revisions[h.module] == h.previous.modules[h.module].revision,
+                "checkpoint": None,
+                "resume_mode": "live-current" if h.engine.applied_revisions[h.module] == h.previous.modules[h.module].revision else "restart-only",
             })
         return request(event_type, payload, **kwargs)
 
@@ -502,7 +502,7 @@ async def test_nonstreaming_source_without_checkpoint_can_update_outputs_without
             return CommandResult("checkpoint", event_type.name, True, data={
                 "generation": h.engine.generation, "acquisition_revision": h.engine.applied_revisions["acquisition"],
                 "engine_revision": h.engine.applied_revisions["engine"],
-                "supported": False, "checkpoint": None,
+                "resume_mode": "restart-only", "checkpoint": None,
             })
         return request(event_type, payload, **kwargs)
 
@@ -585,9 +585,10 @@ async def test_live_logger_replacement_preserves_source_and_processing(tmp_path,
     from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
     from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
     from tests.application.test_runtime_apply_integration import configured_profiles, wire_signal_preparation
+    from tests.plugin_configuration_helpers import install_package_root, prepare_runtime_plugins
 
     profiles, bindings = configured_profiles(tmp_path, monkeypatch)
-    plugin = tmp_path / "plugins" / "effectors" / "alternate_logger"
+    plugin = tmp_path / "source-alternate-logger"
     plugin.mkdir(parents=True)
     (plugin / "manifest.toml").write_text('''manifest_version=2
 [package]
@@ -595,16 +596,22 @@ id="alternate_logger"
 domain="actuation"
 publisher="test"
 version="1.0.0"
-api_version="2"
+api_version="1"
 [[contributions]]
 id="default"
 kind="effector"
 plugin_type="alternate_logger"
 entrypoint="effector:AlternateLogger"
+[contributions.payload_schemas]
+command="command.schema.json"
 [contributions.configuration]
 schema="config.schema.json"
 schema_version=1
 ''')
+    (plugin / "command.schema.json").write_text(json.dumps({
+        "type": "object", "properties": {"target_id": {"type": "integer"}},
+        "required": ["target_id"], "additionalProperties": False,
+    }))
     (plugin / "effector.py").write_text(
         "from omnibci.infrastructure.plugins.effectors.logger.effector import LogEffector\n"
         "class AlternateLogger(LogEffector):\n"
@@ -613,6 +620,7 @@ schema_version=1
     (plugin / "config.schema.json").write_text(json.dumps({
         "type": "object", "properties": {}, "additionalProperties": False,
     }))
+    install_package_root(plugin)
     original = profiles.create("effector", builtin_selection("effector", "logger"), "Logger", {})
     alternate = profiles.create("effector", builtin_selection("effector", "alternate_logger"),
                                 "Alternate logger", {})
@@ -622,6 +630,7 @@ schema_version=1
     profiles.repository.save_module(profiles.propose("actuation", [bindings[-1]], settings=settings), expected_revision=None)
     manager = ActuationProcessManager()
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+                                plugin_preparer=prepare_runtime_plugins,
                                 actuation_process_manager=manager, snapshot_provider=lambda: profiles.materialize(profiles.repository.get_activation_set()))
     await engine.startup()
     container = assemble(engine, admission=engine.admission,
@@ -630,19 +639,25 @@ schema_version=1
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, signal_preparer=signal.prepare,
+                                          container.command_results, repository=profiles.repository, signal_preparer=signal.prepare,
                                           signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
         await engine.handle_start_engine(StartEngineCommand())
         async with engine.runtime_transition("acquisition"):
-            await engine.start_module_for_configuration("acquisition", engine.applied_snapshot)
+            prepared = engine.prepare_plugins(engine.applied_snapshot, ("acquisition",))
+            await engine.start_module_for_configuration("acquisition", prepared)
+            engine.acknowledge_configuration(prepared, modules=("acquisition",))
         async with engine.runtime_transition("processing"):
-            await engine.start_module_for_configuration("processing", engine.applied_snapshot)
+            prepared = engine.prepare_plugins(engine.applied_snapshot, ("processing",))
+            await engine.start_module_for_configuration("processing", prepared)
+            engine.acknowledge_configuration(prepared, modules=("processing",))
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         async with engine.runtime_transition("actuation"):
-            await engine.start_module_for_configuration("actuation", engine.applied_snapshot)
+            prepared = engine.prepare_plugins(engine.applied_snapshot, ("actuation",))
+            await engine.start_module_for_configuration("actuation", prepared)
+            engine.acknowledge_configuration(prepared, modules=("actuation",))
         await asyncio.sleep(.08)
         old_workers = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
         old_actuation = manager._process.pid

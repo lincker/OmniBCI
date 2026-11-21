@@ -5,6 +5,7 @@ import queue
 import numpy as np
 import pytest
 
+from omnibci.domain.ports.acquisition import SourceCheckpoint
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
@@ -12,7 +13,8 @@ from omnibci.shared.events import EventType
 
 
 class Source:
-    supports_checkpoint = True
+    trigger_mode = 'events'
+    resume_mode = "checkpoint"
     is_streaming = True
     is_connected = True
 
@@ -38,7 +40,7 @@ class Source:
         self.is_streaming = True
 
     def checkpoint(self):
-        return {"cursor": self.cursor}
+        return SourceCheckpoint(resource_id="source", resource_revision="rev", state={"cursor": self.cursor})
 
 
 class Bus:
@@ -59,6 +61,8 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
             source_id="test-source",
             generation="generation", acquisition_revision="revision", engine_revision="engine",
         )
+        await acquisition._on_connect()
+        acquisition._streaming = True
         if failure == "read":
             async def fail_read():
                 raise OSError("device read failed")
@@ -71,7 +75,7 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
         while data.get_data(0) is not None:
             pass
         for command, payload in (
-            (AcquisitionCommand.stop_and_drain, {}),
+            (AcquisitionCommand.stop_and_drain, None),
             (AcquisitionCommand.get_checkpoint, {"generation": "generation", "expected_revision": "revision", "engine_revision": "engine"}),
             (AcquisitionCommand.start_stream, None),
         ):
@@ -92,7 +96,7 @@ def test_terminal_fetch_failure_blocks_drain_checkpoint_and_manual_restart(failu
         # Reconnecting the same graph cannot erase evidence of the lost chunk.
         await acquisition.execute((AcquisitionCommand.disconnect, None))
         await acquisition.execute((AcquisitionCommand.connect, None))
-        await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("retry", {})))
+        await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("retry")))
         assert not bus.events[-1].data.ok
         assert data.get_data(0) is None
 

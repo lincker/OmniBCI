@@ -7,12 +7,12 @@ from datetime import datetime, timezone
 from omnibci.shared.events import Event, EventType
 from omnibci.domain.classification import Classification
 from omnibci.infrastructure.outbound import (
-    TrialOutcome,
-    event_to_wire,
     payload_to_jsonable,
     make_stimulation_ack,
 )
+from omnibci.presentation.websockets.results import event_to_wire
 from omnibci.application.events import (
+    TrialOutcome,
     CommandFailureKind,
     CommandRequest,
     CommandResult,
@@ -56,11 +56,11 @@ class TestEventToWire:
         assert payload_to_jsonable(outcome) == {key: value for key, value in wire.items() if key != "event"}
 
     def test_stimulation_ack_from_dict(self):
-        data = make_stimulation_ack("StartStimTrial", status="ok", target_index=3)
+        data = make_stimulation_ack("StartStimTrial", status="ok", trial_params={"event_id": 3})
         wire = event_to_wire(Event(EventType.StimulationAck, data))
         assert wire == {
             "event": "StimulationAck", "command": "StartStimTrial",
-            "target_index": 3, "status": "ok", "message": None,
+            "trial_params": {"event_id": 3}, "status": "ok", "message": None,
         }
 
     def test_stimulation_ack_error(self):
@@ -84,11 +84,11 @@ class TestPayloadToJsonable:
     def test_command_request_is_flattened_recursively(self):
         out = payload_to_jsonable(CommandRequest(
             command_id="cmd-1",
-            payload={"n_trials": 1, "trial_params": [7]},
+            payload={"n_trials": 1, "trial_params": [{"event_id": 7}]},
         ))
         assert out == {
             "command_id": "cmd-1",
-            "payload": {"n_trials": 1, "trial_params": [7]},
+            "payload": {"n_trials": 1, "trial_params": [{"event_id": 7}]},
         }
         json.dumps(out)
 

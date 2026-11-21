@@ -68,7 +68,7 @@ def _container(engine) -> AppContainer:
         ),
         stimulation_service=StimulationAppService(engine),
         stimulation_process_manager=StimulationProcessManager(),
-        results_service=ResultsService(engine),
+        results_service=ResultsService(lambda: engine.generation),
         command_results=command_results,
     )
 
@@ -92,7 +92,9 @@ class TestAssemble:
     def test_results_follow_the_same_engine(self):
         engine = FakeEngine()
         c = assemble(engine)
-        assert c.results_service.engine is engine
+        assert c.results_service.snapshot()["generation"] == engine.generation
+        engine.generation = "next-generation"
+        assert c.results_service.snapshot()["generation"] == "next-generation"
 
 
 # ---------------------------------------------------------------------------

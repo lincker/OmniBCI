@@ -1,72 +1,14 @@
-"""Map EventBus events to the shared JSON-safe outbound wire contract."""
+"""Serialize peer payloads and construct output-host acknowledgements."""
 
-import logging
+from copy import deepcopy
 from typing import Any, Optional
 
-from omnibci.shared.events import Event, EventType
-from omnibci.domain.classification import Classification
-# Re-export payloads to preserve the established import path.
-from omnibci.application.events import (
-    CommandRequest,
-    CommandResult,
-    TrialOutcome,
-)
-
-__all__ = ["TrialOutcome", "event_to_wire",
-           "make_stimulation_ack", "payload_to_jsonable"]
-
-logger = logging.getLogger(__name__)
-
-
-def _classification_fields(clf: Classification) -> dict:
-    return {
-        "target_id": clf.target_id,
-        "event_id": clf.event_id,
-        "confidence": clf.confidence,
-        "forced": clf.forced,
-        "produced_at": clf.produced_at.isoformat(),
-    }
-
-
-def event_to_wire(event: Event) -> Optional[dict]:
-    """
-    Map an infrastructure Event to a JSON-safe outbound message dict.
-
-    The top-level ``event`` key is the discriminator clients route on (matches
-    ``presentation/schemas/ws.py``).  Returns None for events with no outbound
-    representation.
-    """
-    etype = event.type
-    data = event.data
-
-    if etype == EventType.TrialCompleted:
-        if not isinstance(data, TrialOutcome):
-            logger.error("event_to_wire: TrialCompleted payload is %s, not TrialOutcome",
-                         type(data).__name__)
-            return None
-        return {"event": "TrialCompleted", "generation": data.generation,
-                "trial_number": data.trial_number,
-                **({"processing_revision": data.processing_revision} if data.processing_revision is not None else {}),
-                **({"acquisition_revision": data.acquisition_revision} if data.acquisition_revision is not None else {}),
-                **_classification_fields(data.classification)}
-
-    if etype == EventType.StimulationAck:
-        # Payload arrives from the stimulation process as a JSON dict over the
-        # socket (see make_stimulation_ack); tolerate missing keys.
-        d = data if isinstance(data, dict) else {}
-        return {
-            "event": "StimulationAck",
-            "command": str(d.get("command", "")),
-            "target_index": d.get("target_index"),
-            "status": d.get("status", "ok"),
-            "message": d.get("message"),
-        }
-
-    return None
+from omnibci.application.commands.actuation_commands import ActuationIntent, InvalidActuationCommand
+from omnibci.application import events as application_events
 
 
 def make_stimulation_ack(command: str, status: str = "ok",
-                         target_index: Optional[int] = None,
+                         trial_params: Optional[dict[str, object]] = None,
                          message: Optional[str] = None) -> dict:
     """
     Build the JSON-safe payload the stimulation process sends back to ack a
@@ -74,36 +16,24 @@ def make_stimulation_ack(command: str, status: str = "ok",
 
         client.send_event(Event(EventType.StimulationAck,
                                  make_stimulation_ack("StartStimTrial",
-                                                      target_index=3)))
+                                                      trial_params={"event_id": 3})))
     """
     return {"command": command, "status": status,
-            "target_index": target_index, "message": message}
+            "trial_params": deepcopy(trial_params), "message": message}
 
 
-def make_actuation_ack(target_id: Optional[int] = None,
-                       status: str = "ok",
-                       message: Optional[str] = None,
-                       seq: Optional[int] = None) -> dict:
-    """
-    Build the JSON-safe payload the actuation process sends back to ack an
-    ActuationCommand. Mirrors make_stimulation_ack. *seq* echoes the
-    command's correlation id (statuses: ok | superseded | stale).
-    """
-    return {"target_id": target_id, "status": status, "message": message,
-            "seq": seq}
+def make_actuation_ack(command: ActuationIntent, status: str = "ok", message: str | None = None) -> dict:
+    """Return the same command identity and trial origin for every outcome."""
+    return {**command.correlation, "status": status, "message": message}
 
 
-def make_actuation_fault(code: str,
-                         target_id: Optional[int] = None,
-                         message: Optional[str] = None,
-                         seq: Optional[int] = None) -> dict:
-    """
-    Build the JSON-safe ActuationFault payload (same {"code", ...} shape as
-    the engine watchdog's ACTUATION_LINK_LOST). *seq* echoes the failing
-    command's correlation id when there is one.
-    """
-    return {"code": code, "source": "actuation_subsystem",
-            "target_id": target_id, "message": message, "seq": seq}
+def make_actuation_fault(code: str, *, command: ActuationIntent | InvalidActuationCommand | None = None,
+                         message: str | None = None) -> dict:
+    """Device-wide faults have no command; rejected commands echo valid identity."""
+    correlation = command.correlation if command is not None else {
+        "command_id": None, "origin": None, "target_id": None,
+    }
+    return {"code": code, "source": "actuation_subsystem", **correlation, "message": message}
 
 
 def payload_to_jsonable(data: Any) -> Any:
@@ -112,17 +42,16 @@ def payload_to_jsonable(data: Any) -> Any:
     envelope (``{"type", "data"}``).  Rich domain payloads are flattened; plain
     scalars pass through unchanged.
     """
-    if isinstance(data, TrialOutcome):
-        return {"generation": data.generation, "trial_number": data.trial_number,
-                **({"processing_revision": data.processing_revision} if data.processing_revision is not None else {}),
-                **({"acquisition_revision": data.acquisition_revision} if data.acquisition_revision is not None else {}),
-                **_classification_fields(data.classification)}
-    if isinstance(data, CommandRequest):
+    if isinstance(data, ActuationIntent):
+        return data.to_dict()
+    if isinstance(data, application_events.TrialOutcome):
+        return data.to_dict()
+    if isinstance(data, application_events.CommandRequest):
         return {
             "command_id": data.command_id,
             "payload": payload_to_jsonable(data.payload),
         }
-    if isinstance(data, CommandResult):
+    if isinstance(data, application_events.CommandResult):
         return {
             "command_id": data.command_id,
             "command": data.command,

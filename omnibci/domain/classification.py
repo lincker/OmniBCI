@@ -13,10 +13,32 @@ Business rules encoded here:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import isfinite
+from numbers import Integral, Real
 from typing import Optional
+
+from omnibci.domain.signal_info import integer
 
 #: Standard threshold for "high confidence" (confidence >= this value).
 HIGH_CONFIDENCE_THRESHOLD = 0.7
+
+
+def _normalize_target_id(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError("target_id must be an integer scalar")
+    if value < 0:
+        raise ValueError("target_id must be nonnegative")
+    return int(value)
+
+
+def _normalize_confidence(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError("confidence must be a real number or None")
+    if not 0 <= value <= 1 or not isfinite(value):
+        raise ValueError("confidence must be finite and in [0, 1]")
+    return float(value)
 
 
 @dataclass(frozen=True)
@@ -30,7 +52,7 @@ class Classification:
         confidence:  Decoder confidence score in [0, 1], or None if unavailable.
         forced:      True when recognition was triggered by an end/reset event
                      rather than by the decoder's own completion criterion.
-        produced_at: UTC timestamp when this result was created.
+        produced_at: Timezone-aware creation timestamp; defaults to UTC.
     """
     target_id: int
     event_id: int
@@ -39,12 +61,15 @@ class Classification:
     produced_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
-        if self.target_id < 0:
-            raise ValueError(f"target_id must be ≥ 0, got {self.target_id}")
-        if self.confidence is not None and not (0.0 <= self.confidence <= 1.0):
-            raise ValueError(
-                f"confidence must be in [0, 1], got {self.confidence}"
-            )
+        object.__setattr__(self, "target_id", _normalize_target_id(self.target_id))
+        object.__setattr__(self, "confidence", _normalize_confidence(self.confidence))
+        integer(self.event_id, "event_id", 1)
+        if type(self.forced) is not bool:
+            raise TypeError("forced must be a boolean")
+        if not isinstance(self.produced_at, datetime):
+            raise TypeError("produced_at must be a datetime")
+        if self.produced_at.tzinfo is None or self.produced_at.utcoffset() is None:
+            raise ValueError("produced_at must include a timezone offset")
 
     # ------------------------------------------------------------------
     # Convenience

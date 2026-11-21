@@ -1,5 +1,6 @@
 """Discovery and loading contracts for the packaged Neuroscan drivers."""
 
+from pathlib import Path
 import ctypes
 import sys
 from importlib import import_module
@@ -11,7 +12,6 @@ import pytest
 
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.sdk import PluginContext
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 
 
@@ -27,27 +27,27 @@ def test_neuroscan_driver_is_discoverable_and_loadable(
 
     plugins = {plugin.plugin_type: plugin for plugin in PluginCatalog().list_contributions("acquisition")}
     descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", plugin_type))
-    instance = PluginLoader.instantiate(descriptor, SignalSource, parameters={}, context=PluginContext())
+    instance = PluginLoader.instantiate(descriptor, SignalSource, parameters={})
 
     assert plugins[plugin_type].source == "builtin"
     assert descriptor.location.parts[-2:] == ("neuroscan", driver)
     assert str(descriptor.entrypoint) == f"{driver}:{class_name}"
     assert type(instance).__name__ == class_name
     assert instance.plugin_type == plugin_type
-    assert not instance.is_connected
+    assert instance.reader is None and instance.writer is None
 
 
 @pytest.mark.parametrize(
-    ("configured_address", "explicit_address", "expected_address"),
+    ("configured_address", "expected_address"),
     [
-        ("0x378", None, 0x378),
-        ("0378", None, 0x378),
-        ("3100", None, 0x3100),
-        ("0x3100", "3BC", 0x3BC),
+        ("0x378", 0x378),
+        ("0378", 0x378),
+        ("3100", 0x3100),
+        ("3BC", 0x3BC),
     ],
 )
 def test_scan45_trigger_uses_configured_address_and_sends_events(
-    monkeypatch, tmp_path, configured_address, explicit_address, expected_address,
+    monkeypatch, tmp_path, configured_address, expected_address,
 ):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
     descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "neuroscan_scan45_reader"))
@@ -58,10 +58,10 @@ def test_scan45_trigger_uses_configured_address_and_sends_events(
     monkeypatch.setattr(support_module, "PParallelInpOut", port_class)
     monkeypatch.setattr(ctypes, "windll", Mock(), raising=False)
     monkeypatch.setattr(sys, "platform", "win32")
-    trigger = driver_module.Scan45Trigger(
-        parallel_port_address=explicit_address, parameters={"parallel_port_address": configured_address}
-    )
+    trigger = driver_module.Scan45Trigger(parameters={'parallel_port_address': configured_address}, resource_root=Path(__file__).parent)
 
+    trigger.setup()
+    trigger.clear()
     trigger.send(7)
     trigger.clear()
 
@@ -83,7 +83,7 @@ def test_scan45_trigger_rejects_missing_address_before_opening_port(monkeypatch,
     with pytest.raises(
         TypeError, match="parameters",
     ):
-        driver_module.Scan45Trigger()
+        driver_module.Scan45Trigger(resource_root=Path(__file__).parent)
 
     open_port.assert_not_called()
 
@@ -101,6 +101,6 @@ def test_scan45_trigger_rejects_invalid_address_before_opening_port(
     monkeypatch.setattr(driver_module.Scan45Trigger, "clear", Mock())
 
     with pytest.raises(ValueError):
-        driver_module.Scan45Trigger(parameters={"parallel_port_address": address})
+        driver_module.Scan45Trigger(parameters={'parallel_port_address': address}, resource_root=Path(__file__).parent)
 
     open_port.assert_not_called()

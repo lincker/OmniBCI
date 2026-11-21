@@ -41,7 +41,8 @@ def test_retired_node_configuration_shape_is_rejected(version, revision_key):
 def test_retired_node_revision_is_rejected_alongside_current_revision():
     configuration = {
         "format_version": 1, "role": "stimulation", "module_revisions": {"stimulation": "a" * 64},
-        "engine_revision": "b" * 64, "generation": "generation", "settings": {}, "bindings": [],
+        "engine_revision": "b" * 64, "generation": "generation", "operation_id": "prepare-1",
+        "settings": {}, "bindings": [],
     }
     assert NodeConfigurationResponse(**configuration).engine_revision == "b" * 64
     with pytest.raises(ValidationError, match="system_revision"):

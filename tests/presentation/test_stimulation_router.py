@@ -50,26 +50,26 @@ class TestStimulationTrial:
         stimulation_service._active_identity = stimulation_service._identity(engine_service.applied_snapshot)
 
     def test_trial_start_returns_200(self, api_client, mock_engine):
-        resp = api_client.post("/api/v1/stimulation/trial/start")
+        resp = api_client.post("/api/v1/stimulation/trial/start", json={"trial_params": [{"event_id": 0}]})
         assert resp.status_code == 200
 
     def test_trial_start_with_params(self, api_client, mock_engine):
         resp = api_client.post(
             "/api/v1/stimulation/trial/start",
-            json={"n_trials": 1, "trial_params": [7]},
+            json={"n_trials": 1, "trial_params": [{"event_id": 7}]},
         )
         assert resp.status_code == 200
 
     def test_trial_dispatches_event_with_spec(self, api_client, mock_engine):
         api_client.post(
             "/api/v1/stimulation/trial/start",
-            json={"n_trials": 1, "trial_params": [2]},
+            json={"n_trials": 1, "trial_params": [{"event_id": 2}]},
         )
         from omnibci.shared.events import EventType
-        calls = mock_engine.event_bus.put_event.call_args_list
+        calls = mock_engine.dispatch.call_args_list
         trial_calls = [c for c in calls if c[0][0].type == EventType.StartStimTrial]
         assert len(trial_calls) == 1
-        assert trial_calls[0][0][0].data == {"n_trials": 1, "trial_params": [2]}
+        assert trial_calls[0][0][0].data == {"n_trials": 1, "trial_params": [{"event_id": 2}]}
 
     def test_renderer_rejection_is_not_reported_as_started(
         self, api_client, stimulation_service
@@ -84,7 +84,7 @@ class TestStimulationTrial:
             ))
         )
 
-        resp = api_client.post("/api/v1/stimulation/trial/start")
+        resp = api_client.post("/api/v1/stimulation/trial/start", json={"trial_params": [{"event_id": 0}]})
 
         assert resp.status_code == 409
         assert resp.json()["code"] == "COMMAND_REJECTED"
@@ -92,7 +92,7 @@ class TestStimulationTrial:
 
 
 def test_trial_endpoint_requires_explicit_stimulation_start(api_client, mock_engine):
-    response = api_client.post("/api/v1/stimulation/trial/start")
+    response = api_client.post("/api/v1/stimulation/trial/start", json={"trial_params": [{"event_id": 0}]})
     assert response.status_code == 503
     assert response.json()["message"] == "Start stimulation before starting a trial"
-    mock_engine.event_bus.put_event.assert_not_called()
+    mock_engine.dispatch.assert_not_called()

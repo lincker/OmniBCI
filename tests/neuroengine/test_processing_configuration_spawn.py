@@ -1,5 +1,5 @@
 """Exercise trial-boundary replacement through real spawned-worker queues."""
-from tests.plugin_configuration_helpers import builtin_selection
+from tests.plugin_configuration_helpers import builtin_selection, install_package_root, prepared_snapshot
 
 from copy import deepcopy
 import json
@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, ProcessingInputStart
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.signal import SignalChunk
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
@@ -41,105 +41,125 @@ def _event(queue, kind, predicate=lambda event: True):
 
 @pytest.mark.integration
 def test_spawned_worker_preserves_old_trial_then_acknowledges_new_pipeline(tmp_path, monkeypatch):
-    plugin = tmp_path / "algorithms" / "decoders" / "fixture"
+    plugin = tmp_path / "source"
+    markers = tmp_path / "markers"
+    markers.mkdir()
     plugin.mkdir(parents=True)
     (plugin / "manifest.toml").write_text('''manifest_version = 2
 [package]
 id = "trial_fixture"
 publisher = "Tests"
 version = "1.0.0"
-api_version = "2"
+api_version = "1"
 domain = "processing"
 [[contributions]]
 id = "default"
 kind = "decoder"
 entrypoint = "plugin:ValueDecoder"
-signal_input_contract = 1
+channel_requirements = {min_count = 1}
 [contributions.configuration]
 schema = "schema.json"
 schema_version = 1
 ''')
     (plugin / "schema.json").write_text(json.dumps({
         "type": "object", "additionalProperties": False,
-        "properties": {"target": {"type": "integer", "minimum": 1, "x-apply": "trial"}},
-        "required": ["target"],
+        "properties": {"target": {"type": "integer", "minimum": 1, "x-apply": "trial"},
+                       "marker_dir": {"type": "string"}},
+        "required": ["target", "marker_dir"],
     }))
     (plugin / "plugin.py").write_text('''from pathlib import Path
 from omnibci.sdk import Decoder, Prediction
 class ValueDecoder(Decoder):
-    def __init__(self, *, parameters, context):
+    def setup(self):
+        pass
+    def teardown(self):
+        pass
+    def __init__(self, *, parameters, resource_root, input_signal):
         self.target = parameters["target"]
-        self.root = Path(context.resource_root)
+        self.root = Path(parameters["marker_dir"])
         (self.root / f"constructed-{self.target}").write_text("ready")
     def should_decode(self, data):
         return False
-    def decode(self, data, latest_samples):
+    def decode(self, data, *, latest_raw_segment):
         return Prediction(self.target)
-    def for_new_epoch(self):
+    def begin_epoch(self):
         (self.root / f"epoch-{self.target}").write_text("ready")
-        return self
 ''')
-    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path))
+    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
+    install_package_root(plugin)
     catalog = PluginCatalog()
     decoder = next(item for item in catalog.list_contributions("decoder")
                    if item.package.identifier == "Tests.trial_fixture")
     detector = catalog.resolve_selection("epoch_detector", builtin_selection("epoch_detector", "DEFAULT_EPOCH_DETECTOR"))
-    snapshot = {"CONFIG.module_revisions": {"acquisition": "old", "processing": "old", "stimulation": "old", "actuation": "old"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
+    snapshot = {"CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "a" * 64, "stimulation": "a" * 64, "actuation": "a" * 64}, "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run",
                 "ACQUISITION.sample_rate": 250, "ALGORITHM.baseline_duration": 0.0,
                 "ACQUISITION.signal_source": "test-source",
                 "PLUGINS.bindings": [
                     ProfileBinding("processing.decoder", "decoder", None, decoder.selection,
-                                   {"target": 1}, processing_input=ProcessingInput()).to_dict(),
+                                   {"target": 1, "marker_dir": str(markers)}, processing_input=ProcessingInput()).to_dict(),
                     ProfileBinding("processing.epoch_detector", "epoch_detector", None,
                                    detector.selection, {}).to_dict(),
                 ]}
     replacement = deepcopy(snapshot)
-    replacement["CONFIG.module_revisions"]["processing"] = "new"
+    replacement["CONFIG.module_revisions"]["processing"] = "c" * 64
     replacement["PLUGINS.bindings"][0]["parameters"]["target"] = 2
+    snapshot = prepared_snapshot(snapshot)
+    replacement = prepared_snapshot(replacement)
     context = mp.get_context("spawn")
     commands, data, events = (context.Queue() for _ in range(3))
     receiver, sender = context.Pipe(duplex=False)
-    reporter = StartupReporter(sender, component="Signal Processing", module_revisions={"processing": "old"}, engine_revision="engine", generation="run")
+    reporter = StartupReporter(sender, component="Signal Processing", module_revisions={"processing": "a" * 64}, engine_revision="b" * 64, generation="run")
     worker = SignalProcessingWorker(commands, DataManager(data), EventBus(events),
-                                    settings_snapshot=snapshot, startup_reporter=reporter)
+                                    settings_snapshot=snapshot, startup_reporter=reporter,
+                                    execution_history_root=tmp_path / "profiles")
     process = context.Process(target=worker.run)
     try:
         process.start()
         reporter.close()
         wait_for_startup_report(receiver, process, component="Signal Processing", timeout_s=10,
-                                expected_module_revisions={"processing": "old"}, expected_engine_revision="engine", expected_generation="run")
-        source = SignalInfo("test-source", 250, (ChannelDescriptor(0, "O1"),), 1,
-                            connection_id="connection")
-        plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="old")
-        receipt = {"generation": "run", "acquisition_revision": "old", "processing_revision": "old", "engine_revision": "engine", "connection_id": "connection",
-                   "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
+                                expected_module_revisions={"processing": "a" * 64}, expected_engine_revision="b" * 64, expected_generation="run")
+        assert not list((tmp_path / "profiles" / "execution-history").glob("*.json"))
+        source = SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "O1", channel_id="channel-0"),))
+        plan = compile_processing_plan(source, ProcessingInput(), acquisition_revision="a" * 64)
+        receipt = {"generation": "run", "acquisition_revision": "a" * 64, "processing_revision": "a" * 64, "engine_revision": "b" * 64, "connection_id": "connection",
+                   "source_fingerprint": "f" * 64, "plan_fingerprint": plan.fingerprint, "input_id": "test-input"}
         commands.put((SignalProcessorCommand.prepare_signal, CommandRequest("prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
         })))
         prepared = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "prepare")
         assert prepared.ok, prepared.message
-        data.put(ProcessingInputStart("attach", receipt, 0))
+        data.put(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(receipt), 0))
         attached = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "attach")
         assert attached.ok, attached.message
-        data.put(SignalChunk(1.0, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
-        _wait_file(plugin / "epoch-1")
+        data.put(SignalChunk(1, 1, np.array([[1., 1., 1.], [7., 0., 0.]])))
+        _wait_file(markers / "epoch-1")
         commands.put((SignalProcessorCommand.stage_configuration, CommandRequest("update", {
-            "settings_snapshot": replacement, "expected_revision": "old", "generation": "run", "engine_revision": "engine", "boundary": "trial",
+            "settings_snapshot": replacement, "expected_revision": "a" * 64, "generation": "run", "engine_revision": "b" * 64, "boundary": "trial",
         })))
-        _wait_file(plugin / "constructed-2")
-        data.put(SignalChunk(2.0, 2, np.array([[1., 1., 1.], [0., 9., 0.]])))
+        _wait_file(markers / "constructed-2")
+        data.put(SignalChunk(2, 2, np.array([[1., 1., 1.], [0., 9., 0.]])))
         old_trial = _event(events, EventType.TrialCompleted)
-        assert old_trial.processing_revision == "old" and old_trial.classification.target_id == 1
+        assert old_trial.processing_revision == "a" * 64 and old_trial.classification.target_id == 1
         receipt = _event(events, EventType.CommandResult, lambda event: event.data.command_id == "update")
-        assert receipt.ok and receipt.data["applied_revision"] == "new"
-        data.put(SignalChunk(3.0, 3, np.array([[1., 1., 1.], [0., 11., 0.]])))
+        assert receipt.ok and receipt.data["applied_revision"] == "c" * 64
+        data.put(SignalChunk(3, 3, np.array([[1., 1., 1.], [0., 11., 0.]])))
         new_trial = _event(events, EventType.TrialCompleted)
-        assert new_trial.processing_revision == "new" and new_trial.classification.target_id == 2
+        assert new_trial.processing_revision == "c" * 64 and new_trial.classification.target_id == 2
         assert old_trial.generation == new_trial.generation == "run"
         assert (old_trial.trial_number, new_trial.trial_number) == (1, 2)
         commands.put((SignalProcessorCommand.should_stop, None))
         process.join(timeout=10)
         assert process.exitcode == 0
+        records = {record["operation_id"]: record for path in (tmp_path / "profiles" / "execution-history").glob("*.json")
+                   for record in [json.loads(path.read_text())["receipt"]]}
+        assert set(records) == {"test-input", "update"}
+        assert records["test-input"]["module_revision"] == "a" * 64
+        assert records["update"]["module_revision"] == "c" * 64
+        for operation, pinned_snapshot in (("test-input", snapshot), ("update", replacement)):
+            assert records[operation]["generation"] == "run"
+            for slot, artifact in records[operation]["artifacts"].items():
+                assert artifact["content_sha256"] == pinned_snapshot["PLUGINS.artifacts"][slot]["content_sha256"]
+                assert artifact["binding_sha256"] == pinned_snapshot["PLUGINS.artifacts"][slot]["binding_sha256"]
     finally:
         if process.is_alive():
             process.terminate()

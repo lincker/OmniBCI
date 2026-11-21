@@ -1,8 +1,11 @@
 """Algorithm parameters and host metadata remain independent of global settings."""
 
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
+
+from tests.processing_helpers import prepared_signal
 
 import numpy as np
 import pytest
@@ -11,7 +14,8 @@ from omnibci.infrastructure.plugins.algorithms.decoders.classic40_cca import cla
 from omnibci.infrastructure.plugins.algorithms.decoders.classic40_fbcca import classic_40_fbcca
 from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
 from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import BaselineCorrection
-from omnibci.sdk import FilterContext, PluginContext, SignalChunk
+from omnibci.sdk import EpochBoundary
+from omnibci.domain.signal import SignalChunk
 
 
 DECODERS = (classic_40_cca.Classic40CCA, classic_40_fbcca.Classic40FBCCA)
@@ -20,7 +24,7 @@ DECODERS = (classic_40_cca.Classic40CCA, classic_40_fbcca.Classic40FBCCA)
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_window_requires_at_least_two_host_samples(decoder_class):
     with pytest.raises(ValueError, match="at least two samples"):
-        decoder_class(parameters={"window_duration": 0.001}, context=PluginContext(sample_rate=1))
+        decoder_class(parameters={'window_duration': 0.001}, input_signal=prepared_signal(1), resource_root=Path(__file__).parent)
 
 
 @pytest.fixture(autouse=True)
@@ -32,28 +36,32 @@ def forbid_settings_reads(monkeypatch):
 
 
 @pytest.mark.parametrize("decoder_class", DECODERS)
-@pytest.mark.parametrize("context", [None, PluginContext()])
-def test_explicit_decoder_requires_host_sample_rate(decoder_class, context):
-    with pytest.raises(ValueError, match=r"requires context\.sample_rate"):
-        decoder_class(parameters={}, context=context)
+@pytest.mark.parametrize("input_signal", [None, {}])
+def test_explicit_decoder_requires_prepared_input(decoder_class, input_signal):
+    with pytest.raises(ValueError, match=r"requires input_signal"):
+        decoder_class(parameters={}, input_signal=input_signal, resource_root=Path(__file__).parent)
 
 
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_decoder_defaults_use_host_sample_rate(decoder_class):
-    decoder = decoder_class(parameters={}, context=PluginContext(sample_rate=250))
-    context_only_decoder = decoder_class(parameters={}, context=PluginContext(sample_rate=500))
+    decoder = decoder_class(parameters={}, input_signal=prepared_signal(250), resource_root=Path(__file__).parent)
+    decoder.setup()
+    higher_rate_decoder = decoder_class(parameters={}, input_signal=prepared_signal(500), resource_root=Path(__file__).parent)
+    higher_rate_decoder.setup()
 
     assert (decoder.SAMPLE_RATE, decoder.SAMPLE_COUNT, decoder.OFFSET_LENGTH) == (250, 750, 35)
-    assert context_only_decoder.SAMPLE_COUNT == 1500
-    assert context_only_decoder.OFFSET_LENGTH == 70
+    assert higher_rate_decoder.SAMPLE_COUNT == 1500
+    assert higher_rate_decoder.OFFSET_LENGTH == 70
 
 
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_decoder_instances_keep_independent_windows(decoder_class):
     parameters = {"window_duration": 0.5, "offset_time": 0.1}
-    first = decoder_class(parameters=parameters, context=PluginContext(sample_rate=200))
+    first = decoder_class(parameters=parameters, input_signal=prepared_signal(200), resource_root=Path(__file__).parent)
+    first.setup()
     parameters["window_duration"] = 1.0
-    second = decoder_class(parameters=parameters, context=PluginContext(sample_rate=200))
+    second = decoder_class(parameters=parameters, input_signal=prepared_signal(200), resource_root=Path(__file__).parent)
+    second.setup()
     window = np.zeros((2, 121))
 
     assert first.should_decode(window)
@@ -64,10 +72,8 @@ def test_decoder_instances_keep_independent_windows(decoder_class):
 
 @pytest.mark.parametrize("decoder_class", DECODERS)
 def test_decoder_uses_explicit_window_slice(monkeypatch, decoder_class):
-    decoder = decoder_class(
-        parameters={"window_duration": 0.5, "offset_time": 0.1},
-        context=PluginContext(sample_rate=200),
-    )
+    decoder = decoder_class(parameters={'window_duration': 0.5, 'offset_time': 0.1}, input_signal=prepared_signal(200), resource_root=Path(__file__).parent)
+    decoder.setup()
     window = np.arange(300).reshape(2, 150)
     if isinstance(decoder, classic_40_cca.Classic40CCA):
         classify = Mock(return_value=7)
@@ -76,7 +82,7 @@ def test_decoder_uses_explicit_window_slice(monkeypatch, decoder_class):
         classify = Mock(return_value=(7, 14.0, np.zeros(40)))
         monkeypatch.setattr(decoder, "classify", classify)
 
-    prediction = decoder.decode(window, window[:, -10:])
+    prediction = decoder.decode(window, latest_raw_segment=window[:, -10:])
 
     assert prediction.target_id == 7
     np.testing.assert_array_equal(classify.call_args.args[0], window[:, 20:120])
@@ -89,27 +95,26 @@ def test_implicit_decoder_configuration_is_rejected(decoder_class):
 
 
 def test_detector_accepts_explicit_empty_configuration():
-    detector = DefaultEpochDetector(parameters={}, context=PluginContext(sample_rate=250))
+    detector = DefaultEpochDetector(parameters={}, input_signal=prepared_signal(250), resource_root=Path(__file__).parent)
     chunk = SignalChunk(
         timestamp=0, sequence_id=0,
         raw_data=np.array([[1.0, 2.0, 3.0], [0.0, 9.0, 0.0]]),
     )
 
-    assert detector.detect_start(chunk) == (1, 9)
-    assert detector.detect_end(chunk) == (-1, 0)
+    assert detector.detect(chunk.raw_data) == (EpochBoundary(offset=1, kind="start", event_id=9),)
 
 
 def test_parallel_filter_instances_do_not_share_inputs_or_runtime_state():
-    first = BaselineCorrection(parameters={}, context=PluginContext(sample_rate=250))
-    second = BaselineCorrection(parameters={}, context=PluginContext(sample_rate=500))
+    first = BaselineCorrection(parameters={}, input_signal=prepared_signal(250), resource_root=Path(__file__).parent)
+    second = BaselineCorrection(parameters={}, input_signal=prepared_signal(500), resource_root=Path(__file__).parent)
     data = np.array([[10.0, 20.0], [30.0, 40.0]])
     before = data.copy()
     contexts = (
-        FilterContext(sample_rate=250, baseline=np.array([[1.0, 3.0], [4.0, 6.0]])),
-        FilterContext(sample_rate=500, baseline=np.array([[5.0, 7.0], [8.0, 10.0]])),
+        np.array([[1.0, 3.0], [4.0, 6.0]]),
+        np.array([[5.0, 7.0], [8.0, 10.0]]),
     )
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda pair: pair[0].apply(data, pair[1]),
+        results = list(pool.map(lambda pair: pair[0].apply(data, pre_trigger_data=pair[1]),
                                 zip((first, second), contexts)))
 
     assert first is not second

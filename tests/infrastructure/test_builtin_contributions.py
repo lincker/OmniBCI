@@ -8,15 +8,16 @@ from tests.plugin_configuration_helpers import builtin_selection
 import pytest
 import tomlkit
 
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.ports.effector import Effector
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import (
-    PluginCatalog, PluginManifestError, PluginRoot, vendor_plugins_dir,
+    PluginCatalog, PluginRoot, vendor_plugins_dir,
 )
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 
 CAPABILITIES = [
@@ -77,7 +78,7 @@ def test_package_and_contribution_platforms_both_apply(catalog):
 @pytest.mark.parametrize("platforms", [[], "win32", ["windows"], ["linux", "linux"], [1]])
 @pytest.mark.parametrize("section", ["package", "contribution"])
 def test_malformed_platforms_reject_package(tmp_path, platforms, section):
-    package = {"id": "example", "publisher": "test", "version": "1", "domain": "acquisition", "api_version": "2"}
+    package = {"id": "example", "publisher": "test", "version": "1", "domain": "acquisition", "api_version": "1"}
     contribution = {"id": "reader", "kind": "acquisition", "entrypoint": "reader:Reader"}
     (package if section == "package" else contribution)["platforms"] = platforms
     (tmp_path / "manifest.toml").write_text(tomlkit.dumps({
@@ -91,9 +92,9 @@ def test_malformed_platforms_reject_package(tmp_path, platforms, section):
 def test_selected_paradigm_can_read_its_pack_without_executing_package_initializers(catalog):
     descriptor = catalog.resolve_selection("paradigm", builtin_selection("paradigm", "STIMULATION_THUBCI_SSVEP_classic40"))
     implementation = PluginLoader.load_entrypoint(descriptor, Paradigm)
-    with sys.modules[implementation.__module__]._frame_pack_path() as path:
-        assert Path(path) == descriptor.location / "resource" / "classic40_ssvep.ofp"
-        assert path.stat().st_size > 0
+    path = sys.modules[implementation.__module__]._frame_pack_path(descriptor.location)
+    assert Path(path) == descriptor.location / "resource" / "classic40_ssvep.ofp"
+    assert path.stat().st_size > 0
     assert descriptor.params["stim_time_s"] == 240 / descriptor.params["refresh_rate_hz"]
 
 

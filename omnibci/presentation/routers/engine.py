@@ -7,9 +7,8 @@ from typing import Literal
 
 from omnibci.presentation.dependencies import get_engine_service, get_acquisition_service
 from omnibci.presentation.routers.runtime_config import get_runtime_configuration
-from omnibci.presentation.routers.plugin_config import _configuration_errors
 from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
-from omnibci.presentation.errors import ApiError, COMMAND_EXECUTION_RESPONSES, command_error_to_api_error
+from omnibci.presentation.errors import ApiError, COMMAND_EXECUTION_RESPONSES, command_error_to_api_error, configuration_errors
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.engine import EngineStatusResponse
 from omnibci.application.commands.engine_commands import (
@@ -55,7 +54,7 @@ async def start_module(
     module: Literal["processing", "actuation"], body: ModuleActionRequest,
     runtime=Depends(get_runtime_configuration),
 ):
-    with _configuration_errors():
+    with configuration_errors():
         result = await runtime.execute_current(module, "start", **body.model_dump())
         return ApiResponse(data=result)
 

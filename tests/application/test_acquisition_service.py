@@ -1,6 +1,9 @@
 """
 Unit tests for AcquisitionAppService.
 """
+from copy import deepcopy
+from omnibci.application.source_metadata import source_descriptor
+from omnibci.domain.ports.acquisition import SourceObservation
 import pytest
 from unittest.mock import MagicMock, call
 
@@ -33,7 +36,7 @@ def test_command_executor_is_required():
 class TestAcquisitionConnect:
     def test_connect_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_connect(ConnectDataProviderCommand())
-        events = [call.args[0].type for call in mock_engine.event_bus.put_event.call_args_list]
+        events = [call.args[0].type for call in mock_engine.dispatch.call_args_list]
         assert events == [EventType.ConnectDataProvider, EventType.GetSourceMetadata]
 
     def test_connect_does_not_guess_state(self, acquisition_service):
@@ -44,14 +47,14 @@ class TestAcquisitionConnect:
 
     def test_disconnect_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_disconnect(DisconnectDataProviderCommand())
-        event = mock_engine.event_bus.put_event.call_args[0][0]
+        event = mock_engine.dispatch.call_args[0][0]
         assert event.type == EventType.DisconnectDataProvider
 
 
 class TestAcquisitionStream:
     def test_start_stream_dispatches_event(self, acquisition_service, mock_engine):
         acquisition_service.handle_start_stream(StartStreamCommand())
-        assert [item.args[0].type for item in mock_engine.event_bus.put_event.call_args_list] == [
+        assert [item.args[0].type for item in mock_engine.dispatch.call_args_list] == [
             EventType.GetSourceMetadata, EventType.StartStream,
         ]
 
@@ -158,8 +161,7 @@ class TestAcquisitionStatus:
 
     def test_metadata_is_confirmed_then_invalidated_on_disconnect(self):
         from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
-        metadata = SignalInfo("test", 250, (ChannelDescriptor(0, "C3"),), 1,
-                                  connection_id="connection", provenance="device-reported")
+        metadata = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "C3", channel_id="channel-0"),)), native_event="final-row", provenance="device-reported"), source_id="test", connection_id="connection")
         executor = MagicMock()
         executor.request.return_value.data = _metadata_response(metadata)
         service = AcquisitionAppService(executor)
@@ -169,7 +171,7 @@ class TestAcquisitionStatus:
             for key in ("source_id", "connection_id", "metadata", "descriptor")}
         assert result["comparison"]["status"] == "unconfirmed"
         executor.request.assert_called_once_with(EventType.GetSourceMetadata, {"refresh": True}, timeout_s=5.0)
-        assert service.cached_descriptor == metadata.to_dict()
+        assert service.cached_descriptor == deepcopy(metadata)
         status = service.handle_get_status(GetAcquisitionStatusQuery())
         assert status.sample_rate == 250 and status.channel_count == 1
         assert status.metadata_available and status.metadata_provenance == "device-reported"
@@ -189,17 +191,17 @@ class TestAcquisitionStatus:
 
 
 def _metadata_response(metadata):
-    return {"source_id": metadata.source_id, "connection_id": metadata.connection_id,
+    return {"source_id": metadata["source_id"], "connection_id": metadata["connection_id"],
             "metadata": "Test amplifier\nVendor status: recording enabled\n<unknown />\n",
-            "descriptor": metadata.to_dict(), "descriptor_error": None}
+            "descriptor": deepcopy(metadata), "descriptor_error": None}
 
 
 def _metadata_service():
     from omnibci.application.events import CommandResult
-    from omnibci.application.configuration.models import PluginSelection, ProfileBinding
+    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.configuration.models import ProfileBinding
     from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
-    metadata = SignalInfo("test", 250, (ChannelDescriptor(0, "C3", unit="uV"),), 1,
-                              connection_id="connection", provenance="device-reported")
+    metadata = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "C3", unit="uV", channel_id="channel-0"),)), native_event="final-row", provenance="device-reported"), source_id="test", connection_id="connection")
     response = _metadata_response(metadata)
     executor = MagicMock()
     executor.request.return_value = CommandResult("read", "GetSourceMetadata", True, data=response)
@@ -230,7 +232,7 @@ def test_metadata_preserves_opaque_plugin_text_and_exposes_acquisition_descripto
     value["descriptor"]["channels"][0]["name"] = "changed by caller"
     assert service._raw_metadata["metadata"] == raw
     assert service._raw_metadata["descriptor"]["channels"][0]["name"] == "C3"
-    assert service.cached_descriptor == metadata.to_dict()
+    assert service.cached_descriptor == deepcopy(metadata)
     status = service.handle_get_status(GetAcquisitionStatusQuery())
     assert status.sample_rate == 250 and status.channel_count == 1
     assert status.metadata_provenance == "device-reported"
@@ -242,14 +244,14 @@ def test_cached_signal_metadata_belongs_to_the_running_acquisition_binding():
     from dataclasses import replace
     service, _, _, binding, metadata, _ = _metadata_service()
     service.get_metadata()
-    assert service.cached_descriptor_for(binding.to_dict()) == metadata.to_dict()
+    assert service.cached_descriptor_for(binding.to_dict()) == deepcopy(metadata)
     other_profile = replace(binding, profile_id="00000000-0000-0000-0000-000000000002")
-    assert service.cached_descriptor_for(other_profile.to_dict()) == metadata.to_dict()
+    assert service.cached_descriptor_for(other_profile.to_dict()) == deepcopy(metadata)
     current = replace(binding, profile_id=None, profile_revision=0)
-    assert service.cached_descriptor_for(current.to_dict()) == metadata.to_dict()
+    assert service.cached_descriptor_for(current.to_dict()) == deepcopy(metadata)
     assert service.cached_descriptor_for(replace(binding, parameters={"sample_rate": 500}).to_dict()) is None
     assert service.cached_descriptor_for(None) is None
-    assert service.cached_descriptor_for(replace(binding, profile_revision=2).to_dict()) == metadata.to_dict()
+    assert service.cached_descriptor_for(replace(binding, profile_revision=2).to_dict()) == deepcopy(metadata)
 
 
 @pytest.mark.parametrize("invalidation", ["disconnect", "reset", "worker-disconnect", "failed-read"])
@@ -318,7 +320,7 @@ def test_status_does_not_present_configuration_metadata_as_device_dimensions():
 
 def test_processing_receives_only_normalized_signal_metadata():
     service, _, _, _, metadata, _ = _metadata_service()
-    assert service.get_descriptor() == metadata.to_dict()
+    assert service.get_descriptor() == deepcopy(metadata)
 
 
 def test_reconnect_changes_status_identity_and_invalidates_previous_connection_metadata():

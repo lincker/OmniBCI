@@ -1,15 +1,17 @@
 """Own pause/rebuild/restore as one admitted operation with explicit recovery."""
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
 from omnibci.application.commands.stimulation_commands import StartStimulationCommand, StopStimulationCommand
-from omnibci.application.configuration.definitions import merge_module_settings
+from omnibci.application.configuration.definitions import merge_module_settings, module_runtime_settings
 from omnibci.application.events import StreamDrainReceipt
 from omnibci.application.configuration.models import ActivationSet
+from omnibci.application.configuration.ports import ConfigurationRepository
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
-from omnibci.application.source_checkpoint import checkpoint_for_restore
+from omnibci.domain.ports.acquisition import SourceCheckpoint
+from omnibci.application.source_checkpoint import checkpoint_for_restore, checkpoint_from_receipt
 from omnibci.application.services.command_result_service import CommandRejectedError, CommandTimeoutError
 from omnibci.application.services.runtime_configuration_service import (
     operation_scopes, read_configuration, validate_external_peers,
@@ -29,19 +31,18 @@ class _RestoreState:
     connected: bool
     streaming: bool
     stimulation: bool
-    checkpoint: dict | None = None
+    checkpoint: SourceCheckpoint | None = None
     actuation: bool = False
     acquisition: bool = True
     processing: bool = True
 
 
 class RuntimeApplyCoordinator:
-    supported_strategies = {"select_on_start", "no_change", "rebuild", "trial_boundary", "module"}
-
     def __init__(self, engine, profiles, acquisition, stimulation, commands, *,
-                 signal_preparer=None, signal_detacher=None):
+                 repository: ConfigurationRepository, signal_preparer=None, signal_detacher=None):
         self.engine = engine
         self.profiles = profiles
+        self.repository = repository
         self.acquisition = acquisition
         self.stimulation = stimulation
         self.commands = commands
@@ -72,13 +73,14 @@ class RuntimeApplyCoordinator:
     async def execute_current_action(self, stored, action):
         """Finish the user action while its configuration reservation is held."""
         module = stored.plan.module
-        engine_settings = self.profiles.repository.get_engine()
+        engine_settings = self.repository.get_engine()
         if not self.engine.is_engine_ready:
             foundation = self.profiles.materialize(ActivationSet({}, engine_settings))
             async with self.engine.runtime_transition("engine"):
                 await self.engine.start_for_configuration(foundation)
         selected = self.profiles.materialize(ActivationSet(stored.candidates, engine_settings), self.engine.generation)
         snapshot = merge_module_settings(self.engine.applied_snapshot or {}, selected, (module,))
+        snapshot = self.engine.prepare_plugins(snapshot, (module,))
         if module in ("acquisition", "processing"):
             if not self.engine.is_module_running(module):
                 await self.engine.start_module_for_configuration(module, snapshot)
@@ -107,7 +109,7 @@ class RuntimeApplyCoordinator:
     async def execute(self, stored, progress, *, operation_id):
         plan = stored.plan
         async with self.engine.runtime_transition(operation_scopes(stored)):
-            previous = read_configuration(self.profiles.repository, plan.expected_revisions)
+            previous = read_configuration(self.repository, plan.expected_revisions)
             revisions = previous.revisions()
             applied = self.engine.applied_revisions or {}
             if (any(revisions[k] != v for k, v in plan.expected_revisions.items())
@@ -125,8 +127,6 @@ class RuntimeApplyCoordinator:
             for candidate in (combined.modules if plan.module == "engine" else stored.candidates).values():
                 if candidate is not None:
                     self.profiles.validate_module(candidate, active_kinds=self.active_kinds(combined))
-            if plan.strategy not in self.supported_strategies:
-                raise ValueError("The planned update boundary is unavailable")
             if plan.strategy in ("select_on_start", "no_change"):
                 progress("persisting")
                 before = self.engine.applied_snapshot if plan.running else None
@@ -157,7 +157,7 @@ class RuntimeApplyCoordinator:
                 result.update(applied=True, history_saved=True)
                 try:
                     for candidate in stored.candidates.values():
-                        self.profiles.repository.record_module_history(
+                        self.repository.record_module_history(
                             candidate, operation_id, restored_from=stored.restored_from)
                 except Exception as exc:
                     result.update(history_saved=False,
@@ -166,7 +166,7 @@ class RuntimeApplyCoordinator:
 
     def _persist(self, stored, previous):
         written = []
-        repository = self.profiles.repository
+        repository = self.repository
         self._check_selected(previous, stored.plan.expected_revisions)
         try:
             if stored.engine is not None:
@@ -186,7 +186,7 @@ class RuntimeApplyCoordinator:
         return written
 
     def _rollback_saved(self, stored, previous, written):
-        repository = self.profiles.repository
+        repository = self.repository
         for module in reversed(written):
             target_revision = stored.plan.target_revisions[module]
             if module == "engine":
@@ -200,7 +200,7 @@ class RuntimeApplyCoordinator:
                 repository.save_module(previous.modules[module], expected_revision=target_revision)
 
     def _check_selected(self, previous, keys):
-        revisions = read_configuration(self.profiles.repository, keys).revisions()
+        revisions = read_configuration(self.repository, keys).revisions()
         if any(revisions[key] != previous.revisions()[key] for key in keys):
             raise ProfileRevisionConflict("Selected module configuration was changed by another writer")
 
@@ -214,7 +214,7 @@ class RuntimeApplyCoordinator:
                     "engine_revision": snapshot["CONFIG.engine_revision"]}
         try:
             data = await self._request(EventType.StageProcessingConfiguration, {
-                "settings_snapshot": snapshot, "expected_revision": expected_revision,
+                "settings_snapshot": module_runtime_settings(snapshot, "processing"), "expected_revision": expected_revision,
                 "boundary": boundary, **identity,
             })
         except CommandTimeoutError as exc:
@@ -243,7 +243,7 @@ class RuntimeApplyCoordinator:
 
     async def _apply_pipeline(self, stored, previous, progress):
         before = self.engine.applied_snapshot
-        target = self._runtime_target(stored)
+        target = self.engine.prepare_plugins(self._runtime_target(stored), ('processing',))
         boundary = "module" if stored.plan.strategy == "module" else "trial"
         if boundary == "module":
             progress("detaching_processing")
@@ -325,6 +325,8 @@ class RuntimeApplyCoordinator:
         before = self.engine.applied_snapshot
         target = self._runtime_target(stored)
         active = (self.stimulation.is_active or self.stimulation.process_alive) if module == "stimulation" else self._actuation_active()
+        if active:
+            target = self.engine.prepare_plugins(target, (module,))
         written = []
         replacing = False
         startup_pending = False
@@ -429,13 +431,8 @@ class RuntimeApplyCoordinator:
                     or data.get("acquisition_revision") != before["CONFIG.module_revisions"]["acquisition"]
                     or data.get("engine_revision") != before.get("CONFIG.engine_revision")):
                 raise RuntimeError("Source checkpoint belongs to a different configuration")
-            if type(data.get("supported")) is not bool:
-                raise RuntimeError("Source checkpoint support was not acknowledged")
-            if data["supported"]:
-                if not isinstance(data.get("checkpoint"), dict):
-                    raise RuntimeError("Source did not provide a resumable checkpoint")
-                state.checkpoint = data["checkpoint"]
-            elif state.streaming and data.get("resume_without_checkpoint_safe") is not True:
+            state.checkpoint = checkpoint_from_receipt(data)
+            if state.streaming and data["resume_mode"] == "restart-only":
                 # A source must explicitly promise that a normal start does
                 # not rewind. Otherwise retain the paused source and drivers.
                 raise RuntimeApplyFailure(
@@ -478,17 +475,14 @@ class RuntimeApplyCoordinator:
                 self._receipt(current, running)
                 if current.get("acquisition_revision") != running["CONFIG.module_revisions"]["acquisition"]:
                     raise RuntimeError("Source resume receipt belongs to a different configuration")
-                if (type(current.get("supported")) is not bool or
-                        (current["supported"] and not isinstance(current.get("checkpoint"), dict))):
-                    raise RuntimeError("Replacement source returned an invalid checkpoint capability")
-                if require_live_resume and current.get("resume_without_checkpoint_safe") is not True:
+                current_checkpoint = checkpoint_from_receipt(current)
+                if require_live_resume and current["resume_mode"] != "live-current":
                     raise RuntimeError("Replacement source did not confirm safe live resumption")
             if checkpoint is not None:
-                self._receipt(current, running, "supported")
-                selected = checkpoint_for_restore(checkpoint, current.get("checkpoint"))
+                selected = checkpoint_for_restore(checkpoint, current_checkpoint)
                 if selected is not None:
                     data = await self._request(EventType.RestoreSourceCheckpoint,
-                                               {**self._identity(running), "checkpoint": selected})
+                                               {**self._identity(running), "checkpoint": asdict(selected)})
                     self._receipt(data, running, "restored")
                     resumed_checkpoint = True
         return resumed_checkpoint
@@ -502,7 +496,7 @@ class RuntimeApplyCoordinator:
         if module == "processing":
             return await self._rebuild_processing(stored, previous, progress)
         before = self.engine.applied_snapshot
-        target = self._runtime_target(stored)
+        target = self.engine.prepare_plugins(self._runtime_target(stored), (module,))
         source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
         state = _RestoreState(source.connected, source.streaming, False)
         stopped = resumed = False
@@ -556,7 +550,7 @@ class RuntimeApplyCoordinator:
 
     async def _rebuild_processing(self, stored, previous, progress):
         before = self.engine.applied_snapshot
-        target = self._runtime_target(stored)
+        target = self.engine.prepare_plugins(self._runtime_target(stored), ('processing',))
         stopped = attaching = False
         written = []
         try:
@@ -604,6 +598,9 @@ class RuntimeApplyCoordinator:
                               actuation=self._actuation_active(),
                               acquisition=self.engine.is_module_running("acquisition"),
                               processing=self.engine.is_module_running("processing"))
+        target = self.engine.prepare_plugins(target, tuple(module for module in (
+            'acquisition', 'processing', 'stimulation', 'actuation',
+        ) if getattr(state, module)))
         stopped = False
         resumed = False
         written = []

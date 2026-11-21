@@ -26,7 +26,7 @@ def _running_engine(engine_service):
 class TestStimulationStart:
     def test_start_requires_no_unconsumed_event(self, stimulation_service, mock_engine):
         stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        mock_engine.event_bus.put_event.assert_not_called()
+        mock_engine.dispatch.assert_not_called()
         assert stimulation_service.is_active
 
     def test_start_sets_active_flag(self, stimulation_service):
@@ -76,7 +76,7 @@ class TestStimulationStart:
         with pytest.raises(RuntimeError, match="renderer unavailable"):
             stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
 
-        mock_engine.event_bus.put_event.assert_not_called()
+        mock_engine.dispatch.assert_not_called()
         manager.stop.assert_not_called()
         assert stimulation_service.is_active is False
 
@@ -95,13 +95,14 @@ class TestStimulationStart:
         engine_service._running = True
         assert not stimulation_service.is_active
         with pytest.raises(RuntimeError, match="Start stimulation"):
-            stimulation_service.handle_start_trial(StartStimTrialCommand())
+            stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
         stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         assert stimulation_service.is_active
 
     def test_applied_external_mode_does_not_require_a_managed_process_to_be_alive(
-        self, stimulation_service, engine_service,
+        self, stimulation_service, engine_service, mock_engine,
     ):
+        mock_engine.is_peer_connected.return_value = True
         stimulation_service._process_manager = MagicMock(auto_spawn=True, is_alive=False)
         engine_service._applied_snapshot = {"STIMULATION.auto_spawn": False}
         stimulation_service._active_identity = (None, None)
@@ -122,7 +123,7 @@ class TestStimulationStart:
         engine_service.is_peer_connected.return_value = True
         assert not stimulation_service.is_active
         with pytest.raises(RuntimeError, match="Start stimulation"):
-            stimulation_service.handle_start_trial(StartStimTrialCommand())
+            stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
         stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
         assert stimulation_service.is_active
         engine_service._applied_snapshot["CONFIG.module_revisions"].update(acquisition="changed", processing="changed")
@@ -164,7 +165,7 @@ class TestStimulationStop:
     def test_stop_dispatches_event(self, stimulation_service, mock_engine):
         stimulation_service._active_identity = (None, None)
         stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        event = mock_engine.event_bus.put_event.call_args[0][0]
+        event = mock_engine.dispatch.call_args[0][0]
         assert event.type == EventType.StopStimulation
 
     def test_stop_clears_active_flag(self, stimulation_service):
@@ -185,7 +186,9 @@ class TestStimulationStop:
             stimulation_service.handle_stop_stimulation(StopStimulationCommand())
 
         manager.stop.assert_called_once_with()
-        assert stimulation_service.is_active is False
+        assert stimulation_service._active_identity == (None, None)
+        with pytest.raises(RuntimeError, match="unconfirmed"):
+            stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
 
     def test_managed_stop_can_recover_after_foundation_stops(
         self, stimulation_service, engine_service,
@@ -222,8 +225,9 @@ class TestStimulationStop:
         assert not engine_service.admission.requires_recovery("stimulation")
 
     def test_external_stop_timeout_preserves_unknown_active_state(
-        self, stimulation_service
+        self, stimulation_service, mock_engine,
     ):
+        mock_engine.is_peer_connected.return_value = True
         manager = MagicMock()
         manager.auto_spawn = False
         broker = MagicMock()
@@ -253,7 +257,7 @@ class TestStimulationStop:
             stimulation_service.handle_stop_stimulation(StopStimulationCommand())
         broker.request.assert_called_once_with(EventType.StopStimulation)
         manager.stop.assert_not_called()
-        mock_engine.event_bus.put_event.assert_not_called()
+        mock_engine.dispatch.assert_not_called()
 
     def test_failed_stop_quarantines_only_stimulation_until_confirmed_retry(
         self, stimulation_service, engine_service,
@@ -283,15 +287,15 @@ class TestStimulationTrial:
         stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
 
     def test_trial_dispatches_event(self, stimulation_service, mock_engine):
-        stimulation_service.handle_start_trial(StartStimTrialCommand())
-        event = mock_engine.event_bus.put_event.call_args[0][0]
+        stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
+        event = mock_engine.dispatch.call_args[0][0]
         assert event.type == EventType.StartStimTrial
 
     def test_trial_with_params(self, stimulation_service, mock_engine):
         stimulation_service.handle_start_trial(
-            StartStimTrialCommand(n_trials=1, trial_params=[5]))
-        event = mock_engine.event_bus.put_event.call_args[0][0]
-        assert event.data == {"n_trials": 1, "trial_params": [5]}
+            StartStimTrialCommand(n_trials=1, trial_params=[{"event_id": 5}]))
+        event = mock_engine.dispatch.call_args[0][0]
+        assert event.data == {"n_trials": 1, "trial_params": [{"event_id": 5}]}
 
     def test_trial_waits_for_correlated_execution_result(
         self, stimulation_service
@@ -300,12 +304,12 @@ class TestStimulationTrial:
         stimulation_service._command_results = broker
 
         stimulation_service.handle_start_trial(
-            StartStimTrialCommand(n_trials=1, trial_params=[5])
+            StartStimTrialCommand(n_trials=1, trial_params=[{"event_id": 5}])
         )
 
         broker.request.assert_called_once_with(
             EventType.StartStimTrial,
-            {"n_trials": 1, "trial_params": [5]},
+            {"n_trials": 1, "trial_params": [{"event_id": 5}]},
         )
 
 
@@ -314,6 +318,17 @@ def test_connected_external_node_cannot_run_trials_before_enable(stimulation_ser
     broker = MagicMock()
     stimulation_service._command_results = broker
     with pytest.raises(RuntimeError, match="Start stimulation"):
-        stimulation_service.handle_start_trial(StartStimTrialCommand())
+        stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
     broker.request.assert_not_called()
-    mock_engine.event_bus.put_event.assert_not_called()
+    mock_engine.dispatch.assert_not_called()
+
+
+def test_failed_managed_stop_retains_identity(stimulation_service, engine_service):
+    manager = MagicMock(auto_spawn=True)
+    manager.stop.side_effect = RuntimeError("cleanup not confirmed")
+    stimulation_service._process_manager = manager
+    stimulation_service._active_identity = ("generation", "revision")
+    with pytest.raises(RuntimeError, match="cleanup not confirmed"):
+        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
+    assert stimulation_service._active_identity == ("generation", "revision")
+    assert stimulation_service._stop_managed is True

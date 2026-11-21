@@ -1,4 +1,5 @@
 """HTTP values for offline package installation and installed inventory."""
+from typing import Literal
 from pydantic import BaseModel, Field
 
 from omnibci.presentation.schemas.plugin_config import PluginKind, PluginSelectionResponse
@@ -24,6 +25,8 @@ class PackageVersionResponse(BaseModel):
     label: str
     description: str | None
     sha256: str | None
+    origin: Literal["local", "market", "development"] | None
+    verified_repository: str | None = Field(description="Repository accepted at installation; not a current online trust check")
     contributions: list[PackageContributionResponse]
     enabled: bool
     available: bool

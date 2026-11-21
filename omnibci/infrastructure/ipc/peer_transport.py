@@ -23,6 +23,7 @@ from typing import Callable, Optional
 from omnibci.shared.events import Event
 from omnibci.infrastructure.ipc.network import NetworkServer, NetworkClient
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
+from omnibci.application.plugin_execution import PluginExecutionReceipt
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ class ListenTransport(PeerTransport):
         idle_timeout: float | None = None,
         write_timeout: float | None = None,
         identity: PeerIdentity | None = None,
+        record_execution=None,
     ) -> None:
         timeout_options = {
             name: value
@@ -86,6 +88,8 @@ class ListenTransport(PeerTransport):
         }
         if identity is not None:
             timeout_options["identity"] = identity
+        if record_execution is not None:
+            timeout_options["record_execution"] = record_execution
         self._server = NetworkServer(
             host=host,
             port=port,
@@ -165,7 +169,7 @@ class ConnectTransport(PeerTransport):
         reconnect_max: float = 10.0,
         idle_timeout: float | None = None,
         write_timeout: float | None = None,
-        identity: PeerIdentity | None = None,
+        receipt: PluginExecutionReceipt | None = None,
         reconnect: bool = True,
         on_disconnect: Callable[[], None] | None = None,
     ) -> None:
@@ -174,8 +178,8 @@ class ConnectTransport(PeerTransport):
             "reconnect_initial": reconnect_initial,
             "reconnect_max": reconnect_max,
         }
-        if identity is not None:
-            client_options["identity"] = identity
+        if receipt is not None:
+            client_options["receipt"] = receipt
         if not reconnect:
             client_options["reconnect"] = False
         client_options.update({

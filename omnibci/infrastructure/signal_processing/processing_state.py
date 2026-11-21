@@ -5,6 +5,8 @@ from dataclasses import replace
 from time import perf_counter
 
 from omnibci.domain.signal import SignalChunk
+from omnibci.domain.ports.algorithm import EpochBoundary
+from .arrays import readonly
 
 logger = logging.getLogger(__name__)
 
@@ -28,22 +30,19 @@ class ProcessingState:
             raise
 
     def _boundaries(self, chunk: SignalChunk):
-        """Read every boundary using the detector's first-marker interface."""
-        offset = 0
+        """Validate the entire batch before any epoch state changes."""
+        boundaries = self.context.detector.detect(readonly(chunk.raw_data))
         samples = chunk.raw_data.shape[1]
-        boundaries = []
-        while offset < samples:
-            remaining = chunk if offset == 0 else replace(chunk, raw_data=chunk.raw_data[:, offset:])
-            start_idx, event_id = self.context.detector.detect_start(remaining)
-            end_idx, _ = self.context.detector.detect_end(remaining)
-            positions = [index for index in (start_idx, end_idx) if index >= 0]
-            if not positions:
-                break
-            index = min(positions)
-            if index >= samples - offset:
-                raise ValueError("Epoch detector returned a boundary outside the signal chunk")
-            boundaries.append((offset + index, index == start_idx, event_id))
-            offset += index + 1
+        if not isinstance(boundaries, tuple) or len(boundaries) > 2 * samples:
+            raise ValueError("Epoch boundaries must be a tuple with at most 2*N entries")
+        previous = (-1, -1)
+        for boundary in boundaries:
+            if not isinstance(boundary, EpochBoundary) or boundary.offset >= samples:
+                raise ValueError("Epoch boundary outside the signal chunk or invalid boundary type")
+            key = (boundary.offset, 0 if boundary.kind == "end" else 1)
+            if key <= previous:
+                raise ValueError("Epoch boundaries must be ordered without duplicate kinds at an offset")
+            previous = key
         return boundaries
 
     def _process_chunk(self, chunk: SignalChunk, *, collecting: bool) -> None:
@@ -75,7 +74,8 @@ class ProcessingState:
 
         was_collecting = collecting
         opened = False
-        for position, (index, starts_epoch, event_id) in enumerate(boundaries):
+        for position, boundary in enumerate(boundaries):
+            index, starts_epoch, event_id = boundary.offset, boundary.kind == "start", boundary.event_id
             if collecting:
                 # Epochs opened in this chunk already end at this boundary.
                 if not opened:
@@ -99,13 +99,14 @@ class ProcessingState:
                 pre_trigger_data = self.context.pretrigger.take_pre_trigger_data(extra=chunk.data[:, :index])
                 # The start sample belongs to this epoch; the next boundary does
                 # not. A simultaneous end/start closes the old epoch first.
-                end = boundaries[position + 1][0] if position + 1 < len(boundaries) else chunk.raw_data.shape[1]
+                end = boundaries[position + 1].offset if position + 1 < len(boundaries) else chunk.raw_data.shape[1]
                 segment = chunk if end == chunk.raw_data.shape[1] else replace(chunk, raw_data=chunk.raw_data[:, :end])
                 try:
-                    self.context.current_epoch = self.context.new_epoch_processor()
+                    epoch = self.context.new_epoch_processor()
                 finally:
                     self.context.record_epoch_started(event_id, chunk.data.shape[0])
-                self.context.current_epoch.initialize_epoch(segment, index, event_id, pre_trigger_data=pre_trigger_data)
+                epoch.initialize_epoch(segment, index, event_id, pre_trigger_data=pre_trigger_data)
+                self.context.current_epoch = epoch
                 collecting = True
                 opened = True
 

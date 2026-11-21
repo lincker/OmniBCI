@@ -19,8 +19,9 @@ from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from tests.plugin_configuration_helpers import accept_profiles, builtin_selection
+from tests.plugin_configuration_helpers import accept_profiles, builtin_selection, install_package_root, prepare_runtime_plugins
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
+from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
 
 
 SOURCE = '''
@@ -29,9 +30,12 @@ import json
 from pathlib import Path
 import numpy as np
 from omnibci.sdk import SignalSource
+from omnibci.domain.ports.acquisition import SourceObservation, SourceCheckpoint
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 class Replay(SignalSource):
-    def __init__(self, *, parameters, context):
+    trigger_mode = "events"
+    resume_mode = "checkpoint"
+    def __init__(self, *, parameters, resource_root):
         super().__init__()
         self.size = parameters['size']
         self.sample_rate = parameters['sample_rate']
@@ -40,38 +44,32 @@ class Replay(SignalSource):
         self.path = parameters['log']
         self.cursor = 0
         self.restored = None
-    async def connect(self): self._is_connected = True; return True
-    async def disconnect(self): self._is_connected = False; return True
+    async def connect(self): pass
+    async def disconnect(self): pass
     async def start_stream(self):
         self.cursor = self.restored if self.restored is not None else 0
         self.restored = None
-        self._is_streaming = True
-        return True
-    async def stop_stream(self): self._is_streaming = False; return True
+    async def stop_stream(self): pass
     async def read_chunk(self):
         await asyncio.sleep(.01)
         self.cursor += self.size
         return np.zeros((2,self.size))
-    async def get_metadata(self) -> str:
-        return 'Test recording'
-    def describe_output(self, *, source_id, connection_id):
-        return SignalInfo(source_id, self.sample_rate,
-            (ChannelDescriptor(0, 'CH1', 'eeg', 'V'),), 1,
-            connection_id=connection_id, provenance='protocol-defined')
-    @property
-    def supports_checkpoint(self): return True
+    async def observe(self):
+        return SourceObservation(native_text='Test recording', signal_info=SignalInfo(self.sample_rate,
+            (ChannelDescriptor(0, 'CH1', 'eeg', 'V', channel_id='channel-0'),)),
+            native_event='final-row', provenance='protocol-defined')
     def checkpoint(self):
-        return {'source_identity': {'resource_id':'test-recording', 'revision':'immutable'}, 'cursor':self.cursor}
+        return SourceCheckpoint(resource_id='test-recording', resource_revision='immutable', state={'cursor':self.cursor})
     def restore_checkpoint(self, checkpoint):
-        self.restored = checkpoint['cursor']
+        self.restored = checkpoint.state['cursor']
         with Path(self.path).open('a') as output:
-            output.write(json.dumps(checkpoint) + '\\n')
+            output.write(json.dumps(checkpoint.state) + '\\n')
 '''
 
 
 def configured_profiles(tmp_path, monkeypatch, *, actuation_port=8001):
     root = tmp_path / 'plugins'
-    plugin = root / 'acquisition' / 'replay'
+    plugin = tmp_path / 'source-replay'
     plugin.mkdir(parents=True)
     monkeypatch.setenv('OMNIBCI_PLUGIN_DIR', str(root))
     (plugin / 'manifest.toml').write_text('''manifest_version=2
@@ -80,7 +78,7 @@ id="replay"
 domain="acquisition"
 publisher="test"
 version="1.0.0"
-api_version="2"
+api_version="1"
 [[contributions]]
 id="default"
 kind="acquisition"
@@ -99,6 +97,7 @@ schema_version=1
                        'channel_count':{'type':'integer','default':2}},
         'required':['size','log','sample_rate','channel_count'],
     }))
+    install_package_root(plugin)
     host = {'STIMULATION.auto_spawn':True,
             'ACTUATION.server_port':actuation_port, 'ALGORITHM.baseline_duration':0.0}
     profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / 'profiles'),
@@ -135,13 +134,16 @@ def wire_signal_preparation(profiles, engine, container):
 @pytest.mark.parametrize("processing_first", [False, True])
 async def test_current_actions_connect_and_start_processing_with_real_workers(tmp_path, monkeypatch, processing_first):
     profiles, _ = configured_profiles(tmp_path, monkeypatch)
-    engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build())
+    history = PluginExecutionHistory(profiles.repository.root)
+    engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(
+        settings_snapshot=snapshot, execution_history_root=profiles.repository.root).build(),
+                                plugin_preparer=prepare_runtime_plugins)
     await engine.startup()
     container = assemble(engine, admission=engine.admission)
     signal = wire_signal_preparation(profiles, engine, container)
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
-                                          container.stimulation_service, container.command_results,
+                                          container.stimulation_service, container.command_results, repository=profiles.repository,
                                           signal_preparer=signal.prepare, signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
 
@@ -174,10 +176,17 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
             standby = await runtime.execute_current("processing", "start", operation_id=str(uuid4()), configuration=current("processing"))
             assert standby["status"] == "succeeded", standby
             assert engine.is_module_running("processing") and not engine.is_module_running("acquisition")
+            assert not list(history.directory.glob("*.json"))
         connected = await runtime.execute_current("acquisition", "connect", operation_id=str(uuid4()), configuration=source)
         assert connected["status"] == "succeeded", connected
         assert connected["result"]["action"] == "connected"
         assert engine.is_engine_ready and engine.is_module_running("acquisition")
+        records = [json.loads(path.read_text())["receipt"] for path in history.directory.glob("*.json")]
+        source_records = [record for record in records if record["module"] == "acquisition"]
+        assert len(source_records) == 1
+        assert source_records[0]["generation"] == engine.generation
+        assert source_records[0]["artifacts"]["acquisition.source"]["content_sha256"] == (
+            engine.applied_snapshot["PLUGINS.artifacts"]["acquisition.source"]["content_sha256"])
         assert engine.is_module_running("processing") is processing_first
         assert engine.admission.recovery_status == {"stimulation": "External output stop is unconfirmed"}
         assert not engine.is_peer_connected("stimulation")
@@ -197,6 +206,15 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
                                    connection_id=status.connection_id)
         assert container.acquisition_service.is_streaming
         assert engine._engine.data_manager.processing_active.is_set()
+        records = [json.loads(path.read_text())["receipt"] for path in history.directory.glob("*.json")]
+        processing_records = [record for record in records if record["module"] == "processing"]
+        assert processing_records
+        assert all(record["generation"] == generation for record in processing_records)
+        assert all(set(record["artifacts"]) == {"processing.decoder", "processing.epoch_detector"}
+                   for record in processing_records)
+        assert all(record["artifacts"]["processing.decoder"]["content_sha256"] == (
+            engine.applied_snapshot["PLUGINS.artifacts"]["processing.decoder"]["content_sha256"])
+                   for record in processing_records)
     finally:
         await engine.handle_stop_engine(StopEngineCommand())
 
@@ -206,6 +224,7 @@ async def test_current_actions_connect_and_start_processing_with_real_workers(tm
 async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candidate_rolls_back(tmp_path, monkeypatch, unused_tcp_port):
     profiles, bindings = configured_profiles(tmp_path, monkeypatch, actuation_port=unused_tcp_port)
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+                                plugin_preparer=prepare_runtime_plugins,
                                 snapshot_provider=lambda: accepted_runtime_settings(profiles=profiles))
     await engine.startup()
     container = assemble(engine, admission=engine.admission)
@@ -213,7 +232,7 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, signal_preparer=signal.prepare,
+                                          container.command_results, repository=profiles.repository, signal_preparer=signal.prepare,
                                           signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     try:
@@ -227,7 +246,9 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         })
         assert started["status"] == "succeeded", started
         async with engine.runtime_transition("acquisition"):
-            await engine.start_module_for_configuration("acquisition", engine.applied_snapshot)
+            prepared = engine.prepare_plugins(engine.applied_snapshot, ("acquisition",))
+            await engine.start_module_for_configuration("acquisition", prepared)
+            engine.acknowledge_configuration(prepared, modules=("acquisition",))
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         await asyncio.sleep(.08)

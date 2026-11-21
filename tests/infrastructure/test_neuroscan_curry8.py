@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import asyncio
 import json
 import struct
@@ -166,13 +167,13 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    driver = Curry8DataReader(host="127.0.0.1", port=port, timeout=1.0, parameters={})
+    driver = Curry8DataReader(parameters={'DATA_PROVIDER_IP': '127.0.0.1', 'DATA_PROVIDER_PORT': port, 'timeout': 1.0}, resource_root=Path(__file__).parent)
 
     try:
-        assert await driver.connect() is True
-        metadata = await driver.get_metadata()
-        assert isinstance(metadata, str)
-        assert json.loads(metadata) == {
+        assert await driver.connect() is None
+        metadata = await driver.observe()
+        assert isinstance(metadata.native_text, str)
+        assert json.loads(metadata.native_text) == {
             "protocol_version": 803,
             "channel_count": 4,
             "sample_rate": 1000,
@@ -181,13 +182,13 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
             "allow_recording_control": False,
             "channel_labels": ["Fz", "Cz", "Pz", "Trigger"],
         }
-        descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
+        descriptor = metadata.signal_info
         assert descriptor.signal_channel_count == 3
         assert descriptor.output_row_count == 4
         assert descriptor.trigger_row_index == 3
-        assert descriptor.native_event == "final-row"
+        assert metadata.native_event == "final-row"
         assert [channel.name for channel in descriptor.channels] == ["Fz", "Cz", "Pz"]
-        assert await driver.start_stream() is True
+        assert await driver.start_stream() is None
 
         if compressed:
             with pytest.raises(Curry8ProtocolError, match="Compressed"):
@@ -200,11 +201,11 @@ async def _run_fake_server_scenario(*, compressed: bool = False):
                 np.asarray([[4.0], [40.0], [400.0], [9.0]], dtype=np.float32),
             )
 
-        assert await driver.stop_stream() is True
-        assert await driver.disconnect() is True
+        assert await driver.stop_stream() is None
+        assert await driver.disconnect() is None
         await asyncio.wait_for(server_done, timeout=1.0)
     finally:
-        if driver.is_connected:
+        if driver._is_connected:
             await driver.disconnect()
         server.close()
         await server.wait_closed()
@@ -235,7 +236,7 @@ def test_header_uses_the_20_byte_network_order_layout():
 async def test_single_data_packet_extracts_low_byte_triggers_without_waiting_for_next_block(
     protocol_version, data_size, dtype, raw_events,
 ):
-    driver = Curry8DataReader(host="127.0.0.1", port=4455, parameters={})
+    driver = Curry8DataReader(parameters={'DATA_PROVIDER_IP': '127.0.0.1', 'DATA_PROVIDER_PORT': 4455}, resource_root=Path(__file__).parent)
     driver._is_connected = driver._is_streaming = True
     driver._metadata = Curry8Metadata(
         protocol_version=protocol_version,
@@ -265,7 +266,7 @@ async def test_single_data_packet_extracts_low_byte_triggers_without_waiting_for
 
 @pytest.mark.asyncio
 async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separate():
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver._is_connected = True
     driver._protocol_version = 803
     driver._request_info = AsyncMock(side_effect=[
@@ -275,37 +276,37 @@ async def test_metadata_requeries_the_stopped_device_and_keeps_event_rows_separa
         _channel_info(("C3", "C4", "Trigger")),
     ])
 
-    first = await driver.get_metadata()
-    first_descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
-    refreshed = await driver.get_metadata()
-    refreshed_descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
+    first = await driver.observe()
+    first_descriptor = first.signal_info
+    refreshed = await driver.observe()
+    refreshed_descriptor = refreshed.signal_info
 
-    assert json.loads(first)["channel_count"] == first_descriptor.output_row_count == 4
+    assert json.loads(first.native_text)["channel_count"] == first_descriptor.output_row_count == 4
     assert first_descriptor.signal_channel_count == 3
-    assert json.loads(refreshed)["sample_rate"] == refreshed_descriptor.sample_rate == 500
-    assert json.loads(refreshed)["channel_count"] == refreshed_descriptor.output_row_count == 3
+    assert json.loads(refreshed.native_text)["sample_rate"] == refreshed_descriptor.sample_rate == 500
+    assert json.loads(refreshed.native_text)["channel_count"] == refreshed_descriptor.output_row_count == 3
     assert refreshed_descriptor.signal_channel_count == 2
-    assert json.loads(refreshed)["channel_labels"] == ["C3", "C4", "Trigger"]
+    assert json.loads(refreshed.native_text)["channel_labels"] == ["C3", "C4", "Trigger"]
     assert [channel.name for channel in refreshed_descriptor.channels] == ["C3", "C4"]
     assert refreshed_descriptor.trigger_row_index == 2
-    assert refreshed_descriptor.native_event == "final-row"
-    assert "signal_channel_count" not in refreshed
-    assert "native_event" not in refreshed
-    assert "provenance" not in refreshed
+    assert refreshed.native_event == "final-row"
+    assert "signal_channel_count" not in refreshed.native_text
+    assert "native_event" not in refreshed.native_text
+    assert "provenance" not in refreshed.native_text
     assert driver._request_info.await_args_list == [
         call(ClientRequest.BASIC_INFO, InfoType.BASIC_INFO),
         call(ClientRequest.CHANNEL_INFO, InfoType.CHANNEL_INFO),
     ] * 2
 
     driver._is_streaming = True
-    assert await driver.get_metadata() == refreshed
-    assert driver.describe_output(source_id=driver.plugin_type, connection_id="connection") == refreshed_descriptor
+    with pytest.raises(RuntimeError, match="Stop the CURRY stream"):
+        await driver.observe()
     assert driver._request_info.await_count == 4
 
 
 @pytest.mark.asyncio
-async def test_output_description_requires_successful_metadata_and_never_queries_socket():
-    driver = Curry8DataReader(parameters={})
+async def test_failed_observation_clears_previous_device_metadata():
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver._is_connected = True
     driver._protocol_version = 803
     driver._request_info = AsyncMock(side_effect=[
@@ -313,37 +314,32 @@ async def test_output_description_requires_successful_metadata_and_never_queries
         _channel_info(("C3", "C4", "Trigger")),
         Curry8ProtocolError("Invalid device reply"),
     ])
-    with pytest.raises(RuntimeError, match="Get CURRY metadata"):
-        driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
-    driver._request_info.assert_not_awaited()
-
-    await driver.get_metadata()
-    descriptor = driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
+    observation = await driver.observe()
+    descriptor = observation.signal_info
     assert descriptor.signal_channel_count == 2
     assert driver._request_info.await_count == 2
 
     with pytest.raises(Curry8ProtocolError, match="Invalid device reply"):
-        await driver.get_metadata()
-    with pytest.raises(RuntimeError, match="Get CURRY metadata"):
-        driver.describe_output(source_id=driver.plugin_type, connection_id="connection")
+        await driver.observe()
+    assert driver._metadata is None
     assert driver._request_info.await_count == 3
 
 
 @pytest.mark.asyncio
 async def test_metadata_without_a_streaming_cache_never_reads_the_stream_socket():
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver._is_connected = driver._is_streaming = True
     driver._request_info = AsyncMock()
 
     with pytest.raises(RuntimeError, match="Stop the CURRY stream"):
-        await driver.get_metadata()
+        await driver.observe()
 
     driver._request_info.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_stopped_metadata_skips_queued_stream_packets():
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver._is_connected = driver._is_streaming = True
     driver._protocol_version = 803
     driver.reader = asyncio.StreamReader()
@@ -358,24 +354,24 @@ async def test_stopped_metadata_skips_queued_stream_packets():
     ]))
 
     await driver.stop_stream()
-    metadata = await driver.get_metadata()
+    metadata = await driver.observe()
 
-    assert json.loads(metadata)["channel_count"] == 3
-    assert json.loads(metadata)["sample_rate"] == 1000
-    assert json.loads(metadata)["channel_labels"] == ["Fz", "Cz", "Trigger"]
+    assert json.loads(metadata.native_text)["channel_count"] == 3
+    assert json.loads(metadata.native_text)["sample_rate"] == 1000
+    assert json.loads(metadata.native_text)["channel_labels"] == ["Fz", "Cz", "Trigger"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code,message", [(99, "Unexpected packet"), (DataCode.EEG, "Timed out")])
 async def test_stopped_metadata_rejects_unexpected_or_missing_reply(code, message):
-    driver = Curry8DataReader(parameters={}, timeout=0.01)
+    driver = Curry8DataReader(parameters={'timeout': 0.01}, resource_root=Path(__file__).parent)
     driver._is_connected = True
     driver.reader = asyncio.StreamReader()
     driver.writer = MagicMock(drain=AsyncMock())
     driver.reader.feed_data(_packet(b"DATA", code, BlockType.FLOAT32, np.zeros(3, dtype="<f4").tobytes()))
 
     with pytest.raises(Curry8ProtocolError, match=message):
-        await driver.get_metadata()
+        await driver.observe()
 
 
 def test_stream_lifecycle_preserves_native_trigger_row_and_ignores_event_packets():

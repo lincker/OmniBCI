@@ -25,7 +25,13 @@ def test_only_current_engine_channel_fault_stops_node(node_class, peer, channel_
     app._reconnect_requested = False
     app._paused = False
     app.should_stop = False
-    asyncio.run(app.start())
+    if node_class is Actuation:
+        app._device_executor = None
+    try:
+        asyncio.run(app.start())
+    finally:
+        if node_class is Actuation and app._device_executor is not None:
+            app._device_executor.shutdown(wait=True)
     subscriptions = {
         call.kwargs["event_type"]: call.kwargs["handler"]
         for call in app.event_bus.register_event_listener.call_args_list

@@ -1,0 +1,120 @@
+"""Signal metadata fails early without changing sample ownership or snapshots."""
+import numpy as np
+import pytest
+
+from omnibci.domain.epoch import Epoch
+from omnibci.domain.signal import SignalChunk
+
+
+@pytest.mark.parametrize("field", ["timestamp", "sequence_id"])
+@pytest.mark.parametrize("value", [True, np.bool_(False), -1, 0.0, 1.5, np.nan, np.inf, "1", np.array(1)])
+def test_chunk_requires_nonnegative_integer_metadata(field, value):
+    fields = {"timestamp": 0, "sequence_id": 0, "raw_data": np.zeros((2, 3))}
+    fields[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        SignalChunk(**fields)
+
+
+@pytest.mark.parametrize("kind", ["chunk", "epoch"])
+@pytest.mark.parametrize("data", [
+    [[1, 2], [3, 4]],
+    np.zeros((2, 3), dtype=bool),
+    np.zeros((2, 3), dtype=complex),
+    np.zeros((2, 3), dtype=object),
+    np.full((2, 3), "1"),
+])
+def test_signal_values_require_real_numeric_arrays(kind, data):
+    with pytest.raises(TypeError, match="array|dtype"):
+        if kind == "chunk":
+            SignalChunk(0, 0, data)
+        else:
+            Epoch(data, event_id=1, sample_rate=250, channel_count=2)
+
+
+@pytest.mark.parametrize("shape", [(3,), (2, 2, 2)])
+@pytest.mark.parametrize("kind", ["chunk", "epoch"])
+def test_signal_values_reject_non_matrix_shapes(kind, shape):
+    data = np.zeros(shape)
+    with pytest.raises(ValueError, match="2-D"):
+        if kind == "chunk":
+            SignalChunk(0, 0, data)
+        else:
+            Epoch(data, event_id=1, sample_rate=250, channel_count=2)
+
+
+def test_chunk_requires_a_signal_row_and_an_event_row():
+    with pytest.raises(ValueError, match="2 rows"):
+        SignalChunk(0, 0, np.zeros((1, 3)))
+
+
+@pytest.mark.parametrize("dtype", [np.int16, np.uint32, np.float32, np.float64])
+def test_chunk_keeps_borrowed_storage_and_views(dtype):
+    backing = np.arange(12, dtype=dtype).reshape(3, 4)
+    raw = backing[:, ::2]
+    raw.flags.writeable = False
+
+    chunk = SignalChunk(1_700_000_000_000_000_001, 0, raw)
+
+    assert chunk.timestamp == 1_700_000_000_000_000_001
+    assert chunk.raw_data is raw
+    assert np.shares_memory(chunk.data, backing)
+    assert np.shares_memory(chunk.triggers, backing)
+    assert not chunk.raw_data.flags.writeable
+
+
+def test_chunk_allows_nan_samples_and_empty_internal_slices():
+    raw = np.array([[np.nan, 1.0], [0.0, 7.0]])
+    chunk = SignalChunk(0, 0, raw)
+    empty = SignalChunk(0, 0, raw[:, :0])
+
+    assert np.isnan(chunk.data[0, 0])
+    assert empty.raw_data.shape == (2, 0)
+
+
+@pytest.mark.parametrize("field", ["event_id", "sample_rate", "channel_count", "trigger_offset"])
+@pytest.mark.parametrize("value", [True, np.bool_(True), 1.0, 1.5, np.nan, np.inf, "1", np.array(1)])
+def test_epoch_requires_integer_metadata_before_slicing(field, value):
+    fields = {"event_id": 1, "sample_rate": 250, "channel_count": 1, "trigger_offset": 0}
+    fields[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        Epoch(np.zeros((1, 3)), **fields)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("event_id", 0), ("event_id", -1),
+    ("sample_rate", 0), ("sample_rate", -1),
+    ("channel_count", 0), ("channel_count", -1),
+    ("trigger_offset", -1), ("trigger_offset", 3),
+])
+def test_epoch_rejects_out_of_range_metadata(field, value):
+    fields = {"event_id": 1, "sample_rate": 250, "channel_count": 1, "trigger_offset": 0}
+    fields[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        Epoch(np.zeros((1, 3)), **fields)
+
+
+@pytest.mark.parametrize("data,channel_count", [(np.zeros((1, 0)), 1), (np.zeros((2, 3)), 1)])
+def test_epoch_rejects_empty_or_inconsistent_layout(data, channel_count):
+    with pytest.raises(ValueError):
+        Epoch(data, event_id=1, sample_rate=250, channel_count=channel_count)
+
+
+def test_epoch_owns_a_read_only_snapshot_with_nan_equality():
+    data = np.array([[np.nan, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    expected = data.copy()
+    epoch = Epoch(data, event_id=1, sample_rate=250, channel_count=2, trigger_offset=1)
+    same = Epoch(expected, event_id=1, sample_rate=250, channel_count=2, trigger_offset=1)
+    data[:] = 0
+
+    assert epoch == same
+    assert hash(epoch) == hash(same)
+    assert epoch.duration_samples == 3
+    assert epoch.duration_seconds == 3 / 250
+    np.testing.assert_array_equal(epoch.pre_trigger_data, expected[:, :1])
+    np.testing.assert_array_equal(epoch.window, expected[:, 1:])
+    assert not np.shares_memory(epoch.data, data)
+    with pytest.raises(ValueError):
+        epoch.data[0, 0] = 0

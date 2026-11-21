@@ -9,14 +9,14 @@ import numpy as np
 
 import pytest
 
-from omnibci.application.events import CommandRequest, ProcessingInputStart, StreamBarrier, StreamDrainReceipt
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart, StreamBarrier, StreamDrainReceipt
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand, AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.neuroengine.gateway.peer_gateway import PeerGateway
 from tests.neuroengine.test_module_peer_reconfiguration import config
 from tests.neuroengine.test_peer_gateway import FakeBus, FakeTransport
-from tests.neuroengine.test_channel_mapping import _plan, _processor, _receipt
+from tests.neuroengine.test_channel_mapping import _observation, _plan, _processor, _receipt
 from tests.neuroengine.test_neuro_engine import _make_engine
 from omnibci.infrastructure.signal_processing import signal_configuration
 from omnibci.shared.events import Event, EventType
@@ -33,17 +33,17 @@ def test_input_boundary_is_delivered_when_sample_gate_is_closed():
 async def test_source_can_start_without_processing_preparation():
     gate = ThreadEvent()
     gate.set()
-    source = SimpleNamespace(is_connected=True, is_streaming=False,
+    source = SimpleNamespace(trigger_mode="events", resume_mode="restart-only", connect=AsyncMock(),
                              start_stream=AsyncMock(), read_chunk=AsyncMock())
-    source.start_stream.side_effect = lambda: setattr(source, "is_streaming", True)
     acquisition = AcquisitionRuntime(
         source, Queue(), DataManager(Queue(), gate), source_id="test",
         processing_active=gate,
     )
     acquisition.fetch = AsyncMock()
+    await acquisition._on_connect()
     await acquisition._on_start_stream()
     await acquisition.fetch_task
-    assert source.is_streaming
+    assert acquisition._streaming
 
 
 @pytest.mark.asyncio
@@ -70,24 +70,39 @@ def input_pair(monkeypatch, data=None):
         data = DataManager(Queue(), processing_active=ThreadEvent())
     gate = data.processing_active
     events = []
-    source = SimpleNamespace(is_connected=True, is_streaming=True,
+    source = SimpleNamespace(trigger_mode="events", resume_mode="restart-only",
                              start_stream=AsyncMock(), stop_stream=AsyncMock())
     acquisition = AcquisitionRuntime(
         source, Queue(), data, SimpleNamespace(put_event=events.append),
-        source_id=plan.source.source_id,
+        source_id="test-source",
         processing_active=gate, generation="generation-one", engine_revision="engine",
         acquisition_revision=plan.acquisition_revision,
     )
-    acquisition.connection_id = plan.source.connection_id
-    acquisition._descriptor = plan.source
+    acquisition.connection_id = "connection-one"
+    acquisition._connected = acquisition._streaming = True
+    acquisition._observation = _observation(plan)
     processor = _processor(plan)
     processor.data_manager = data
     processor.event_bus = SimpleNamespace(put_event=events.append)
-    monkeypatch.setattr(signal_configuration, "load_signal_pipeline", MagicMock(return_value=(object(), object(), [])))
+    monkeypatch.setattr(signal_configuration, "load_signal_pipeline", MagicMock(return_value=(MagicMock(), object(), [])))
     receipt = {**_receipt(plan), "input_id": "input-one"}
     processor._prepare_signal(CommandRequest("prepare", {"plan": plan.to_dict(), "receipt": receipt}))
     assert events.pop().data.ok
     return acquisition, processor, data, receipt, events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [("connection_id", "stale-connection"),
+                                         ("source_fingerprint", "f" * 64)])
+async def test_source_owner_rejects_stale_preparation_before_any_input_delivery(monkeypatch, field, value):
+    acquisition, processor, data, receipt, events = input_pair(monkeypatch)
+    stale = {**receipt, field: value}
+    await acquisition.execute((AcquisitionCommand.attach_processing, CommandRequest("attach", stale)))
+    assert events[-1].data.error_code == "PROCESSING_INPUT_REJECTED"
+    assert not data.has_consumer
+    data.put_data(SignalChunk(0, 1, np.zeros((4, 3))))
+    assert data.get_data(0) is None
+    assert processor._signal_receipt.to_dict() == receipt
 
 
 @pytest.mark.asyncio
@@ -116,20 +131,20 @@ async def test_attach_and_detach_use_fifo_without_stopping_source_or_replaying_g
     assert not processor._input_attached
     assert data.empty()
     receipt = {**receipt, "input_id": "input-two"}
-    processor._signal_receipt = receipt
+    processor._signal_receipt = SignalPreparationReceipt.from_value(receipt)
     await acquisition.execute((AcquisitionCommand.attach_processing, CommandRequest("reattach", receipt)))
     await processor.next_chunk()
     assert processor._last_sequence == 6
     assert events.pop().data.ok
     acquisition.data_source.stop_stream.assert_not_called()
     acquisition.data_source.start_stream.assert_not_called()
-    assert acquisition.data_source.is_streaming
+    assert acquisition._streaming
 
 
 @pytest.mark.asyncio
 async def test_unprepared_or_stale_input_does_not_reach_processing(monkeypatch):
     acquisition, processor, data, receipt, events = input_pair(monkeypatch)
-    data.buffer.put(ProcessingInputStart("stale", {**receipt, "input_id": "old-input"}, 10))
+    data.buffer.put(ProcessingInputStart("stale", SignalPreparationReceipt.from_value({**receipt, "input_id": "old-input"}), 10))
     await processor.next_chunk()
     assert not events.pop().data.ok
     data.buffer.put(SignalChunk(0, 11, np.zeros((4, 3))))
@@ -189,13 +204,13 @@ def test_source_reset_rejects_old_identity_and_preserves_processing_runtime(monk
         "expected_acquisition_revision": "old-source",
     }))
     assert not events.pop().data.ok
-    assert processor._signal_receipt == receipt
+    assert processor._signal_receipt.to_dict() == receipt
     processor._reset_input(CommandRequest("old-input-fault", {
         "generation": "generation-one", "engine_revision": "engine",
         "expected_acquisition_revision": receipt["acquisition_revision"], "input_id": "old-input",
     }))
     assert not events.pop().data.ok
-    assert processor._signal_receipt == receipt
+    assert processor._signal_receipt.to_dict() == receipt
     processor._reset_input(CommandRequest("source-exited", {
         "generation": "generation-one", "engine_revision": "engine",
         "expected_acquisition_revision": receipt["acquisition_revision"],
@@ -213,14 +228,14 @@ async def test_full_processing_queue_does_not_stop_acquisition_or_preview():
     gate.set()
     data = DataManager(Queue(maxsize=1), gate)
     events = []
-    source = SimpleNamespace(is_connected=True, is_streaming=True,
+    source = SimpleNamespace(trigger_mode="events", resume_mode="restart-only",
                              read_chunk=AsyncMock(side_effect=[np.zeros((2, 3)) for _ in range(3)] + [None]),
                              stop_stream=AsyncMock())
     source.stop_stream.side_effect = lambda: setattr(source, "is_streaming", False)
     acquisition = AcquisitionRuntime(source, Queue(), data, SimpleNamespace(put_event=events.append),
                                      source_id="source", generation="run", engine_revision="engine",
                                      acquisition_revision="acquisition", processing_active=gate)
-    acquisition._processing_receipt = {"input_id": "input-one"}
+    acquisition._processing_receipt = SignalPreparationReceipt.from_value({**_receipt(_plan()), "input_id": "input-one"})
     acquisition.preview = SimpleNamespace(active=True, offer=MagicMock(), finish=MagicMock())
     await acquisition.fetch()
     assert source.read_chunk.await_count == 4

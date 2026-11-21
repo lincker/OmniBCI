@@ -10,6 +10,8 @@ Covers:
 """
 from __future__ import annotations
 
+from pathlib import Path
+from tests.processing_helpers import prepared_signal
 import numpy as np
 import pytest
 
@@ -32,23 +34,37 @@ def _chunk(window: np.ndarray) -> SignalChunk:
     """
     trigger_row = np.zeros((1, window.shape[1]))
     raw = np.concatenate([window, trigger_row], axis=0)
-    return SignalChunk(timestamp=0.0, sequence_id=0, raw_data=raw)
+    return SignalChunk(timestamp=0, sequence_id=0, raw_data=raw)
 
 
 class _ConstDecoder(Decoder):
     """Decodes immediately, echoing how many samples it was handed."""
+
+    def setup(self):
+        pass
+
+    def teardown(self):
+        pass
+
     def should_decode(self, window):
         return window.shape[1] > 0
 
-    def decode(self, window, latest_samples=None):
+    def decode(self, window, *, latest_raw_segment):
         return Prediction(target_id=window.shape[1])  # target_id == window length
 
-    def for_new_epoch(self):
-        return self
+    def begin_epoch(self):
+        pass
 
 
 class _CaptureDecoder(Decoder):
     """Records the exact array handed to decode() so filtering can be asserted."""
+
+    def setup(self):
+        pass
+
+    def teardown(self):
+        pass
+
     def __init__(self):
         super().__init__()
         self.seen = None
@@ -56,12 +72,12 @@ class _CaptureDecoder(Decoder):
     def should_decode(self, window):
         return window.shape[1] > 0
 
-    def decode(self, window, latest_samples=None):
+    def decode(self, window, *, latest_raw_segment):
         self.seen = np.asarray(window).copy()
         return Prediction(target_id=0)
 
-    def for_new_epoch(self):
-        return self
+    def begin_epoch(self):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -199,29 +215,25 @@ class TestBaselineCorrectionFilter:
         from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import (
             BaselineCorrection,
         )
-        return BaselineCorrection()
-
-    def _ctx(self, baseline):
-        from omnibci.domain.ports.algorithm import FilterContext
-        return FilterContext(sample_rate=1000, baseline=baseline)
+        return BaselineCorrection(resource_root=Path(__file__).parent, parameters={}, input_signal=prepared_signal(250))
 
     def test_subtracts_per_channel_baseline_mean(self):
         flt = self._filter()
         baseline = np.array([[1.0, 3.0], [10.0, 20.0]])      # means: 2, 15
         window = np.array([[5.0, 7.0], [30.0, 40.0]])
-        out = flt.apply(window, self._ctx(baseline))
+        out = flt.apply(window, pre_trigger_data=baseline)
         np.testing.assert_array_equal(out, np.array([[3.0, 5.0], [15.0, 25.0]]))
 
     def test_noop_when_baseline_none(self):
         flt = self._filter()
         window = np.ones((2, 4))
-        out = flt.apply(window, self._ctx(None))
+        out = flt.apply(window, pre_trigger_data=None)
         np.testing.assert_array_equal(out, window)
 
     def test_noop_when_baseline_empty(self):
         flt = self._filter()
         window = np.ones((2, 4))
-        out = flt.apply(window, self._ctx(np.zeros((2, 0))))
+        out = flt.apply(window, pre_trigger_data=np.zeros((2, 0)))
         np.testing.assert_array_equal(out, window)
 
 
@@ -242,7 +254,7 @@ class TestBaselineCorrectionInPipeline:
         from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import (
             BaselineCorrection,
         )
-        return BaselineCorrection()
+        return BaselineCorrection(resource_root=Path(__file__).parent, parameters={}, input_signal=prepared_signal(250))
 
 
 if __name__ == "__main__":

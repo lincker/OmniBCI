@@ -19,7 +19,7 @@ def runtime(tmp_path, monkeypatch):
                                     CatalogConfigurationAdapter())
     engine = NeuroEngineService(lambda _: pytest.fail("Selecting current values must not start an engine"))
     coordinator = RuntimeApplyCoordinator(engine, profiles, None,
-                                          SimpleNamespace(is_active=False, process_alive=False), None)
+                                          SimpleNamespace(is_active=False, process_alive=False), None, repository=profiles.repository)
     return RuntimeConfigurationService(profiles, engine, executor=coordinator)
 
 

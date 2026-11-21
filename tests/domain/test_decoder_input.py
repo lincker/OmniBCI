@@ -9,7 +9,7 @@ from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, comp
 
 
 def channels(*names, signal_type="eeg"):
-    return tuple(ChannelDescriptor(index=index, name=name, signal_type=signal_type, unit="uV")
+    return tuple(ChannelDescriptor(index=index, name=name, signal_type=signal_type, unit="uV", channel_id=f"channel-{index}")
                  for index, name in enumerate(names))
 
 
@@ -61,8 +61,7 @@ def test_defaults_are_suggestions_and_empty_defaults_allow_required_names():
 
 
 def test_unselected_channels_and_trigger_do_not_satisfy_output_requirements():
-    source = SignalInfo(source_id="reader", sample_rate=250,
-                                   channels=channels("O1", "Oz", "M1"), trigger_row_index=3)
+    source = SignalInfo(sample_rate=250, channels=channels("O1", "Oz", "M1"))
     plan = compile_processing_plan(source, ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)))
     with pytest.raises(ValueError, match="at least 2"):
         DecoderChannelRequirements(min_count=2).validate_channels(plan.output_channels)

@@ -2,17 +2,17 @@
 Actuator — device lifecycle for the actuation subsystem.
 
 Mirrors the plugin-loading part of stimulation's Stimulator: loads the
-Effector plugin pinned by the accepted activation and drives it through the domain port (setup / play / teardown).
+Effector plugin pinned by the accepted activation and drives its setup / execute / quiesce / teardown contract.
 No render loop — the actuator is command-driven.
 """
 
 import logging
 from copy import deepcopy
-from typing import Any, Mapping, Optional
+from typing import Mapping, Optional
 
 from omnibci.domain.ports.effector import Effector
+from omnibci.application.plugin_schema import validate_parameters
 from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -21,26 +21,23 @@ class Actuator:
     def __init__(
         self,
         *,
-        plugin_catalog: PluginCatalog | None = None,
         plugin_loader: type[PluginLoader] = PluginLoader,
         settings_snapshot: dict,
     ) -> None:
         self.effector: Optional[Effector] = None
-        self._plugin_catalog = (
-            plugin_catalog if plugin_catalog is not None else PluginCatalog()
-        )
+        self._command_schema = None
         self._plugin_loader = plugin_loader
         self._settings_snapshot = deepcopy(settings_snapshot)
 
     # ── Manifest-resolved plugin loading ──────────────────────────────────
 
     def _load_effector(self) -> Optional[Effector]:
-        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
-        return load_configured_plugin(
-            self._settings_snapshot, "actuation.effector", "effector", Effector,
-            catalog=self._plugin_catalog,
-            loader=self._plugin_loader,
+        from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
+        descriptor, parameters = resolve_configured_plugin(
+            self._settings_snapshot, "actuation.effector", "effector",
         )
+        self._command_schema = deepcopy(descriptor.payload_schemas["command"])
+        return self._plugin_loader.instantiate(descriptor, Effector, parameters=parameters)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -61,7 +58,8 @@ class Actuator:
             )
         self.effector = effector
         try:
-            effector.setup()
+            if effector.setup() is not None:
+                raise TypeError("Effector.setup must return None")
         except BaseException as setup_exc:
             # setup() may fail after opening a serial port, claiming a device,
             # or moving hardware into an intermediate state.  Always give the
@@ -74,7 +72,7 @@ class Actuator:
             raise
         logger.info("Actuator ready (effector=%s)", type(effector).__name__)
 
-    def execute(self, command: Mapping[str, Any]) -> None:
+    def execute(self, command: Mapping[str, object]) -> None:
         """Carry out one ActuationCommand payload via the effector.
 
         Exceptions propagate — the application loop translates them into an
@@ -82,16 +80,23 @@ class Actuator:
         """
         if self.effector is None:
             raise RuntimeError("Actuator.execute called before setup()")
-        self.effector.play(command)
+        if self._command_schema is None:
+            raise RuntimeError("Effector command schema has not been prepared")
+        payload = validate_parameters(self._command_schema, command, apply_defaults=False)
+        if self.effector.execute(payload) is not None:
+            raise TypeError("Effector.execute must return None")
 
     def teardown(self) -> None:
         """Release the device; safe to call when setup never completed."""
         if self.effector is not None:
-            self.effector.teardown()
+            if self.effector.teardown() is not None:
+                raise TypeError("Effector.teardown must return None")
             self.effector = None
+            self._command_schema = None
 
     def quiesce(self) -> None:
         """Require the driver to confirm prior outputs are finished or cancelled."""
         if self.effector is None:
             raise RuntimeError("Actuator.quiesce called before setup()")
-        self.effector.quiesce()
+        if self.effector.quiesce() is not None:
+            raise TypeError("Effector.quiesce must return None")

@@ -70,7 +70,7 @@ async def test_first_acquisition_apply_executes_without_preparing_an_experiment(
     acquisition, commands = Mock(), Mock()
     runtime.executor = RuntimeApplyCoordinator(
         runtime.engine, profiles, acquisition,
-        SimpleNamespace(is_active=False, process_alive=False), commands,
+        SimpleNamespace(is_active=False, process_alive=False), commands, repository=profiles.repository,
     )
     plan = runtime.plan("acquisition", [source_request(profiles)], expected_revision=None, settings={})
     operation = runtime.submit(plan.plan_id, str(uuid4()))

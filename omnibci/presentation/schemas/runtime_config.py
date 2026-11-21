@@ -94,6 +94,7 @@ class NodeConfigurationResponse(BaseModel):
     module_revisions: dict[str, str]
     engine_revision: str
     generation: str | None
+    operation_id: str | None
     settings: dict[str, Any]
     bindings: list[ProfileBindingResponse]
 

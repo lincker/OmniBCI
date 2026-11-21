@@ -40,6 +40,14 @@
       "items": {"type": "string"},
       "x-scope": "portable",
       "x-apply": "module"
+    },
+    "timeout": {
+      "type": "number",
+      "title": "Network timeout (s)",
+      "default": 5.0,
+      "minimum": 0,
+      "x-scope": "machine",
+      "x-apply": "module"
     }
   },
   "required": [

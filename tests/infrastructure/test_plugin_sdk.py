@@ -14,10 +14,11 @@ import pytest
 
 @pytest.mark.parametrize(("name", "module"), [
     ("SignalSource", "acquisition"), ("TriggerEmitter", "acquisition"),
-    ("Filter", "algorithm"), ("FilterContext", "algorithm"),
+    ("SourceObservation", "acquisition"), ("SourceCheckpoint", "acquisition"),
+    ("Filter", "algorithm"), ("EpochBoundary", "algorithm"),
     ("Decoder", "algorithm"), ("Prediction", "algorithm"),
     ("EpochDetector", "algorithm"), ("Paradigm", "paradigm"),
-    ("Effector", "effector"), ("Renderer", "renderer"),
+    ("Effector", "effector"), ("RenderSurface", "renderer"), ("TriggerOutput", "acquisition"),
     ("TextureHandle", "renderer"), ("Rect", "renderer"), ("Color", "renderer"),
 ])
 def test_sdk_reexports_existing_contract_types(name, module):
@@ -27,11 +28,11 @@ def test_sdk_reexports_existing_contract_types(name, module):
     assert getattr(sdk, name) is getattr(domain_module, name)
 
 
-def test_sdk_reexports_signal_chunk():
+@pytest.mark.parametrize("name", ["SignalInfo", "ChannelDescriptor"])
+def test_sdk_reexports_signal_layout(name):
     from omnibci import sdk
-    from omnibci.domain.signal import SignalChunk
-
-    assert sdk.SignalChunk is SignalChunk
+    from omnibci.domain import signal_info
+    assert getattr(sdk, name) is getattr(signal_info, name)
 
 
 def test_sdk_import_does_not_load_host_runtime_or_optional_dependencies():
@@ -57,82 +58,58 @@ def test_sdk_import_does_not_load_host_runtime_or_optional_dependencies():
     assert result.returncode == 0, result.stderr
 
 
-def test_plugin_context_preserves_signal_metadata_through_pickle(tmp_path):
-    from omnibci.domain.signal_info import ChannelDescriptor
-    from omnibci.sdk import PluginContext, SignalInfo
-
-    channels = [ChannelDescriptor(0, "Oz"), ChannelDescriptor(1, "O1")]
-    signal = SignalInfo("source", 250, channels, trigger_row_index=2)
-    context = PluginContext(sample_rate=250, acquired_signal=signal, input_signal=signal,
-                            module_revision="revision-7", resource_root=str(tmp_path))
-    channels.append(ChannelDescriptor(2, "O2"))
-
-    assert tuple(channel.name for channel in context.input_signal.channels) == ("Oz", "O1")
-    assert context.acquired_signal is signal
-    assert pickle.loads(pickle.dumps(context)) == context
+def test_signal_metadata_preserves_identity_and_immutability_through_pickle():
+    from omnibci.sdk import ChannelDescriptor, SignalInfo
+    channels = [ChannelDescriptor(0, "Oz", channel_id="channel-0"),
+                ChannelDescriptor(1, "O1", channel_id="channel-1")]
+    signal = SignalInfo(sample_rate=250, channels=channels)
+    channels.append(ChannelDescriptor(2, "O2", channel_id="channel-2"))
+    assert tuple(channel.name for channel in signal.channels) == ("Oz", "O1")
+    assert pickle.loads(pickle.dumps(signal)) == signal
     with pytest.raises(FrozenInstanceError):
-        context.sample_rate = 1000
+        signal.sample_rate = 1000
 
 
-@pytest.mark.parametrize("fields", [
-    {"sample_rate": 0}, {"sample_rate": True}, {"sample_rate": float("nan")},
-    {"acquired_signal": {}}, {"input_signal": "Oz"},
-    {"module_revision": ""}, {"resource_root": ""},
-])
-def test_plugin_context_rejects_invalid_metadata(fields):
-    from omnibci.sdk import PluginContext
-
-    with pytest.raises(ValueError):
-        PluginContext(**fields)
-
-
-def test_plugin_context_rejects_retired_channel_names():
-    from omnibci.sdk import PluginContext
-
-    with pytest.raises(TypeError, match="channel_names"):
-        PluginContext(channel_names=("Oz", "O1"))
-
-
-def _run_sdk_filter(parameters, context, output):
+def _run_sdk_filter(parameters, resource_root, input_signal, output):
+    from collections.abc import Mapping
+    from pathlib import Path
     import numpy as np
-
-    from omnibci.sdk import Filter, FilterContext, PluginContext, PluginParameters
+    from omnibci.sdk import Filter, SignalInfo
 
     class GainFilter(Filter):
-        def __init__(self, *, parameters: PluginParameters, context: PluginContext):
+        def __init__(self, *, parameters: Mapping[str, object], resource_root: Path,
+                     input_signal: SignalInfo):
             self.gain = parameters["gain"]
-            self.context = context
+            self.input_signal = input_signal
 
-        def apply(self, data, ctx):
+        def apply(self, data, *, pre_trigger_data):
             return data * self.gain
 
-    plugin = GainFilter(parameters=parameters, context=context)
-    data = plugin.apply(np.ones((2, 2)), FilterContext(sample_rate=250))
-    output.send((data.tolist(), plugin.context))
+    plugin = GainFilter(parameters=parameters, resource_root=resource_root, input_signal=input_signal)
+    data = plugin.apply(np.ones((2, 2)), pre_trigger_data=None)
+    output.send((data.tolist(), plugin.input_signal))
     output.close()
 
 
 @pytest.mark.integration
-def test_context_and_configuration_are_usable_in_spawned_plugin(tmp_path):
-    from omnibci.domain.signal_info import ChannelDescriptor
-    from omnibci.sdk import PluginContext, SignalInfo
-
-    signal = SignalInfo("source", 250, (ChannelDescriptor(0, "Oz"), ChannelDescriptor(1, "O1")),
-                        trigger_row_index=2)
-    context = PluginContext(sample_rate=250, acquired_signal=signal, input_signal=signal,
-                            module_revision="revision-7", resource_root=str(tmp_path))
-    spawn = mp.get_context("spawn")
-    incoming, outgoing = spawn.Pipe(duplex=False)
-    process = spawn.Process(target=_run_sdk_filter, args=({"gain": 2}, context, outgoing))
+def test_sdk_inputs_work_across_spawn(tmp_path):
+    from omnibci.sdk import ChannelDescriptor, SignalInfo
+    signal = SignalInfo(sample_rate=250, channels=(
+        ChannelDescriptor(0, "Oz", channel_id="oz"),
+        ChannelDescriptor(1, "O1", channel_id="o1"),
+    ))
+    context = mp.get_context("spawn")
+    incoming, outgoing = context.Pipe(duplex=False)
+    process = context.Process(target=_run_sdk_filter, args=({"gain": 2}, tmp_path, signal, outgoing))
     try:
         process.start()
         outgoing.close()
-        assert incoming.poll(15), "Spawned plugin did not return a result"
+        assert incoming.poll(15)
         data, received = incoming.recv()
         process.join(timeout=15)
         assert process.exitcode == 0
         assert data == [[2.0, 2.0], [2.0, 2.0]]
-        assert received == context
+        assert received == signal
     finally:
         if process.is_alive():
             process.terminate()
@@ -143,10 +120,12 @@ def test_context_and_configuration_are_usable_in_spawned_plugin(tmp_path):
         outgoing.close()
 
 
-def test_paradigm_renderer_argument_is_optional():
+def test_paradigm_borrows_required_capabilities_only_during_setup():
     import inspect
-
     from omnibci.sdk import Paradigm
 
-    for method in (Paradigm.setup, Paradigm.teardown):
-        assert inspect.signature(method).parameters["renderer"].default is None
+    parameters = inspect.signature(Paradigm.setup).parameters
+    for name in ("renderer", "trigger"):
+        assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters[name].default is inspect.Parameter.empty
+    assert tuple(inspect.signature(Paradigm.teardown).parameters) == ("self",)

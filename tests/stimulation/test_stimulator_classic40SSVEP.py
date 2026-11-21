@@ -9,7 +9,7 @@ All OpenGL / filesystem dependencies are mocked:
 """
 from __future__ import annotations
 
-from contextlib import nullcontext
+from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import numpy as np
@@ -22,7 +22,7 @@ from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep import (
     _STIM_RECT,
     _State,
 )
-from omnibci.sdk import TextureHandle
+from omnibci.sdk import FrameTiming, TextureHandle
 
 # ---------------------------------------------------------------------------
 # Constants matching the fake frame pack
@@ -48,6 +48,68 @@ _RESULT_FRAME_DATA = [
 ]
 
 
+def timing(index, rate=60):
+    return FrameTiming(refresh_index=index, target_time=index / rate, refresh_period=1 / rate)
+
+
+class TestDisplayTimeline:
+    def test_gap_selects_current_image_without_replay(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({'event_id': 0})
+        paradigm.render_frame(timing(100))
+        renderer.reset_mock()
+        paradigm.render_frame(timing(103))
+        assert renderer.draw_texture.call_args_list[0] == call(paradigm._stim_textures[3], _STIM_RECT)
+
+    def test_missing_final_images_does_not_extend_stimulus(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({'event_id': 0})
+        paradigm.render_frame(timing(100))
+        renderer.reset_mock()
+        paradigm.render_frame(timing(100 + _N_STIM_FRAMES))
+        assert not paradigm.is_presenting()
+        assert renderer.draw_texture.call_args_list[0] == call(paradigm._init_tex, _STIM_RECT)
+
+    def test_gap_across_cue_boundary_keeps_stimulus_origin(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({'event_id': 7})
+        paradigm.render_frame(timing(100))
+        renderer.reset_mock()
+        paradigm.render_frame(timing(100 + _CUE_FRAMES + 1))
+        assert renderer.draw_texture.call_args_list[0] == call(paradigm._stim_textures[1], _STIM_RECT)
+        paradigm.render_frame(timing(100 + _CUE_FRAMES + 3))
+        trigger.send.assert_called_once_with(7)
+
+    def test_gap_past_entire_trial_does_not_emit_expired_start(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({'event_id': 7})
+        paradigm.render_frame(timing(100))
+        paradigm.render_frame(timing(100 + _CUE_FRAMES + _N_STIM_FRAMES))
+        assert not paradigm.is_presenting()
+        trigger.send.assert_not_called()
+
+    def test_result_duration_uses_refreshes_not_calls(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({'target_id': 7})
+        paradigm.render_frame(timing(100))
+        paradigm.render_frame(timing(100 + _RESULT_FRAMES))
+        assert not paradigm.is_presenting()
+
+    def test_duplicate_refresh_does_not_draw_or_advance(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({'event_id': 0})
+        paradigm.render_frame(timing(100))
+        renderer.reset_mock()
+        assert paradigm.render_frame(timing(100)) is False
+        renderer.draw_texture.assert_not_called()
+
+    @pytest.mark.parametrize('rate', [30, 59.94, 75, 120])
+    def test_wrong_display_rate_cannot_play_60_hz_pack(self, paradigm, renderer, trigger, rate):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        with pytest.raises(ValueError, match='60 Hz'):
+            paradigm.render_frame(timing(100, rate))
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -60,14 +122,13 @@ def trigger():
 @pytest.fixture()
 def renderer():
     r = MagicMock()
-    _id = iter(range(1, 10_000))
-    r.upload_texture.side_effect = lambda _: TextureHandle(id=next(_id))
+    r.upload_texture.side_effect = lambda _: TextureHandle()
     return r
 
 
 @pytest.fixture()
 def paradigm(trigger):
-    return Classic40SSVEP_2(trigger)
+    return Classic40SSVEP_2(resource_root=Path(__file__).parent, parameters={})
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +136,7 @@ def _mock_frame_pack():
     """Provide small frames without opening the bundled frame pack."""
     with patch(
         "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep._frame_pack_path",
-        side_effect=lambda: nullcontext("classic40_ssvep.ofp"),
+        side_effect=lambda root: "classic40_ssvep.ofp",
     ), patch(
         "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep.FramePack",
         autospec=True,
@@ -94,107 +155,125 @@ def _mock_frame_pack():
 # ---------------------------------------------------------------------------
 
 class TestSetup:
-    def test_none_renderer_is_noop(self, paradigm):
-        paradigm.setup(None)
-        assert paradigm._renderer is None
+    def test_setup_requires_both_capabilities(self, paradigm):
+        with pytest.raises(TypeError):
+            paradigm.setup()
 
-    def test_uploads_expected_texture_count(self, paradigm, renderer):
-        paradigm.setup(renderer)
+    def test_uploads_expected_texture_count(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         assert renderer.upload_texture.call_count == _TOTAL_UPLOADS
 
-    def test_uploads_frame_pack_in_order(self, paradigm, renderer):
-        paradigm.setup(renderer)
+    def test_uploads_frame_pack_in_order(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         frames = [_IDLE_FRAME, *_STIM_FRAMES, *_CUE_FRAME_DATA, *_RESULT_FRAME_DATA]
         assert renderer.upload_texture.call_count == len(frames) + 1
         for upload, frame in zip(renderer.upload_texture.call_args_list, frames):
             assert upload.args[0] is frame
 
-    def test_closes_frame_pack_after_upload(self, paradigm, renderer, _mock_frame_pack):
-        paradigm.setup(renderer)
+    def test_closes_frame_pack_after_upload(self, paradigm, renderer, _mock_frame_pack, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         _mock_frame_pack.__exit__.assert_called_once_with(None, None, None)
 
-    def test_closes_frame_pack_when_upload_fails(self, paradigm, renderer, _mock_frame_pack):
+    def test_closes_frame_pack_when_upload_fails(self, paradigm, renderer, _mock_frame_pack, trigger):
         error = RuntimeError("Texture upload failed")
         renderer.upload_texture.side_effect = error
 
         with pytest.raises(RuntimeError, match="Texture upload failed"):
-            paradigm.setup(renderer)
+            paradigm.setup(renderer=renderer, trigger=trigger)
 
         _mock_frame_pack.__exit__.assert_called_once()
         assert _mock_frame_pack.__exit__.call_args.args[:2] == (RuntimeError, error)
 
-    def test_initial_state_is_idle(self, paradigm, renderer):
-        paradigm.setup(renderer)
+    def test_initial_state_is_idle(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         assert paradigm._state == _State.IDLE
         assert paradigm._result_target_id == 0
 
-    def test_stim_textures_populated(self, paradigm, renderer):
-        paradigm.setup(renderer)
+    def test_stim_textures_populated(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         assert len(paradigm._stim_textures) == _N_STIM_FRAMES
 
-    def test_cue_textures_populated(self, paradigm, renderer):
-        paradigm.setup(renderer)
+    def test_cue_textures_populated(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         assert len(paradigm._cue_textures) == _N_CUE_FRAMES
 
-    def test_result_textures_populated(self, paradigm, renderer):
-        paradigm.setup(renderer)
+    def test_result_textures_populated(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         assert len(paradigm._result_textures) == _N_RESULT_FRAMES
 
 
 class TestTeardown:
-    def test_releases_all_uploaded_textures(self, paradigm, renderer):
-        paradigm.setup(renderer)
+    def test_partial_upload_retains_every_completed_texture(self, paradigm, renderer, trigger):
+        handles = [TextureHandle() for _ in range(3)]
+        renderer.upload_texture.side_effect = [*handles, RuntimeError("upload failed")]
+        with pytest.raises(RuntimeError, match="upload failed"):
+            paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.teardown()
+        assert {call.args[0] for call in renderer.release_texture.call_args_list} == set(handles)
+
+    def test_one_release_failure_does_not_skip_other_textures(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        total = renderer.upload_texture.call_count
+        renderer.release_texture.side_effect = [RuntimeError("release failed")] + [None] * (total - 1)
+        with pytest.raises(ExceptionGroup, match="texture cleanup failed"):
+            paradigm.teardown()
+        assert renderer.release_texture.call_count == total
+
+    def test_releases_all_uploaded_textures(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         n = renderer.upload_texture.call_count
-        paradigm.teardown(renderer)
+        paradigm.teardown()
         assert renderer.release_texture.call_count == n
 
-    def test_clears_texture_lists(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.teardown(renderer)
+    def test_clears_texture_lists(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.teardown()
         assert paradigm._stim_textures == []
         assert paradigm._cue_textures == []
         assert paradigm._result_textures == []
 
-    def test_clears_renderer_reference(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.teardown(renderer)
+    def test_clears_renderer_reference(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.teardown()
         assert paradigm._renderer is None
 
 
 # ---------------------------------------------------------------------------
-# State machine — trial_stimulus_present
+# State machine — present_trial
 # ---------------------------------------------------------------------------
 
 class TestTrialStimulusPresent:
-    def test_valid_event_id_transitions_to_cue(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(1)          # 1-based: target 1 = 'A'
+    def test_valid_event_id_transitions_to_cue(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 1})          # 1-based: target 1 = 'A'
         assert paradigm._state == _State.CUE
 
-    def test_zero_is_no_cue_goes_straight_to_stim(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(0)          # 0 = baseline / no-cue
+    def test_zero_is_no_cue_goes_straight_to_stim(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 0})          # 0 = baseline / no-cue
         assert paradigm._state == _State.STIM
 
-    def test_cue_countdown_set(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(2)
-        assert paradigm._cue_countdown == _CUE_FRAMES
+    def test_cue_origin_waits_for_first_display_opportunity(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 2})
+        assert paradigm._phase_start_refresh is None
 
-    def test_current_event_stored(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(7)
+    def test_current_event_stored(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 7})
         assert paradigm._current_event == 7
 
-    def test_invalid_event_id_goes_straight_to_stim(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(99)
-        assert paradigm._state == _State.STIM
+    def test_invalid_event_id_preserves_idle(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        with pytest.raises(ValueError):
+            paradigm.present_trial({"event_id": 99})
+        assert paradigm._state == _State.IDLE
 
-    def test_invalid_event_id_sends_trigger_immediately(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(99)
-        trigger.send.assert_called_once_with(99)
+    def test_invalid_event_id_does_not_send_trigger(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        with pytest.raises(ValueError):
+            paradigm.present_trial({"event_id": 99})
+        trigger.send.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -204,11 +283,13 @@ class TestTrialStimulusPresent:
 class TestRenderFrameTransitions:
     def _tick(self, paradigm, n=1):
         for _ in range(n):
-            paradigm.render_frame(0.0)
+            index = getattr(self, '_next_refresh', 0)
+            paradigm.render_frame(timing(index))
+            self._next_refresh = index + 1
 
     def test_cue_transitions_to_stim_after_countdown(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(1)
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 1})
         self._tick(paradigm, _CUE_FRAMES - 1)
         assert paradigm._state == _State.CUE
         trigger.send.assert_not_called()
@@ -227,28 +308,29 @@ class TestRenderFrameTransitions:
             paradigm._stim_textures[0], _STIM_RECT
         )
 
-    def test_stim_plays_all_frames(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(1)
+    def test_stim_plays_all_frames(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 1})
         self._tick(paradigm, _CUE_FRAMES)          # CUE → STIM
+        renderer.reset_mock()
         self._tick(paradigm, _N_STIM_FRAMES)       # play every frame
-        assert paradigm._stim_frame_idx == _N_STIM_FRAMES
+        assert [c.args[0] for c in renderer.draw_texture.call_args_list[::2]] == paradigm._stim_textures
 
-    def test_stim_transitions_to_idle_when_frames_exhausted(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(1)
+    def test_stim_transitions_to_idle_when_frames_exhausted(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 1})
         self._tick(paradigm, _CUE_FRAMES + _N_STIM_FRAMES + 1)
         assert paradigm._state == _State.IDLE
 
     def test_stim_clears_trigger_on_finish(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(1)
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 1})
         self._tick(paradigm, _CUE_FRAMES + _N_STIM_FRAMES + 1)
         trigger.clear.assert_called()
 
-    def test_result_transitions_to_idle_after_countdown(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_result_present(1)            # 1-based: target 1 = 'A'
+    def test_result_transitions_to_idle_after_countdown(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({"target_id": 1})            # 1-based: target 1 = 'A'
         assert paradigm._state == _State.RESULT
         self._tick(paradigm, _RESULT_FRAMES - 1)
         assert paradigm._state == _State.RESULT
@@ -269,30 +351,30 @@ class TestRenderFrameTransitions:
 
 
 # ---------------------------------------------------------------------------
-# trial_result_present
+# present_result
 # ---------------------------------------------------------------------------
 
 class TestTrialResultPresent:
-    def test_transitions_to_result_state(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_result_present(1)
+    def test_transitions_to_result_state(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({"target_id": 1})
         assert paradigm._state == _State.RESULT
 
-    def test_result_countdown_set(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_result_present(1)
-        assert paradigm._result_countdown == _RESULT_FRAMES
+    def test_result_origin_waits_for_first_display_opportunity(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({"target_id": 1})
+        assert paradigm._phase_start_refresh is None
 
-    def test_add_text_accumulates(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_result_present(1)   # 'A'
-        paradigm.trial_result_present(2)   # 'B'
+    def test_add_text_accumulates(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({"target_id": 1})   # 'A'
+        paradigm.present_result({"target_id": 2})   # 'B'
         assert paradigm._text_view._content == "AB"
 
-    def test_del_removes_last_char(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_result_present(1)   # 'A'
-        paradigm.trial_result_present(40)  # 'Del'
+    def test_del_removes_last_char(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({"target_id": 1})   # 'A'
+        paradigm.present_result({"target_id": 40})  # 'Del'
         assert paradigm._text_view._content == ""
 
 
@@ -335,19 +417,19 @@ class TestParseFeedback:
 # ---------------------------------------------------------------------------
 
 class TestRenderFrameDrawing:
-    def test_idle_calls_clear_and_draw_texture(self, paradigm, renderer):
-        paradigm.setup(renderer)
+    def test_idle_calls_clear_and_draw_texture(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
         renderer.reset_mock()
-        paradigm.render_frame(0.0)
+        paradigm.render_frame(timing(0))
         renderer.clear.assert_called_once()
         renderer.draw_texture.assert_called()
 
     @pytest.mark.parametrize("target_id", [1, 8, 9, 40])
-    def test_cue_draws_target_frame_from_pack(self, paradigm, renderer, target_id):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(target_id)
+    def test_cue_draws_target_frame_from_pack(self, paradigm, renderer, target_id, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": target_id})
         renderer.reset_mock()
-        paradigm.render_frame()
+        paradigm.render_frame(timing(0))
 
         assert renderer.draw_texture.call_args_list == [
             call(paradigm._cue_textures[target_id - 1], _STIM_RECT),
@@ -357,15 +439,15 @@ class TestRenderFrameDrawing:
 
     @pytest.mark.parametrize(("result_id", "text"), [(8, "AH"), (40, "")])
     def test_result_highlights_recognized_target_instead_of_cue(
-        self, paradigm, renderer, result_id, text
+        self, paradigm, renderer, result_id, text, trigger
     ):
-        paradigm.setup(renderer)
-        paradigm.trial_result_present(1)
-        paradigm.trial_stimulus_present(1)
-        paradigm.render_frame()
-        paradigm.trial_result_present(result_id)
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({"target_id": 1})
+        paradigm.present_trial({"event_id": 1})
+        paradigm.render_frame(timing(0))
+        paradigm.present_result({"target_id": result_id})
         renderer.reset_mock()
-        paradigm.render_frame()
+        paradigm.render_frame(timing(1))
 
         assert paradigm._current_event == 1
         assert paradigm._result_target_id == result_id
@@ -376,15 +458,15 @@ class TestRenderFrameDrawing:
         ]
         renderer.draw_rect.assert_not_called()
 
-    def test_new_trial_clears_result_and_moves_cue(self, paradigm, renderer):
-        paradigm.setup(renderer)
-        paradigm.trial_stimulus_present(1)
-        paradigm.render_frame()
-        paradigm.trial_result_present(40)
-        paradigm.render_frame()
-        paradigm.trial_stimulus_present(9)
+    def test_new_trial_clears_result_and_moves_cue(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 1})
+        paradigm.render_frame(timing(0))
+        paradigm.present_result({"target_id": 40})
+        paradigm.render_frame(timing(1))
+        paradigm.present_trial({"event_id": 9})
         renderer.reset_mock()
-        paradigm.render_frame()
+        paradigm.render_frame(timing(2))
 
         assert paradigm._result_target_id == 0
         assert renderer.draw_texture.call_args_list[0] == call(
@@ -392,13 +474,13 @@ class TestRenderFrameDrawing:
         )
         renderer.draw_rect.assert_not_called()
 
-    @pytest.mark.parametrize("target_id", [None, 0, 99])
-    def test_no_cue_mode_draws_stimulation_without_border(self, paradigm, renderer, target_id):
-        paradigm.setup(renderer)
-        paradigm.trial_result_present(1)
-        paradigm.trial_stimulus_present(target_id)
+    @pytest.mark.parametrize("target_id", [0])
+    def test_no_cue_mode_draws_stimulation_without_border(self, paradigm, renderer, target_id, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({"target_id": 1})
+        paradigm.present_trial({"event_id": target_id})
         renderer.reset_mock()
-        paradigm.render_frame()
+        paradigm.render_frame(timing(0))
 
         assert paradigm._result_target_id == 0
         assert renderer.draw_texture.call_args_list[0] == call(
@@ -407,5 +489,4 @@ class TestRenderFrameDrawing:
         renderer.draw_rect.assert_not_called()
 
     def test_render_frame_noop_without_renderer(self, paradigm):
-        # should not raise
-        paradigm.render_frame(0.0)
+        assert paradigm.render_frame(timing(0)) is False

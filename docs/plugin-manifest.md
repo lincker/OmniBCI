@@ -1,12 +1,8 @@
 # Plugin packages and contributions
 
-The catalog reads manifests without importing plugin Python. A package is an
-installation unit; each contribution is an independently selectable capability
-within that package. Loading executes only the selected contribution's entrypoint.
+This guide describes the implemented Plugin API v1. Use the [developer workflow](plugin-development.md) to validate, package and run a project, and the [API reference](plugin-api-v1.md) for role signatures.
 
-For required Decoder files, an annotated starter, packaging and testing, see
-[Write a Decoder plugin](decoder-plugin-development.md). The same guide and
-starter files are available offline under **Extensions → Decoder developer guide**.
+A **Package** is the installation unit. A **Contribution** declares one selectable capability. An **Instance** is an object created by its owning module host. Plugin Management owns package files and enablement; Configuration owns parameter bindings; module hosts own execution and cleanup. Metadata discovery never imports plugin Python.
 
 ## Manifest version 2
 
@@ -17,192 +13,89 @@ manifest_version = 2
 id = "device-kit"
 publisher = "example"
 version = "1.0.0"
-api_version = "2"
+api_version = "1"
 domain = "acquisition"
 
 [[contributions]]
 id = "reader"
 kind = "acquisition"
 entrypoint = "driver:Reader"
-plugin_type = "example_reader"
 display_name = "Example Reader"
+
+[contributions.configuration]
+schema = "reader.schema.json"
+schema_version = 1
 
 [[contributions]]
 id = "trigger"
 kind = "trigger"
 entrypoint = "driver:Trigger"
 display_name = "Example Trigger"
+
+[contributions.configuration]
+schema = "trigger.schema.json"
+schema_version = 1
 ```
 
-- `manifest_version` is the manifest format, separate from the package's code
-  `version` and plugin `api_version`. Only API version `2` is supported.
-- Package `id`, `publisher`, `version`, `api_version`, and `domain` are required strings.
-  Publisher and package ID form the case-sensitive identity `publisher.id`.
-- Package and contribution IDs, and publishers, begin with an ASCII letter or
-  digit and contain only ASCII letters, digits, underscores, and hyphens.
-- Contributions require `id`, `kind`, and `entrypoint`. Contribution IDs are
-  unique throughout the package, including across different kinds.
-- Supported kinds are `acquisition`, `decoder`, `epoch_detector`, `filter`,
-  `paradigm`, `trigger`, and `effector`.
-- `plugin_type` is optional display/runtime source metadata, defaulting to the
-  contribution ID. Selection always uses the exact package/contribution/version;
-  a registry alias is never a fallback.
-- `entrypoint` names a Python class relative to the package directory, in
-  `module:Class` form. Absolute paths and parent-directory traversal are invalid.
-- Optional `display_name`, `description`, `params`, and `controls` belong to
-  each contribution. `params` remains read-only display metadata; `controls`
-  retains the existing trial-control convention. Neither is a Profile schema.
-- `configuration = {schema = "default.schema.json", schema_version = 1}`
-  references plugin-owned configuration data. The file must stay inside the
-  package, cannot traverse symlinks, and is limited to 1 MiB. Its positive
-  schema version is separate from the package and manifest versions.
-  Discovery validates the [supported Schema subset](../omnibci/application/plugin_schema.py)
-  and defaults without importing Python or resolving external references.
-  API 2 construction validates parameters and inserts declared defaults before
-  executing the selected plugin. A missing schema means no editable profile
-  contract.
-- Execution fields such as `kind`, `plugin_type`, and `entrypoint` must not
-  appear at package level in v2. A malformed contribution invalidates the entire
-  package; the catalog does not expose a partially valid package.
-- Optional `platforms` on a package or contribution is a nonempty list drawn
-  from `darwin`, `linux`, and `win32`. Both constraints must allow the host.
-  Omission supports all hosts. Discovery remains static and exposes unavailable
-  capabilities; loading rejects them before importing their implementation.
+The manifest belongs at the package/ZIP root. This declaration illustrates a two-contribution package; its referenced Python implementations and schema files must also exist.
 
-`source`, filesystem location, and search precedence come from configured roots.
-Declaring a publisher does not verify the package's author or grant it trust.
+- `manifest_version = 2` selects the document format. `api_version = "1"` selects the only supported plugin contract. Package release and configuration-schema versions have separate meanings.
+- `id`, `publisher`, `version`, `api_version` and `domain` are required. The case-sensitive package identity is `publisher.id`. Package/contribution IDs and publishers start with an ASCII letter or digit and otherwise use ASCII letters, digits, underscores and hyphens.
+- Each Contribution requires a package-unique `id`, a supported `kind` and a package-relative `module:Class` entrypoint. Kinds are `acquisition`, `decoder`, `epoch_detector`, `filter`, `paradigm`, `trigger` and `effector`.
+- Package `domain` is classification: `acquisition`, `processing`, `stimulation` or `actuation`. It does not restrict Contribution kinds or select their execution host. Different release versions may have different classifications.
+- `plugin_type` is optional metadata, defaulting to the contribution ID. Configuration selects an exact package ID, contribution ID and version. No alias fallback or implicit latest version exists.
+- Optional `display_name`, `description`, `params` and `controls` belong to a Contribution. `params` is display metadata; it does not replace a parameter schema or supply executable constructor arguments.
+- `configuration` references a package-relative object schema and positive `schema_version`. Discovery can inspect a Contribution without it; normal configurable bindings require it. Use an empty closed object schema when there are no parameters.
+- A Decoder requires `channel_requirements`, even if the table is empty. Other kinds cannot declare it. There is no separate `signal_input_contract` selector. See the [Decoder guide](decoder-plugin-development.md#manifest-and-channel-requirements).
+- A Paradigm requires exactly `payload_schemas.trial` and `payload_schemas.result`; an Effector requires exactly `payload_schemas.command`. These reference separate runtime object schemas. Other kinds cannot declare `payload_schemas`.
+- Optional `platforms` on the package and/or Contribution uses `darwin`, `linux`, `win32`. Both constraints must allow the host. Omission allows all three. Static inspection can show unavailable contributions; execution rejects them before import.
 
-## Discovery and exact selection
+Unknown fields and invalid role declarations invalidate the whole manifest. Schema paths stay inside the package, exclude symlinks, and are bounded to 1 MiB. Publisher text is identity metadata, not proof of authorship. Origin, repository evidence, installed paths and environment fingerprints are host-owned records, never manifest assertions.
 
-All configured category roots are searched for packages. A package declares one
-immutable domain: `acquisition`, `processing`, `stimulation`, or `actuation`.
-Contributions must belong to that domain, with one explicit exception: acquisition
-packages may also ship Trigger contributions consumed by Stimulation. Different
-versions of one package cannot change its domain.
-Overlapping roots do not duplicate the same physical package.
-A category root may itself contain a manifest (for example, bundled filters).
-Once a package is found, discovery does not recurse into its internal modules.
+## Parameters and runtime payloads
 
-The infrastructure catalog provides:
+Schemas use the [supported closed JSON Schema subset](../omnibci/application/plugin_schema.py). The root is an object and every object declares `additionalProperties: false`. Describe fields with `title` and `description`; JSON has no comments. External references and unrecognized keywords are rejected.
 
-```python
-selection = PluginSelection(
-    package_id="example.device-kit",
-    contribution_id="reader",
-    version="1.0.0",
-)
-descriptor = catalog.resolve_selection("acquisition", selection)
-available = catalog.list_contributions("acquisition")
-```
+Constructor parameters receive schema defaults and an independent validated copy. Trial, result and command payloads are validated without inserting defaults. Declare all fields the plugin accepts; a missing or invalid payload must not silently choose another operation. Generic transport correlation stays outside these plugin payloads.
 
-Exact selection never resolves through a registry alias or chooses another
-version. Different publishers, contributions, and versions can coexist. Multiple
-physical packages with the same identity and version are ambiguous, even if one
-root has higher precedence. An invalid copy with that identity/version prevents
-fallback to another copy. An invalid version field conservatively blocks that
-package identity because the catalog cannot establish which version is broken.
-
-Only manifest version 2, API version 2, and explicit exact package versions are
-accepted. There is no legacy manifest reader, alias resolver, or implicit latest
-version selection. Installation and enablement remain explicit operations.
-
-## Compatibility and dependencies
-
-`[package] engines = { omnibci = ">=0.1,<1" }` optionally constrains the host at
-installation and catalog discovery. Supported clauses are comma-separated
-`>=`, `>`, `<=`, `<`, and `==` comparisons over numeric dot-separated versions.
-This deliberately small syntax does not implement npm ranges. The existing
-`host_version` field still requires an exact host version when present.
-
-`[package.requires]` maps Python library distribution names to exact installed
-versions. The installer checks these requirements; it does not install libraries.
-This field is not a list of OmniBCI plugin packages. No inter-plugin dependency
-resolver is introduced. Multiple contributions inside one package need no
-inter-package dependency declaration.
+Decoder channel requirements describe final mapped inputs: optional `signal_type`, `min_count`, `required_names`, `default_names` and explanatory `description`. Actual channel selection/order/renaming belongs to Configuration's `processing_input`, not to the plugin parameter schema.
 
 ## SDK and construction API
 
-API `2` implementations import their ports from `omnibci.sdk` and accept exactly
-the keyword inputs `parameters` and `context`. The host copies parameters and
-supplies a frozen, pickle-safe `PluginContext` containing sample rate, prepared
-signal descriptors, `module_revision`, and the selected package's resource directory.
-The revision belongs to the consuming module, including a Trigger shipped in
-an acquisition-domain package and loaded by Stimulation.
-Context contains metadata, not global settings or live service objects.
-The class implements its domain port. The manifest owns its selection identity
-and the entrypoint used to load it.
+Import supported contracts from `omnibci.sdk`, supplied by the selected OmniBCI host release. Do not bundle or vendor `omnibci`; the installer rejects that reserved namespace. The SDK is a thin facade over canonical contracts and has no separate runtime.
 
-Signal Processing contributions must declare
-`signal_input_contract = 1` beside their contribution `kind`. Decoder
-contributions can declare `signal_input_contract = 2` together with
-`[contributions.channel_requirements]` to add minimum count, signal type and
-required names, plus ordered name suggestions for channel mapping. Contract 2 requires that
-section and is currently Decoder-only. Missing or unsupported declarations are
-rejected during manifest discovery. The
-[Decoder authoring guide](decoder-plugin-development.md#manifest-and-channel-requirements)
-describes every field, with comments in the executable starter manifest.
+```python
+# Acquisition, Paradigm, TriggerEmitter and Effector:
+def __init__(self, *, parameters, resource_root): ...
 
-Both prepared input contracts add `acquired_signal` and `input_signal` to the
-context, as immutable `SignalInfo` values.
-Use `acquired_signal.channels` for the original Acquisition channels and the
-ordered `input_signal.channels` for the actual decoder/filter/detector input,
-including source channel IDs, signal types and optional units. The final trigger
-row remains separate. Channel mapping selects and orders rows without changing
-sample values. The bundled CCA
-and FBCCA declare contract 2 with flexible EEG input and no mandatory electrode
-names. The bundled epoch boundary detector and baseline-correction filter retain contract 1.
+# Decoder, Filter and EpochDetector:
+def __init__(self, *, parameters, resource_root, input_signal): ...
+```
 
-Constructor errors never cause a retry using a different API. All bundled
-contributions use API `2`; API `1` construction is removed.
-Paradigms receive the selected trigger through `bind_trigger()` before setup.
-Acquisition, Signal Processing, Stimulation, and Actuation load only their selected
-entrypoints. A missing pinned selection never falls back to a legacy alias.
+All inputs are keyword-only. `parameters` belongs only to the selected Contribution. `resource_root` points to the fixed package actually executed. Processing's `input_signal` describes only its mapped signal rows; the event row is separate. Host revisions, package identity, original source descriptors, services and global settings are not constructor inputs. There is no `PluginContext`, old constructor dispatch or API-version fallback.
 
-### Signal-source trigger semantics
+Construction initializes local state; the owning host performs preparation through each role's lifecycle. A Paradigm receives only `RenderSurface` and `TriggerOutput` in `setup`. The host retains window/event-loop/frame-submission ownership. Decoder setup/epoch reset/teardown and Effector setup/execute/quiesce/teardown are required even when some methods are no-ops. See [Plugin API v1](plugin-api-v1.md) for every role and value invariant.
 
-`SignalSource.trigger_is_level` is an optional Python capability, defaulting to
-`False`. Return `True` only when the final event row contains codes held over
-consecutive samples. Scan45 and Curry8 declare it. The host then keeps the first
-sample of each nonzero code and clears immediately repeated values, preserving
-code changes: `7,7,8,8` becomes `7,0,8,0`. This happens after protocol decoding
-and before processing-queue and acquisition-preview publication.
+## Signal-source trigger and resume semantics
 
-Discrete event sources, including File Reader's CNT annotations, leave this
-capability false so adjacent independent events remain intact. Undeclared
-sources retain their existing values. The capability is not a manifest field,
-Profile parameter, or inference from `SignalInfo.native_event`; byte extraction
-and device protocol interpretation remain the source plugin's responsibility.
+A SignalSource declares fixed `trigger_mode` (`events` or `level`) and `resume_mode` (`restart-only`, `live-current` or `checkpoint`) before I/O. The host normalizes a held level once across chunk boundaries: `7,7,8,8` becomes `7,0,8,0`. Discrete File Reader events remain independent. Protocol extraction belongs to the driver; normalization belongs to Acquisition.
 
-Host preprocessing state spans chunks within one read. It resets when a stopped
-stream starts again or a new connection is established, preserving the first
-nonzero sample after that boundary. An already-running Start is idempotent and
-does not reset it. These resets also apply when a source restores a checkpoint;
-the host does not extend the source checkpoint format with preprocessing state.
-Discrete File Reader events are unaffected.
+`observe()` returns a `SourceObservation`, retaining native text and diagnostics when the complete layout is unavailable. Connect precedes observe/start; observe and checkpoint operations run while stopped with no pending read. A valid `SignalInfo` describes signal channels separately from the final event row.
 
-### Signal-source resumption
+Checkpoint sources provide `SourceCheckpoint(resource_id=..., resource_revision=..., state=...)` for the next undelivered sample and stage it with `restore_checkpoint()`. File Reader validates the recording identity and cursor. Live-current sources resume present delivery without claiming gap-free capture. Restart-only sources cannot automatically replay an interrupted stream. These are role capabilities, not Profile parameters or optional legacy booleans.
 
-`SignalSource` exposes two optional resumption capabilities, both disabled by default:
+## Discovery, packaging and installation
 
-- `supports_checkpoint`: `checkpoint()` captures the next undelivered sample
-  after acquisition has stopped and its fetch task has joined.
-  `restore_checkpoint(checkpoint)` stages that position for the next start.
-  Checkpoints are opaque dictionaries; an optional `source_identity` containing
-  string `resource_id` and `revision` fields distinguishes a different recording
-  from changed content at the same path. FileReader implements this contract.
-- `resume_without_checkpoint_safe`: a live driver explicitly guarantees that
-  starting after stop or reconnect never seeks back or replays samples already
-  delivered. Scan45 and Curry8 declare this capability because their start
-  commands request live network delivery. It does not promise gap-free samples,
-  uninterrupted trigger timing, or continuity across network failures.
+Ordinary discovery reads enabled managed packages and host-distributed built-ins. It never discovers mutable source projects by walking user category directories. Exact selection must identify one available Contribution/version; invalid/conflicting copies do not cause fallback to another implementation.
 
-Automatic module restart or graph rebuild requires a valid checkpoint or the
-explicit live-source guarantee before it can resume an existing stream. An
-unknown source remains paused and requires an explicit engine stop before
-retrying the change. Decoder/filter trial-boundary changes do
-not stop the source and do not need these resumption capabilities.
+Use `omnibci-plugin validate PROJECT` and `omnibci-plugin package PROJECT --output ARCHIVE.zip`. Select the directory containing `manifest.toml`, not an enclosing repository. Outputs must be outside that directory. The tools preserve runtime resources, omit VCS/virtual environments/caches and produce deterministic ZIP bytes. They invoke no plugin Python, build hooks or dependency installer. Shared ZIPs and verified marketplace downloads use the same installer.
 
-Headless tests cover capability receipts, command ordering, replay checkpoints,
-and conservative rejection of unknown sources. Real amplifier/network pause and
-reconnect behavior, including cancellation during partial packet reads, still
-requires hardware validation before relying on timing or sample continuity.
+Installation checks portable paths, bounded extraction, schemas, entrypoint files, host/library constraints and immutable content. It does not enable a package or create an Instance. Enable the version, select a Contribution in its owning module, then use the normal Connect/Start action. Changed distributed bytes require a new package version; an identical archive retry is idempotent.
+
+`omnibci-plugin develop` uses the same package format in an isolated snapshot and configuration, with fresh normal hosts. Companion packages are explicit archives or built-ins. Source edits affect only the next run. See the [developer workflow](plugin-development.md#develop-a-fixed-snapshot) for launch, stopping and recovery.
+
+## Host and library requirements
+
+Optional `package.engines.omnibci` supports comma-separated numeric version comparisons (`>=`, `>`, `<=`, `<`, `==`), for example `">=1,<2"`. This is not npm's range language. `package.host_version`, when present, requires an exact host version.
+
+`[package.requires]` maps host-exposed Python distribution names to exact installed versions. These are checks, not installation instructions or dependencies on other plugin packages. There is no automatic pip, environment selector or inter-plugin dependency resolver. Use the selected host environment for author tests and deployment.

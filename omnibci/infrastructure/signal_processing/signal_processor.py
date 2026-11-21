@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 import logging
@@ -13,11 +14,13 @@ from omnibci.domain.signal import SignalChunk
 
 from omnibci.domain.classification import Classification
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
+from omnibci.application.command_contracts import prepare_signal_request, reset_input_request
 from omnibci.application.events import (
     CommandFailureKind, CommandRequest, CommandResult, EpochProcessed,
-    ProcessingInputStart, StreamBarrier, StreamDrainReceipt, TrialOutcome,
+    ProcessingInputStart, SignalPreparationReceipt, StreamBarrier, StreamDrainReceipt, TrialOutcome,
 )
 from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 from omnibci.shared.events import Event, EventType
 from .processing_state import AwaitingEpochState, AssemblingEpochState
 from .epoch.epoch_processor import EpochProcessor
@@ -46,10 +49,8 @@ class SignalProcessor:
 
     Per-epoch lifecycle: a fresh EpochProcessor is created on each detected
     start (via new_epoch_processor()) and dropped on completion — no reused
-    buffer / clear(). Its decoder comes from decoder.for_new_epoch(): stateless
-    decoders share one instance (zero cost); stateful ones return a fresh
-    per-epoch instance sharing the model. This is also the foundation for
-    concurrent multi-buffer epochs (dense P300) later.
+    buffer / clear(). One prepared decoder retains its model across epochs;
+    initialize_epoch resets its working state before receiving new samples.
     """
 
     def __init__(
@@ -68,10 +69,12 @@ class SignalProcessor:
         engine_revision: str | None = None,
         settings_snapshot: dict | None = None,
         runtime_counters=None,
+        record_execution=None,
     ) -> None:
         self.data_manager = data_manager
         self.event_bus = event_bus
         self.command_queue = command_queue
+        self._record_execution = record_execution
 
         # EpochDetector: reads epoch start/end markers from each chunk. Owned
         # here (the orchestration/state-machine level), not by EpochProcessor —
@@ -89,7 +92,9 @@ class SignalProcessor:
         self._signal_plan = None
         self._signal_receipt = None
         self._input_attached = False
-        self._configuration_transactions = ConfigurationTransactions()
+        self._owned_decoders = {}
+        self._cleanup_failure = None
+        self._configuration_transactions = ConfigurationTransactions(self._release_decoder)
         # Processing baseline_duration controls pre-trigger capture,
         # independently of whether a baseline-correction filter is configured.
         # Signal preparation supplies the observed sample rate.
@@ -119,12 +124,64 @@ class SignalProcessor:
         self.engine_revision = engine_revision if engine_revision is not None else (settings_snapshot or {}).get("CONFIG.engine_revision")
         self._last_sequence = runtime_counters[2] if runtime_counters is not None else -1
         self._drain_failure: str | None = None
+        if decoder is not None:
+            try:
+                self._setup_decoder(decoder)
+            except BaseException as exc:
+                try:
+                    self._release_decoder(decoder)
+                except Exception as cleanup:
+                    exc.add_note(f"Decoder setup cleanup failed: {cleanup}")
+                raise
+
+    def _require_healthy_binding(self):
+        if self._cleanup_failure is not None:
+            raise RuntimeError(f"Processing cleanup failed; restart the processing module: {self._cleanup_failure}")
+
+    def _setup_decoder(self, decoder):
+        self._require_healthy_binding()
+        if decoder is not None:
+            self._owned_decoders[id(decoder)] = decoder
+            decoder.setup()
+
+    def _release_decoder(self, decoder):
+        if decoder is None or id(decoder) not in self._owned_decoders:
+            return
+        # A failed teardown may already have released some resources. Do not
+        # implicitly retry it during stop/finally; fail the processing owner.
+        del self._owned_decoders[id(decoder)]
+        try:
+            decoder.teardown()
+        except BaseException as exc:
+            self._cleanup_failure = self._drain_failure = str(exc)
+            self._should_stop = True
+            self._input_attached = False
+            gate = getattr(self.data_manager, "processing_active", None)
+            if gate is not None:
+                gate.clear()
+            raise
+
+    def _close_decoders(self):
+        errors = []
+        try:
+            self._cancel_pending_configuration("Signal Processing stopped before the trial boundary")
+        except Exception as exc:
+            errors.append(exc)
+        for decoder in tuple(self._owned_decoders.values()):
+            try:
+                self._release_decoder(decoder)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("Processing decoder cleanup failed", errors)
+        self._require_healthy_binding()
 
     def new_epoch_processor(self) -> EpochProcessor:
         """Build a fresh EpochProcessor for a newly opened epoch."""
+        self._require_healthy_binding()
         self._install_pending_configuration()
         return EpochProcessor(
-            decoder=self._decoder.for_new_epoch(),
+            decoder=self._decoder,
             sample_rate=self._sample_rate,
             filters=self._filters,
             processing_revision=self.processing_revision,
@@ -218,6 +275,7 @@ class SignalProcessor:
 
     def _on_input_start(self, marker: ProcessingInputStart) -> None:
         try:
+            self._require_healthy_binding()
             if not self._signal_receipt or marker.receipt != self._signal_receipt:
                 raise ValueError("Processing input does not match the prepared signal plan")
             if self._input_attached and self.current_epoch is not None:
@@ -226,7 +284,7 @@ class SignalProcessor:
             self._input_attached = True
             self._drain_failure = None
             result = CommandResult(marker.command_id, EventType.AttachProcessingInput.name,
-                                   ok=True, data={**marker.receipt, "last_sequence": marker.last_sequence,
+                                   ok=True, data={**marker.receipt.to_dict(), "last_sequence": marker.last_sequence,
                                                   "attached": True})
         except Exception as exc:
             result = CommandResult(marker.command_id, EventType.AttachProcessingInput.name,
@@ -241,7 +299,7 @@ class SignalProcessor:
             if (barrier.generation != self.generation
                     or barrier.engine_revision != self.engine_revision):
                 raise ValueError("Drain barrier belongs to a different runtime generation or revision")
-            if barrier.input_id is not None and barrier.input_id != (self._signal_receipt or {}).get("input_id"):
+            if barrier.input_id is not None and barrier.input_id != (self._signal_receipt.input_id if self._signal_receipt else None):
                 raise ValueError("Drain barrier belongs to a previous processing input")
             if barrier.last_sequence != self._last_sequence:
                 raise ValueError("Drain barrier sequence differs from the last consumed signal chunk")
@@ -328,7 +386,7 @@ class SignalProcessor:
             if gate is not None:
                 gate.clear()
             self.record_epoch_processed("interrupted", "processor_stop")
-            self._cancel_pending_configuration("Signal Processing stopped before the trial boundary")
+            self._close_decoders()
 
     def _execute(self, item) -> None:
         """Execute a ``(command, payload)`` pair; process stop uses payload None."""
@@ -357,7 +415,10 @@ class SignalProcessor:
         error_code = None
         if command == SignalProcessorCommand.should_stop:
             self._should_stop = True
-            self._cancel_pending_configuration("Signal Processing stopped before the trial boundary")
+            try:
+                self._close_decoders()
+            except Exception as exc:
+                ok, message, error_code = False, str(exc), "PROCESSING_CLEANUP_FAILED"
         else:
             logger.warning("SignalProcessor: unknown command %r", command)
             ok = False
@@ -376,11 +437,10 @@ class SignalProcessor:
     def _prepare_signal(self, request):
         from omnibci.domain.channel_mapping import ResolvedSignalPlan
         from .signal_configuration import load_signal_pipeline
+        decoder = None
         try:
-            payload = request.payload
-            if not isinstance(payload, dict) or set(payload) not in (
-                    {"plan", "receipt"}, {"plan", "receipt", "settings_snapshot"}):
-                raise ValueError("Invalid signal preparation request")
+            self._require_healthy_binding()
+            payload = prepare_signal_request(request.payload)
             snapshot = deepcopy(self._settings_snapshot or {})
             source_snapshot = payload.get("settings_snapshot")
             if source_snapshot is not None:
@@ -404,19 +464,12 @@ class SignalProcessor:
             acquisition_revision = snapshot.get("CONFIG.module_revisions", {}).get(
                 "acquisition", self.acquisition_revision)
             plan = ResolvedSignalPlan.from_dict(payload["plan"])
-            receipt = payload["receipt"]
-            if (not isinstance(receipt, dict)
-                    or set(receipt) != {"generation", "acquisition_revision", "processing_revision", "engine_revision", "connection_id",
-                                       "source_fingerprint", "plan_fingerprint", "input_id"}
-                    or not isinstance(receipt["input_id"], str) or not receipt["input_id"]
-                    or receipt["generation"] != self.generation
-                    or receipt["processing_revision"] != self.processing_revision
-                    or receipt["acquisition_revision"] != acquisition_revision
-                    or receipt["engine_revision"] != self.engine_revision
-                    or receipt["connection_id"] != plan.source.connection_id
-                    or not receipt["connection_id"]
-                    or receipt["source_fingerprint"] != plan.source.fingerprint
-                    or receipt["plan_fingerprint"] != plan.fingerprint
+            receipt = SignalPreparationReceipt.from_value(payload["receipt"])
+            if (receipt.generation != self.generation
+                    or receipt.processing_revision != self.processing_revision
+                    or receipt.acquisition_revision != acquisition_revision
+                    or receipt.engine_revision != self.engine_revision
+                    or receipt.plan_fingerprint != plan.fingerprint
                     or plan.acquisition_revision != acquisition_revision):
                 raise ValueError("Signal preparation belongs to a different runtime or connection")
             validate_plan_binding(snapshot, plan)
@@ -424,33 +477,47 @@ class SignalProcessor:
                 if self.current_epoch is not None or self._configuration_transactions.pending is not None:
                     raise ValueError("Drain the stream before preparing a new signal plan")
                 decoder, detector, filters = load_signal_pipeline(snapshot, plan)
+                self._setup_decoder(decoder)
+                if self._record_execution is not None:
+                    self._record_execution(execution_receipt(snapshot, "processing", receipt.input_id))
+                self._release_decoder(self._decoder)
                 self._decoder, self.detector, self._filters = decoder, detector, list(filters)
                 self._sample_rate = plan.source.sample_rate
                 self.pre_trigger_samples = round(self._baseline_duration * self._sample_rate)
                 self.pretrigger = PreTriggerBuffer(capacity=self.pre_trigger_samples)
                 self._signal_plan = plan
-                self._signal_receipt = deepcopy(receipt)
+                self._signal_receipt = receipt
                 self._input_attached = False
                 self._settings_snapshot = snapshot
                 self.acquisition_revision = acquisition_revision
             result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,
-                                   ok=True, data=deepcopy(receipt))
+                                   ok=True, data=receipt.to_dict())
         except Exception as exc:
+            if decoder is not None and decoder is not self._decoder:
+                try:
+                    self._release_decoder(decoder)
+                except Exception as cleanup:
+                    exc.add_note(f"Candidate decoder cleanup failed: {cleanup}")
             result = CommandResult(request.command_id, EventType.PrepareSignalProcessing.name,
-                                   ok=False, message=str(exc), error_code="SIGNAL_PREPARATION_FAILED",
-                                   failure_kind=CommandFailureKind.REJECTED)
+                                   ok=False, message=str(exc),
+                                   error_code="PROCESSING_CLEANUP_FAILED" if self._cleanup_failure else "SIGNAL_PREPARATION_FAILED",
+                                   failure_kind=(CommandFailureKind.EXECUTION_FAILED if self._cleanup_failure
+                                                 else CommandFailureKind.REJECTED))
         self._publish_configuration_result(result)
 
     def _reset_input(self, request):
         """Invalidate an input whose producer is gone; never claim it drained."""
-        expected = {"generation": self.generation, "engine_revision": self.engine_revision,
-                    **({"expected_acquisition_revision": self.acquisition_revision}
-                       if isinstance(request.payload, dict) and "expected_acquisition_revision" in request.payload
-                       else {"expected_revision": self.processing_revision})}
-        if (not isinstance(request.payload, dict)
-                or any(request.payload.get(key) != value for key, value in expected.items())
-                or "input_id" in request.payload
-                and request.payload["input_id"] != (self._signal_receipt or {}).get("input_id")):
+        try:
+            payload = reset_input_request(request.payload)
+            expected = {"generation": self.generation, "engine_revision": self.engine_revision,
+                        **({"expected_acquisition_revision": self.acquisition_revision}
+                           if "expected_acquisition_revision" in payload
+                           else {"expected_revision": self.processing_revision})}
+            if (any(payload[key] != value for key, value in expected.items())
+                    or "input_id" in payload
+                    and payload["input_id"] != (self._signal_receipt.input_id if self._signal_receipt else None)):
+                raise ValueError("Input reset belongs to another processing runtime")
+        except (TypeError, ValueError):
             result = CommandResult(request.command_id, EventType.ResetProcessingInput.name,
                                    ok=False, message="Input reset belongs to another processing runtime",
                                    error_code="PROCESSING_INPUT_REJECTED", failure_kind=CommandFailureKind.REJECTED)
@@ -459,22 +526,38 @@ class SignalProcessor:
             if gate is not None:
                 gate.clear()
             self.record_epoch_processed("interrupted", "processing_detached" if "input_id" in request.payload else "source_unavailable")
-            self.transition_to_awaiting()
             self.pretrigger.clear()
-            self._cancel_pending_configuration("Processing input became unavailable")
             self._input_attached = False
             self._signal_receipt = None
             self._signal_plan = None
-            self._drain_failure = None
-            result = CommandResult(request.command_id, EventType.ResetProcessingInput.name, ok=True,
-                                   data={"generation": self.generation, "engine_revision": self.engine_revision,
-                                         "processing_revision": self.processing_revision, "attached": False})
+            self.current_epoch = None
+            self._current_state = self._awaiting_state
+            try:
+                self._require_healthy_binding()
+                # Reset must cancel a candidate before any natural-boundary installation.
+                self._cancel_pending_configuration("Processing input became unavailable")
+                self._release_decoder(self._decoder)
+                self._decoder = self.detector = None
+                self._filters = []
+                self._drain_failure = None
+                result = CommandResult(request.command_id, EventType.ResetProcessingInput.name, ok=True,
+                                       data={"generation": self.generation, "engine_revision": self.engine_revision,
+                                             "processing_revision": self.processing_revision, "attached": False})
+            except Exception as exc:
+                result = CommandResult(request.command_id, EventType.ResetProcessingInput.name, False,
+                                       str(exc), "PROCESSING_CLEANUP_FAILED", CommandFailureKind.EXECUTION_FAILED)
         self._publish_configuration_result(result)
 
     def _publish_configuration_result(self, result):
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 
     def _stage_configuration(self, request):
+        if self._cleanup_failure is not None:
+            self._publish_configuration_result(CommandResult(
+                request.command_id, EventType.StageProcessingConfiguration.name, False,
+                self._cleanup_failure, "PROCESSING_CLEANUP_FAILED", CommandFailureKind.EXECUTION_FAILED,
+            ))
+            return
         newly_staged, result = self._configuration_transactions.stage(
             request, generation=self.generation, revision=self.processing_revision,
             engine_revision=self.engine_revision, drained=self.current_epoch is None,
@@ -483,35 +566,60 @@ class SignalProcessor:
         )
         if result is not None:
             self._publish_configuration_result(result)
-        if newly_staged and self.current_epoch is None:
-            self._install_pending_configuration()
+        if newly_staged:
+            try:
+                candidate = self._configuration_transactions.pending[1]
+                self._setup_decoder(candidate.decoder)
+                if candidate.decoder is not None and self._record_execution is not None:
+                    self._record_execution(execution_receipt(candidate.settings_snapshot, "processing", request.command_id))
+            except Exception as exc:
+                self._cancel_pending_configuration(str(exc), error_code="PROCESSING_CONFIGURATION_REJECTED")
+                return
+            if self.current_epoch is None:
+                try:
+                    self._install_pending_configuration()
+                except Exception:
+                    # The installation path already rejected the correlated candidate.
+                    if self._cleanup_failure is None:
+                        raise
 
     def _install_configuration(self, snapshot, pipeline=None):
         if pipeline is not None:
+            self._release_decoder(self._decoder)
             self._decoder = pipeline.decoder
             self._filters = list(pipeline.filters)
         self._settings_snapshot = snapshot
         self.processing_revision = snapshot["CONFIG.module_revisions"]["processing"]
         if self._signal_receipt is not None:
-            self._signal_receipt["processing_revision"] = self.processing_revision
+            self._signal_receipt = replace(self._signal_receipt, processing_revision=self.processing_revision)
 
     def _install_pending_configuration(self):
         pending = self._configuration_transactions.pending
         if pending is None:
             return
         _, candidate = pending
-        self._install_configuration(candidate.settings_snapshot, pipeline=candidate)
+        try:
+            self._require_healthy_binding()
+            self._install_configuration(candidate.settings_snapshot, pipeline=candidate)
+        except Exception as exc:
+            self._cancel_pending_configuration(
+                str(exc), error_code="PROCESSING_CLEANUP_FAILED" if self._cleanup_failure else "PROCESSING_CONFIGURATION_REJECTED",
+            )
+            raise
         result = self._configuration_transactions.complete_applied(
             generation=self.generation, revision=self.processing_revision, engine_revision=self.engine_revision,
         )
         self._publish_configuration_result(result)
 
-    def _cancel_pending_configuration(self, message):
+    def _cancel_pending_configuration(self, message, *, error_code="PROCESSING_CONFIGURATION_CANCELLED"):
         result = self._configuration_transactions.cancel_pending(
             message, generation=self.generation, revision=self.processing_revision, engine_revision=self.engine_revision,
+            error_code=error_code,
         )
         if result is not None:
             self._publish_configuration_result(result)
+            if result.error_code == "PROCESSING_CLEANUP_FAILED":
+                raise RuntimeError(result.message)
 
     def _cancel_configuration(self, request):
         for result in self._configuration_transactions.cancel(

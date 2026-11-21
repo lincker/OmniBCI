@@ -173,7 +173,8 @@ async def test_inflight_preview_read_does_not_reject_source_controls(harness, en
     service, executor, cache, _, state = harness
     service._admission = engine_service.admission
     service._connected, service._connection_id = True, "connection"
-    service._descriptor = MagicMock(provenance="worker")
+    service._descriptor = MagicMock(sample_rate=250, signal_channel_count=1)
+    service._raw_metadata = {"source_id": "source", "descriptor": {"provenance": "protocol-defined"}}
     engine_service._acquisition = service
     engine_service._running = engine_service._accepting_commands = True
     engine_service._engine_thread = MagicMock()

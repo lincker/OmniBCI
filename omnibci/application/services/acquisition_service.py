@@ -29,7 +29,7 @@ from omnibci.application.queries.acquisition_queries import (
 )
 from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandResult, StreamDrainReceipt
 from omnibci.application.services.command_result_service import CommandExecutor, CommandRejectedError
-from omnibci.domain.signal_info import SignalInfo
+from omnibci.application.source_metadata import descriptor_layout, metadata_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class AcquisitionAppService:
     @property
     def cached_descriptor(self) -> dict | None:
         """Return the last confirmed metadata; disconnect invalidates this view."""
-        return self._descriptor.to_dict() if self._descriptor is not None else None
+        return deepcopy(self._raw_metadata["descriptor"]) if self._descriptor is not None else None
 
     @property
     def is_streaming(self) -> bool:
@@ -218,27 +218,15 @@ class AcquisitionAppService:
         result = self._command_executor.request(
             EventType.GetSourceMetadata, {"refresh": refresh}, timeout_s=5.0,
         )
-        value = result.data
-        if (not isinstance(value, dict) or set(value) != {
-                "source_id", "connection_id", "metadata", "descriptor", "descriptor_error"}
-                or not isinstance(value["source_id"], str) or not value["source_id"]
-                or not isinstance(value["connection_id"], str) or not value["connection_id"]
-                or not isinstance(value["metadata"], str)
-                or value["descriptor_error"] is not None and not isinstance(value["descriptor_error"], str)):
-            raise RuntimeError("Source returned invalid acquisition metadata")
-        metadata = None
-        if value["descriptor"] is not None:
-            try:
-                metadata = SignalInfo.from_dict(value["descriptor"])
-            except (TypeError, ValueError) as exc:
-                raise RuntimeError("Source returned invalid acquisition descriptor") from exc
-            if (metadata.source_id != value["source_id"]
-                    or metadata.connection_id != value["connection_id"]):
-                raise RuntimeError("Acquisition descriptor belongs to a different source connection")
+        try:
+            value = metadata_receipt(result.data)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(str(exc)) from exc
+        metadata = descriptor_layout(value["descriptor"]) if value["descriptor"] is not None else None
         self._descriptor = metadata
         self._raw_metadata = deepcopy({key: value[key] for key in ("source_id", "connection_id", "metadata", "descriptor")})
         self._raw_metadata["comparison"] = (
-            compare_source_expectations(binding, metadata) if metadata is not None else None
+            compare_source_expectations(binding, value["descriptor"]) if metadata is not None else None
         )
         self._descriptor_owner = acquisition_binding_key(binding)
         self._connection_id = value["connection_id"]
@@ -246,7 +234,7 @@ class AcquisitionAppService:
 
     def handle_get_status(self, query: GetAcquisitionStatusQuery) -> AcquisitionStatusResult:
         source, sample_rate, channel_count = self._device_metadata()
-        provenance = self._descriptor.provenance if self._descriptor is not None else None
+        provenance = self._raw_metadata["descriptor"]["provenance"] if self._descriptor is not None else None
         return AcquisitionStatusResult(
             connected=self._connected,
             streaming=self._streaming,
@@ -264,7 +252,7 @@ class AcquisitionAppService:
             source = self._settings.get("ACQUISITION.signal_source") if self._settings is not None else None
             return str(source) if source is not None else None, None, None
         source = self._raw_metadata["source_id"]
-        if self._descriptor is None or self._descriptor.provenance == "user-declared":
+        if self._descriptor is None or self._raw_metadata["descriptor"]["provenance"] == "user-declared":
             return source, None, None
         return source, self._descriptor.sample_rate, self._descriptor.signal_channel_count
 

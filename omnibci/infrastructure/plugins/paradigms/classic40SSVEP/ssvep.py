@@ -1,23 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
-"""Classic 40-target SSVEP paradigm — Renderer-protocol edition.
+"""Classic 40-target SSVEP paradigm — RenderSurface-protocol edition.
 
-Rendering is driven by an external RenderLoop that calls ``render_frame``
-once per VSync.  Trial control methods (``trial_stimulus_present``,
-``trial_result_present``) only mutate state and are safe to call from any
-thread.
+Rendering follows display opportunities supplied by the external RenderLoop.
+Expired images are skipped. Trial control methods (``present_trial``,
+``present_result``) run on the renderer owner thread.
 """
 from __future__ import annotations
 
+from pathlib import Path
+from collections.abc import Mapping
 import logging
+import math
 import string
 import threading
 from enum import Enum, auto
-from importlib import resources
 
 from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.sdk import PluginContext, PluginParameters, Rect, Renderer, TextureHandle
+from omnibci.sdk import FrameTiming, Rect, RenderSurface, TextureHandle, TriggerOutput
 from .feedback_display import FeedbackDisplay
 from .frame_pack import FramePack
 
@@ -39,11 +40,11 @@ _CUE_FRAMES    = 60   # ~1 s at 60 Hz
 _RESULT_FRAMES = 90   # ~1.5 s feedback display
 
 
-def _frame_pack_path():
-    pack = resources.files(__package__).joinpath("resource").joinpath(_PACK_NAME)
+def _frame_pack_path(resource_root: Path) -> Path:
+    pack = resource_root / "resource" / _PACK_NAME
     if not pack.is_file():
         raise FileNotFoundError(f"Missing classic40SSVEP frame pack: {_PACK_NAME}")
-    return resources.as_file(pack)
+    return pack
 
 
 def _center_rect(cx_px: int, cy_px: int, w_px: int, h_px: int) -> Rect:
@@ -77,10 +78,12 @@ class _State(Enum):
 class Classic40SSVEP_2(Paradigm):
     plugin_type = 'STIMULATION_THUBCI_SSVEP_classic40'
 
-    def __init__(self, trigger=None, *, parameters: PluginParameters | None = None,
-                 context: PluginContext | None = None):
-        self.trigger = trigger
-        self._renderer: Renderer | None = None
+    def __init__(
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+    ) -> None:
+        self._resource_root = resource_root
+        self.trigger: TriggerOutput | None = None
+        self._renderer: RenderSurface | None = None
 
         # GPU texture handles (populated in setup)
         self._init_tex: TextureHandle | None     = None
@@ -100,31 +103,25 @@ class Classic40SSVEP_2(Paradigm):
         self._lock             = threading.Lock()
         self._state            = _State.IDLE
         self._current_event    = 0
-        self._cue_countdown    = 0
-        self._stim_frame_idx   = 0
+        self._phase_start_refresh: int | None = None
+        self._last_refresh = -1
         self._result_target_id = 0
-        self._result_countdown = 0
 
     # ── Paradigm port ──────────────────────────────────────────────────────
 
-    def setup(self, renderer: Renderer = None) -> None:  # type: ignore[override]
-        """Upload all textures to GPU."""
-        if renderer is None:
-            return
+    def setup(self, *, renderer: RenderSurface, trigger: TriggerOutput) -> None:
+        """Borrow host capabilities and retain every uploaded texture."""
         self._renderer = renderer
+        self.trigger = trigger
 
-        with _frame_pack_path() as pack_path, FramePack(pack_path) as pack:
+        with FramePack(_frame_pack_path(self._resource_root)) as pack:
             self._init_tex = renderer.upload_texture(pack.idle_frame)
-            self._stim_textures = [
-                renderer.upload_texture(frame)
-                for frame in pack.iter_stimulation_frames()
-            ]
-            self._cue_textures = [
-                renderer.upload_texture(frame) for frame in pack.iter_cue_frames()
-            ]
-            self._result_textures = [
-                renderer.upload_texture(frame) for frame in pack.iter_result_frames()
-            ]
+            for frame in pack.iter_stimulation_frames():
+                self._stim_textures.append(renderer.upload_texture(frame))
+            for frame in pack.iter_cue_frames():
+                self._cue_textures.append(renderer.upload_texture(frame))
+            for frame in pack.iter_result_frames():
+                self._result_textures.append(renderer.upload_texture(frame))
 
         # Text widget — uploads blank texture
         self._text_view.setup(renderer)
@@ -132,73 +129,108 @@ class Classic40SSVEP_2(Paradigm):
         with self._lock:
             self._state = _State.IDLE
             self._result_target_id = 0
+            self._phase_start_refresh = None
+            self._last_refresh = -1
 
-    def teardown(self, renderer: Renderer = None) -> None:  # type: ignore[override]
-        """Release all GPU textures."""
-        r = renderer or self._renderer
-        if r is None:
-            return
-        self._text_view.teardown(r)
-        for tex in self._stim_textures:
-            r.release_texture(tex)
-        for tex in self._cue_textures:
-            r.release_texture(tex)
-        for tex in self._result_textures:
-            r.release_texture(tex)
-        if self._init_tex is not None:
-            r.release_texture(self._init_tex)
-        self._stim_textures.clear()
-        self._cue_textures.clear()
-        self._result_textures.clear()
-        self._renderer = None
-
-    # ── RenderLoop interface ───────────────────────────────────────────────
-
-    def render_frame(self, t: float = 0.0) -> None:
-        """Draw current frame.  Called by RenderLoop on the GL thread."""
+    def teardown(self) -> None:
+        """Attempt every safe release, including after partial texture upload."""
         r = self._renderer
         if r is None:
             return
+        errors = []
+        try:
+            self._text_view.teardown(r)
+        except Exception as exc:
+            errors.append(exc)
+        for textures in (self._stim_textures, self._cue_textures, self._result_textures):
+            for tex in tuple(textures):
+                try:
+                    r.release_texture(tex)
+                except Exception as exc:
+                    errors.append(exc)
+                else:
+                    textures.remove(tex)
+        if self._init_tex is not None:
+            try:
+                r.release_texture(self._init_tex)
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                self._init_tex = None
+        if errors:
+            raise ExceptionGroup("Paradigm texture cleanup failed", errors)
+        self._renderer = None
+        self.trigger = None
 
-        r.clear()
+    # ── RenderLoop interface ───────────────────────────────────────────────
+
+    def render_frame(self, frame: FrameTiming) -> bool:
+        """Select this refresh's image without replaying missed images."""
+        r = self._renderer
+        if r is None:
+            return False
+        if not math.isclose(1 / frame.refresh_period, 60, rel_tol=0, abs_tol=.01):
+            raise ValueError("Classic40 requires a fixed 60 Hz display mode")
 
         with self._lock:
+            if frame.refresh_index <= self._last_refresh:
+                return False
+            self._last_refresh = frame.refresh_index
+            if self._phase_start_refresh is None:
+                self._phase_start_refresh = frame.refresh_index
+            elapsed = frame.refresh_index - self._phase_start_refresh
+            r.clear()
+
+            if self._state == _State.CUE and elapsed >= _CUE_FRAMES:
+                self._phase_start_refresh += _CUE_FRAMES
+                elapsed -= _CUE_FRAMES
+                self._state = _State.STIM
+                # The last-cue marker opportunity was missed. Never replay a
+                # start marker for a stimulus interval that has already ended.
+                if elapsed < len(self._stim_textures):
+                    logging.warning("Classic40 start marker delayed by %d display refreshes", elapsed + 1)
+                    self.trigger.clear()
+                    self.trigger.send(self._current_event)
+                else:
+                    logging.warning("Classic40 stimulus interval elapsed before its start marker")
+
             if self._state == _State.IDLE:
                 self._draw_idle(r)
 
             elif self._state == _State.CUE:
                 r.draw_texture(self._cue_textures[self._current_event-1], _STIM_RECT)
                 self._text_view.draw(r)
-                self._cue_countdown -= 1
-                if self._cue_countdown <= 0:
-                    # CUE -> STIM: send EEG trigger
+                if elapsed == _CUE_FRAMES - 1:
+                    # Preserve the existing last-cue marker placement.
                     self.trigger.clear()
                     self.trigger.send(self._current_event)
-                    self._stim_frame_idx = 0
+                    self._phase_start_refresh += _CUE_FRAMES
                     self._state = _State.STIM
 
             elif self._state == _State.STIM:
-                if self._stim_frame_idx < len(self._stim_textures):
+                if elapsed < len(self._stim_textures):
                     r.draw_texture(
-                        self._stim_textures[self._stim_frame_idx], _STIM_RECT
+                        self._stim_textures[elapsed], _STIM_RECT
                     )
                     self._text_view.draw(r)
-                    self._stim_frame_idx += 1
                 else:
-                    # All frames shown — clear trigger and return to IDLE
+                    # The assigned interval ended, even if some images were missed.
                     self.trigger.clear()
                     self._state = _State.IDLE
                     self._draw_idle(r)
 
             elif self._state == _State.RESULT:
-                r.draw_texture(
-                    self._result_textures[self._result_target_id - 1], _STIM_RECT
-                )
-                self._text_view.draw(r)
-                self._result_countdown -= 1
-                if self._result_countdown <= 0:
+                if elapsed < _RESULT_FRAMES:
+                    r.draw_texture(
+                        self._result_textures[self._result_target_id - 1], _STIM_RECT
+                    )
+                    self._text_view.draw(r)
+                else:
+                    self._draw_idle(r)
+                if elapsed >= _RESULT_FRAMES - 1:
                     self._result_target_id = 0
                     self._state = _State.IDLE
+            return True
 
     # ── Trial control (application thread) ────────────────────────────────
 
@@ -211,43 +243,44 @@ class Classic40SSVEP_2(Paradigm):
         with self._lock:
             return self._state is not _State.IDLE
 
-    def trial_stimulus_present(self, params=None) -> None:
-        """Begin cue->stim sequence.  Thread-safe.
-
-        This paradigm interprets *params* as the target/event id: an int in
-        1..40 → cued trial for that target; anything else / None → no-cue
-        free run (default target 0).
-        """
-        event_id = params if isinstance(params, int) else 0
+    def present_trial(self, parameters: Mapping[str, object]) -> None:
+        """Begin a cued trial (1..40) or an explicit free run (0)."""
+        if (not isinstance(parameters, Mapping) or set(parameters) != {"event_id"}
+                or type(parameters["event_id"]) is not int or not 0 <= parameters["event_id"] <= _N_TARGETS):
+            raise ValueError("Trial requires event_id as an integer in 0..40")
+        event_id = parameters["event_id"]
         with self._lock:
             self._current_event = event_id
             self._result_target_id = 0
+            self._phase_start_refresh = None
             if 0 < event_id <= _N_TARGETS:
-                self._cue_countdown = _CUE_FRAMES
                 self._state         = _State.CUE
             else:
                 # No cue — go straight to STIM
                 self.trigger.clear()
                 self.trigger.send(event_id)
-                self._stim_frame_idx = 0
                 self._state          = _State.STIM
 
-    def trial_result_present(self, result=None) -> None:
-        """Update the result target and feedback text for ~1.5 s.  Thread-safe."""
-        text = self._parse_feedback(result)
-        logging.info(f"feedback result={result!r}, char={text!r}")
+    def present_result(self, result: Mapping[str, object]) -> None:
+        """Update feedback for the explicitly selected target."""
+        if (not isinstance(result, Mapping) or set(result) != {"target_id"}
+                or type(result["target_id"]) is not int or not 1 <= result["target_id"] <= _N_TARGETS):
+            raise ValueError("Result requires target_id as an integer in 1..40")
+        target_id = result["target_id"]
+        text = self._parse_feedback(target_id)
+        logging.info(f"feedback target_id={target_id!r}, char={text!r}")
         with self._lock:
             if text == 'Del':
                 self._text_view.remove_last()
             else:
                 self._text_view.add_text(text)
-            self._result_target_id = result
-            self._result_countdown = _RESULT_FRAMES
+            self._result_target_id = target_id
+            self._phase_start_refresh = None
             self._state            = _State.RESULT
 
     # ── Private ────────────────────────────────────────────────────────────
 
-    def _draw_idle(self, r: Renderer) -> None:
+    def _draw_idle(self, r: RenderSurface) -> None:
         """Draw initial frame + text. Caller must hold _lock."""
         r.draw_texture(self._init_tex, _STIM_RECT)
         self._text_view.draw(r)

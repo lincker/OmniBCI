@@ -4,6 +4,7 @@ import asyncio
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from threading import RLock
 from time import monotonic
 from uuid import UUID, uuid4
@@ -47,6 +48,14 @@ def validate_external_peers(engine, activation_set, candidates, strategy):
             raise PluginSchemaError(f"{role.title()} is externally managed; disconnect its node before changing configuration")
 
 
+class ApplyStrategy(StrEnum):
+    SELECT_ON_START = "select_on_start"
+    NO_CHANGE = "no_change"
+    REBUILD = "rebuild"
+    TRIAL_BOUNDARY = "trial_boundary"
+    MODULE = "module"
+
+
 @dataclass(frozen=True)
 class ConfigurationPlan:
     plan_id: str
@@ -57,11 +66,14 @@ class ConfigurationPlan:
     applied_revisions: dict[str, str | None] | None
     generation: str | None
     running: bool
-    strategy: str
+    strategy: ApplyStrategy
     changed_slots: tuple[str, ...]
     changed_settings: tuple[str, ...]
     errors: tuple[str, ...]
     signal_summary: str | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "strategy", ApplyStrategy(self.strategy))
 
     def to_dict(self):
         return asdict(self)
@@ -115,8 +127,8 @@ class RuntimeConfigurationService:
         accepted, errors = {}, {}
         for section in SECTIONS:
             try:
-                value = (self.profiles.repository.get_engine() if section == "engine"
-                         else self.profiles.repository.get_module(section))
+                value = (self.profiles.get_engine() if section == "engine"
+                         else self.profiles.get_module(section))
                 accepted[section] = value.revision if value is not None else None
             except (ValueError, KeyError, RuntimeError, OSError) as exc:
                 accepted[section] = None
@@ -154,10 +166,10 @@ class RuntimeConfigurationService:
     def revert_plan(self, module: str, entry_id: str) -> ConfigurationPlan:
         if module not in MODULES:
             raise PluginSchemaError("Unsupported configuration module")
-        entry = self.profiles.repository.get_module_history_entry(module, entry_id)
+        entry = self.profiles.module_history_entry(module, entry_id)
         if entry is None:
             raise KeyError(entry_id)
-        current = self.profiles.repository.get_module(module)
+        current = self.profiles.get_module(module)
         return self._plan(module, entry.activation, current.revision if current else None,
                           restored_from=entry_id)
 
@@ -167,7 +179,7 @@ class RuntimeConfigurationService:
             self._plans[stored.plan.plan_id] = stored
             while len(self._plans) > self._MAX_PLANS:
                 self._plans.popitem(last=False)
-        return stored.plan
+        return deepcopy(stored.plan)
 
     def _prepare(self, module, candidate, expected_revision, *, restored_from=None):
         dependencies = {module, "engine"}
@@ -177,7 +189,7 @@ class RuntimeConfigurationService:
             dependencies.add("processing")
         if module == "engine":
             dependencies.update(SECTIONS)
-        current = read_configuration(self.profiles.repository, dependencies)
+        current = self.profiles.selected_configuration(dependencies - {"engine"})
         revisions = current.revisions()
         if revisions[module] != expected_revision:
             raise ProfileRevisionConflict("The module configuration changed; reload before planning")
@@ -258,7 +270,7 @@ class RuntimeConfigurationService:
         plan = stored.plan
         if plan.errors:
             raise PluginSchemaError("; ".join(plan.errors))
-        current = read_configuration(self.profiles.repository, plan.expected_revisions)
+        current = self.profiles.selected_configuration(set(plan.expected_revisions) - {"engine"})
         revisions = current.revisions()
         applied = self.engine.applied_revisions or {}
         if (any(revisions[k] != v for k, v in plan.expected_revisions.items())
@@ -270,7 +282,7 @@ class RuntimeConfigurationService:
         if (plan.running and plan.module in ("acquisition", "processing") and plan.strategy != "no_change"
                 and self.engine.is_module_running(plan.module) == (plan.strategy == "select_on_start")):
             raise ProfileRevisionConflict("Module state changed; create a new plan")
-        return stored
+        return deepcopy(stored)
 
     def _validate_runtime(self, activation_set, candidates, strategy):
         if not self.engine.is_engine_ready and self.engine.foundation_requires_cleanup:
@@ -319,7 +331,7 @@ class RuntimeConfigurationService:
                     raise ProfileRevisionConflict("Resolve or stop the uncertain runtime module before starting")
                 start_foundation = module in ("acquisition", "processing") and not self.engine.is_engine_ready
                 scopes = tuple(MODULES) if (start_foundation
-                                           or self.profiles.repository.get_engine() is None) else (module,)
+                                           or self.profiles.get_engine() is None) else (module,)
                 reservation = self._admission.reserve_transition(scopes, recovery=start_foundation)
                 self._current_requests[operation_id] = request
                 self._operations[operation_id] = dict(
@@ -357,7 +369,7 @@ class RuntimeConfigurationService:
                 if not self.engine.is_engine_ready and module not in ("acquisition", "processing"):
                     raise RuntimeError("Start the engine before starting a module")
                 candidate = self.profiles.propose(module, configuration["bindings"], settings=configuration["settings"])
-                previous = self.profiles.repository.get_module(module)
+                previous = self.profiles.get_module(module)
                 if (previous.revision if previous else None) != configuration["expected_revision"]:
                     raise ProfileRevisionConflict("The module configuration changed; reload before starting")
                 kinds = MODULE_KINDS[module] if candidate.settings.get(f"{module.upper()}.auto_spawn", True) else set()
@@ -513,7 +525,7 @@ class RuntimeConfigurationService:
                 return "module"
             if previous.configuration_version != following.configuration_version:
                 return "module"
-            properties = (self.profiles.catalog.get(following.kind, following.selection).schema or {}).get("properties", {})
+            properties = (self.profiles.get_plugin_configuration(following.kind, following.selection).schema or {}).get("properties", {})
             for key in previous.parameters.keys() | following.parameters.keys():
                 if previous.parameters.get(key) != following.parameters.get(key):
                     if properties.get(key, {}).get("x-apply") != "trial":

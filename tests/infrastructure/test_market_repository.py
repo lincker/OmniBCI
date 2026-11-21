@@ -24,7 +24,12 @@ from omnibci.infrastructure.plugins.market_repository import (
     StaticMarketRepository,
     canonical_index_bytes,
 )
-from omnibci.infrastructure.plugins.package_installer import PackageInstallError, PluginPackageInstaller
+from omnibci.application.plugin_packages import PluginPackageError
+from omnibci.application.services.plugin_installation_service import PluginInstallationService
+from omnibci.application.services.plugin_market_service import PluginMarketService
+from omnibci.infrastructure.plugins.market_adapter import MarketRepositoryAdapter
+from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
+from omnibci.infrastructure.plugins.package_store import DirectoryPluginPackageStore
 
 _URL = "https://plugins.example.test/repository/index.json"
 _DOWNLOAD = "https://plugins.example.test/repository/packages/device-1.0.0.zip"
@@ -34,7 +39,7 @@ _NOW = datetime(2026, 9, 23, 12, tzinfo=UTC)
 def _package_bytes(*, publisher="acme", version="1.0.0"):
     manifest = {
         "manifest_version": 2,
-        "package": {"id": "device", "publisher": publisher, "version": version, "api_version": "2", "domain": "acquisition"},
+        "package": {"id": "device", "publisher": publisher, "version": version, "api_version": "1", "domain": "acquisition"},
         "contributions": [{"id": "reader", "kind": "acquisition", "entrypoint": "driver:Reader"}],
     }
     buffer = io.BytesIO()
@@ -55,7 +60,7 @@ def _index(archive):
             "description": "Controlled test package.", "download": "packages/device-1.0.0.zip",
             "sha256": hashlib.sha256(archive).hexdigest(), "size": len(archive),
             "contributions": [{"id": "reader", "kind": "acquisition"}],
-            "api_version": "2", "domain": "acquisition", "platforms": ["linux", "darwin", "win32"],
+            "api_version": "1", "domain": "acquisition", "platforms": ["linux", "darwin", "win32"],
             "host_version": "1.0.0", "requires": {},
         }],
     }
@@ -101,9 +106,8 @@ def repository(tmp_path):
     key = Ed25519PrivateKey.generate()
     archive = _package_bytes()
     index = _index(archive)
-    installer = PluginPackageInstaller(tmp_path / "installed", host_version="1.0.0", host_dependencies={})
     client = StaticMarketRepository(
-        _URL, {"test-key": key.public_key()}, installer, tmp_path / "cache",
+        _URL, {"test-key": key.public_key()}, tmp_path / "cache",
         expected_repository_id="example.plugins", clock=lambda: _NOW,
     )
     opener = _Opener({_URL: _signed(index, key), _DOWNLOAD: archive})
@@ -125,35 +129,35 @@ def test_listing_verifies_real_ed25519_signature_without_downloading_or_installi
     assert package.contributions[0].selection.package_id == "acme.device"
     assert package.contributions[0].selection.contribution_id == "reader"
     assert package.contributions[0].kind == "acquisition"
-    assert package.api_version == "2"
+    assert package.api_version == "1"
     assert package.host_version == "1.0.0"
     assert [request[0] for request in opener.requests] == [_URL]
     assert not client.cache_dir.exists()
-    assert not client.installer.root.exists()
+    assert not (client.cache_dir.parent / "installed").exists()
 
 
-def test_install_downloads_verified_archive_without_executing_or_enabling(repository):
+def test_download_prepares_verified_archive_without_installing_or_executing(repository):
     client, opener, _, archive, _ = repository
 
-    installed = client.install("acme.device", "1.0.0")
+    installed = client.prepare_install("acme.device", "1.0.0")
 
-    assert installed.package_id == "acme.device"
-    assert not installed.already_installed
-    assert (installed.location / "manifest.toml").exists()
-    assert (client.cache_dir / f"{installed.sha256}.zip").read_bytes() == archive
-    assert not list(installed.location.rglob("__pycache__"))
+    assert installed.package.package_id == "acme.device"
+    assert installed.archive.read_bytes() == archive
+    assert installed.archive.name == f"{installed.package.sha256}.zip"
+    assert not (client.cache_dir.parent / "installed").exists()
+    client.verify_prepared(installed)
     assert [request[0] for request in opener.requests] == [_URL, _DOWNLOAD]
     assert not list(client.cache_dir.glob("__download-*"))
 
 
-def test_repeated_install_reverifies_index_and_reuses_only_validated_cache(repository):
+def test_repeated_download_reverifies_index_and_reuses_only_validated_cache(repository):
     client, opener, _, _, _ = repository
-    first = client.install("acme.device", "1.0.0")
+    first = client.prepare_install("acme.device", "1.0.0")
 
-    second = client.install("acme.device", "1.0.0")
+    second = client.prepare_install("acme.device", "1.0.0")
 
-    assert second.already_installed
-    assert second.location == first.location
+    assert second == first
+    assert second.archive == first.archive
     assert [request[0] for request in opener.requests] == [_URL, _DOWNLOAD, _URL]
 
 
@@ -163,7 +167,7 @@ def test_corrupt_cache_is_replaced_only_after_complete_verified_download(reposit
     cached = client.cache_dir / f"{index['packages'][0]['sha256']}.zip"
     cached.write_bytes(b"0" * len(archive))
 
-    client.install("acme.device", "1.0.0")
+    client.prepare_install("acme.device", "1.0.0")
 
     assert cached.read_bytes() == archive
     assert [request[0] for request in opener.requests] == [_URL, _DOWNLOAD]
@@ -177,10 +181,10 @@ def test_cache_symlink_is_not_followed(repository, tmp_path):
     (client.cache_dir / f"{index['packages'][0]['sha256']}.zip").symlink_to(outside)
 
     with pytest.raises(MarketRepositoryError, match="symlinks"):
-        client.install("acme.device", "1.0.0")
+        client.prepare_install("acme.device", "1.0.0")
 
     assert outside.read_text() == "preserve"
-    assert not client.installer.root.exists()
+    assert not (client.cache_dir.parent / "installed").exists()
 
 
 @pytest.mark.parametrize("change", ["payload", "signature", "wrong_key", "unknown_key", "embedded_key", "algorithm"])
@@ -202,10 +206,10 @@ def test_untrusted_or_invalid_signatures_are_rejected_before_download(repository
     opener.routes[_URL] = json.dumps(document).encode()
 
     with pytest.raises(MarketRepositoryError, match="signature|signing key"):
-        client.install("acme.device", "1.0.0")
+        client.prepare_install("acme.device", "1.0.0")
 
     assert [request[0] for request in opener.requests] == [_URL]
-    assert not client.installer.root.exists()
+    assert not (client.cache_dir.parent / "installed").exists()
 
 
 @pytest.mark.parametrize("field,value", [
@@ -222,20 +226,20 @@ def test_stale_future_wrong_repository_and_unknown_schema_are_rejected(repositor
     opener.routes[_URL] = _signed(index, key)
 
     with pytest.raises(MarketRepositoryError):
-        client.install("acme.device", "1.0.0")
+        client.prepare_install("acme.device", "1.0.0")
 
     assert [request[0] for request in opener.requests] == [_URL]
     assert not client.cache_dir.exists()
 
 
-def test_expired_index_blocks_reinstall_even_when_archive_is_cached(repository):
+def test_expired_index_blocks_download_even_when_archive_is_cached(repository):
     client, opener, key, _, index = repository
-    client.install("acme.device", "1.0.0")
+    client.prepare_install("acme.device", "1.0.0")
     index["expires_at"] = "2026-09-23T01:00:00Z"
     opener.routes[_URL] = _signed(index, key)
 
     with pytest.raises(MarketRepositoryError, match="expired"):
-        client.install("acme.device", "1.0.0")
+        client.prepare_install("acme.device", "1.0.0")
 
     assert [request[0] for request in opener.requests] == [_URL, _DOWNLOAD, _URL]
 
@@ -252,7 +256,7 @@ def test_default_transport_rejects_non_https_and_unsafe_repository_urls(tmp_path
     with pytest.raises(MarketRepositoryError):
         StaticMarketRepository(
             url, {"key": Ed25519PrivateKey.generate().public_key()},
-            PluginPackageInstaller(tmp_path / "installed"), tmp_path / "cache",
+            tmp_path / "cache",
         )
 
 
@@ -261,7 +265,7 @@ def test_http_exception_never_allows_nonliteral_loopback(tmp_path, host):
     with pytest.raises(MarketRepositoryError, match="literal loopback"):
         StaticMarketRepository(
             f"http://{host}/index.json", {"key": Ed25519PrivateKey.generate().public_key()},
-            PluginPackageInstaller(tmp_path / "installed"), tmp_path / "cache", allow_http=True,
+            tmp_path / "cache", allow_http=True,
         )
 
 
@@ -294,15 +298,15 @@ def test_download_hash_or_length_mismatch_never_reaches_installer(repository, mu
     opener.routes[_URL] = _signed(index, key)
 
     with pytest.raises(MarketRepositoryError, match="size|SHA-256"):
-        client.install("acme.device", "1.0.0")
+        client.prepare_install("acme.device", "1.0.0")
 
-    assert not client.installer.root.exists()
+    assert not (client.cache_dir.parent / "installed").exists()
     assert not list(client.cache_dir.glob("*.zip"))
     assert not list(client.cache_dir.glob("__download-*"))
 
 
 @pytest.mark.parametrize("mismatch", ["package_id", "version", "contributions"])
-def test_signed_catalog_archive_identity_mismatch_is_rejected_before_publication(repository, mismatch):
+def test_signed_catalog_archive_identity_mismatch_is_rejected_before_publication(repository, mismatch, tmp_path):
     client, opener, key, archive, index = repository
     if mismatch == "package_id":
         index["packages"][0]["package_id"] = "other.device"
@@ -314,18 +318,20 @@ def test_signed_catalog_archive_identity_mismatch_is_rejected_before_publication
     opener.routes[_URL] = _signed(index, key)
     package = index["packages"][0]
 
-    with pytest.raises(PackageInstallError, match="does not match|do not match"):
-        client.install(package["package_id"], package["version"])
+    store = DirectoryPluginPackageStore(tmp_path / "plugins")
+    service = PluginMarketService(MarketRepositoryAdapter(client), PluginInstallationService(store))
+    with pytest.raises(PluginPackageError, match="does not match|do not match"):
+        service.install(package["package_id"], package["version"])
 
-    assert not list(client.installer.root.rglob("manifest.toml"))
-    assert not list(client.installer.root.glob("__install-*"))
+    assert not list(store.packages_dir.rglob("manifest.toml"))
+    assert not list(store.packages_dir.glob("__install-*"))
 
 
 def test_package_selection_is_exact_and_never_falls_back_to_latest(repository):
     client, opener, _, _, _ = repository
 
     with pytest.raises(MarketRepositoryError, match="Unknown exact"):
-        client.install("acme.device", "2.0.0")
+        client.prepare_install("acme.device", "2.0.0")
 
     assert [request[0] for request in opener.requests] == [_URL]
 
@@ -396,7 +402,7 @@ def test_transport_failures_are_actionable_and_do_not_install(repository, fault)
 
     with pytest.raises(MarketRepositoryError):
         client.list_packages()
-    assert not client.installer.root.exists()
+    assert not (client.cache_dir.parent / "installed").exists()
 
 
 def test_index_read_limit_is_enforced_without_content_length(repository):
@@ -430,14 +436,14 @@ def test_overall_transfer_deadline_is_enforced(repository, monkeypatch):
 @pytest.mark.parametrize("keys", [{}, {"test-key": b"short"}, {"test-key": "not-base64"}])
 def test_trusted_keys_must_be_explicit_valid_public_keys(tmp_path, keys):
     with pytest.raises(MarketRepositoryError):
-        StaticMarketRepository(_URL, keys, PluginPackageInstaller(tmp_path / "installed"), tmp_path / "cache")
+        StaticMarketRepository(_URL, keys, tmp_path / "cache")
 
 
 def test_base64_operator_public_keys_are_supported(repository, tmp_path):
     original, opener, key, _, _ = repository
     encoded = base64.b64encode(key.public_key().public_bytes_raw()).decode()
     client = StaticMarketRepository(
-        _URL, {"test-key": encoded}, original.installer, tmp_path / "cache",
+        _URL, {"test-key": encoded}, tmp_path / "cache",
         clock=lambda: _NOW,
     )
     client._opener = opener
@@ -486,14 +492,16 @@ def test_signed_local_http_repository_installs_and_refuses_real_redirects(tmp_pa
     thread.start()
     try:
         base = f"http://127.0.0.1:{server.server_port}"
-        installer = PluginPackageInstaller(tmp_path / "installed", host_version="1.0.0", host_dependencies={})
+        installer = PluginPackageInstaller(tmp_path / "plugins" / "packages", host_version="1.0.0", host_dependencies={})
+        store = DirectoryPluginPackageStore(tmp_path / "plugins", installer=installer)
         client = StaticMarketRepository(
-            base + "/index.json", {"test-key": key.public_key()}, installer,
+            base + "/index.json", {"test-key": key.public_key()},
             tmp_path / "cache", allow_http=True, clock=lambda: _NOW,
         )
-        assert client.install("acme.device", "1.0.0").package_id == "acme.device"
+        service = PluginMarketService(MarketRepositoryAdapter(client), PluginInstallationService(store))
+        assert service.install("acme.device", "1.0.0").package.package_id == "acme.device"
         redirected = StaticMarketRepository(
-            base + "/redirect.json", {"test-key": key.public_key()}, installer,
+            base + "/redirect.json", {"test-key": key.public_key()},
             tmp_path / "cache", allow_http=True, clock=lambda: _NOW,
         )
         with pytest.raises(MarketRepositoryError, match="redirects"):

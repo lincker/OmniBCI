@@ -12,6 +12,10 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from omnibci.application.configuration.models import ProfileBinding
+from omnibci.application.plugin_identity import PluginSelection
+from tests.execution_helpers import synthetic_execution_snapshot
+
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.ipc.event_bus import EventBus
@@ -19,6 +23,15 @@ from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
+
+
+def _source_snapshot():
+    return synthetic_execution_snapshot({
+        "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "b" * 64},
+        "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1",
+        "PLUGINS.bindings": [ProfileBinding("acquisition.source", "acquisition", None,
+            PluginSelection("test.source", "default", "1.0.0"), {}).to_dict()],
+    })
 
 
 # Patch heavy imports so the builder test doesn't need config files / plugins
@@ -57,7 +70,7 @@ class TestNeuroEngineBuilder:
     def test_acquisition_logs_use_a_separate_bounded_owned_channel(self):
         engine = NeuroEngineBuilder(settings_snapshot={}).build()
         try:
-            worker_channel = engine._worker_factory("acquisition", {})
+            worker_channel = engine._worker_factory("acquisition", _source_snapshot())
             worker = worker_channel.process
             worker_channel.receiver.close()
             worker_channel.reporter.close()
@@ -145,7 +158,7 @@ class TestNeuroEngineBuilder:
         ):
             engine = NeuroEngineBuilder(settings_snapshot={}).build()
             for module in ("acquisition", "processing"):
-                channel = engine._worker_factory(module, {})
+                channel = engine._worker_factory(module, _source_snapshot())
                 channel.receiver.close()
                 channel.reporter.close()
 

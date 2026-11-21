@@ -18,11 +18,11 @@ from omnibci.application.commands.stimulation_commands import (
 )
 from omnibci.application.ports.engine_port import EnginePort
 from omnibci.application.ports.engine_port import STIMULATION_PEER
+from omnibci.application.ports.output_process import StimulationProcess
 from omnibci.application.services.command_result_service import CommandDeliveryError, CommandTimeoutError
 
 if TYPE_CHECKING:
     from omnibci.application.services.command_result_service import CommandResultBroker
-    from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class StimulationAppService:
     def __init__(
         self,
         engine: EnginePort,
-        process_manager: "StimulationProcessManager | None" = None,
+        process_manager: StimulationProcess | None = None,
         command_results: "CommandResultBroker | None" = None,
         admission=None,
     ) -> None:
@@ -49,6 +49,8 @@ class StimulationAppService:
             self._start_stimulation(settings_snapshot=settings_snapshot)
 
     def _start_stimulation(self, *, settings_snapshot: dict) -> None:
+        if self._stop_managed is not None:
+            raise RuntimeError("Stimulation stop is unconfirmed; replacement is blocked")
         if not self._engine.is_engine_ready:
             raise RuntimeError("Start the engine before starting stimulation")
         process_ready = False
@@ -121,25 +123,24 @@ class StimulationAppService:
             # still has to stop.  Never replace the dispatch error with a
             # secondary process-cleanup failure.
             try:
-                if self._process_manager is not None:
+                if self._process_manager is not None and self._managed():
                     self._process_manager.stop()
+                    self._active_identity = None
             except BaseException:
                 logger.exception(
                     "Failed to stop Stimulation process after dispatch error"
                 )
-            finally:
-                self._active_identity = None
             raise
         else:
-            try:
-                if self._process_manager is not None:
-                    self._process_manager.stop()
-            finally:
-                self._active_identity = None
+            if self._process_manager is not None:
+                self._process_manager.stop()
+            self._active_identity = None
         logger.info("StopStimulation event dispatched")
 
     @admitted(scopes="stimulation")
     def handle_start_trial(self, cmd: StartStimTrialCommand) -> None:
+        if self._stop_managed is not None:
+            raise RuntimeError("Stimulation stop is unconfirmed; trials are blocked")
         if not self.is_active:
             raise RuntimeError("Start stimulation before starting a trial")
         # JSON-friendly payload: it crosses the engine→stimulation socket, where

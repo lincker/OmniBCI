@@ -1,8 +1,13 @@
 # Current configuration, saved profiles, and history
 
-Each plugin has editable **Current parameters**. A saved Profile is a
-named reusable copy for one exact package, contribution, and version. Applying
-current values never requires saving a Profile first.
+Each configured plugin slot has editable **Current parameters** for its selected
+Contribution. A saved Profile is a named reusable copy for one exact package,
+contribution, and version. Applying
+current values never requires saving a Profile first. Follow the
+[canonical plugin terminology](plugin-marketplace-design.md#31-canonical-plugin-terminology):
+Configuration owns Profiles and accepted bindings; the owning Module Host
+constructs and runs Instances. Saving or loading a Profile does not install a
+Package or create an Instance. The workflows below describe the current implementation.
 
 ## Using the console
 
@@ -83,6 +88,11 @@ revision containing the older values. It does not load the editor or apply a
 module. Console module actions submit current values without binding their
 runtime state to a saved Profile identity.
 
+Execution history is separate from editable module/Profile history. It retains
+private acknowledged artifact/environment receipts per host operation; a prepared
+candidate can be cancelled before activation. Development runs use separate
+configuration and temporary execution history, without reading ordinary Profiles.
+
 ## Storage and ownership
 
 The root is `OMNIBCI_CONFIG_DIR` when set, otherwise
@@ -94,6 +104,7 @@ plugin-profiles/<uuid>/history/<integer-revision>.toml
 activation/<module>.toml
 activation/history/<module>/<operation-uuid>.toml
 settings.toml
+execution-history/<operation-key-hash>.json
 locks/settings.lock
 locks/profiles.lock
 locks/<module>.lock

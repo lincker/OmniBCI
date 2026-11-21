@@ -1,10 +1,13 @@
-"""Package domains and host compatibility hold at discovery and publication."""
+"""Package classification stays separate from host compatibility and role ownership."""
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import tomlkit
 
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginManifestError, PluginRoot
+from omnibci.infrastructure.plugins.plugin_catalog import (
+    PluginCatalog, PluginRoot,
+)
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 from omnibci.infrastructure.plugins.package_installer import PackageInstallError
 from tests.infrastructure.test_package_installer import _archive, _installer, _manifest
 from tests.infrastructure.test_plugin_contributions import _write_package, _selection, _contribution
@@ -32,11 +35,11 @@ def test_acquisition_package_trigger_is_still_a_stimulation_contribution(tmp_pat
     assert trigger.category == "trigger"
 
 
-def test_foreign_kind_rejects_the_entire_package(tmp_path):
+def test_package_domain_does_not_restrict_contribution_kinds(tmp_path):
     _write_package(tmp_path, contributions=[_contribution(), _contribution("filter", "filter")])
     catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(tmp_path, "user", 0)]})
-    with pytest.raises(PluginManifestError, match="not allowed"):
-        catalog.resolve_selection("acquisition", _selection())
+    assert catalog.resolve_selection("acquisition", _selection()).category == "acquisition"
+    assert catalog.resolve_selection("filter", _selection("filter")).category == "filter"
 
 
 @pytest.mark.parametrize("requirement", [">=1,<2", "==1.0", ">0.9,<=1.0.0", ">=1.0.0"])
@@ -64,17 +67,18 @@ def test_catalog_rechecks_host_compatibility_after_host_changes(tmp_path):
         catalog.resolve_selection("acquisition", _selection())
 
 
-def test_installed_domain_cannot_change_even_before_enablement(tmp_path):
+def test_installed_versions_may_have_different_classifications(tmp_path):
     installer = _installer(tmp_path)
     installer.install(_archive(tmp_path))
     manifest = _manifest(version="2.0.0", domain="actuation")
     manifest["contributions"][0]["kind"] = "effector"
-    with pytest.raises(PackageInstallError, match="domain cannot change"):
-        installer.install(_archive(tmp_path, manifest=manifest, name="second.zip"))
-    assert not (installer.root / "acme.device" / "2.0.0").exists()
+    result = installer.install(_archive(tmp_path, manifest=manifest, name="second.zip"))
+    assert result.location.is_dir()
+    assert (installer.root / "acme.device" / "1.0.0").is_dir()
+    assert result.contributions[0].package.domain == "actuation"
 
 
-def test_concurrent_first_versions_cannot_publish_different_domains(tmp_path):
+def test_concurrent_versions_keep_independent_classifications(tmp_path):
     first = _archive(tmp_path, name="first.zip")
     manifest = _manifest(version="2.0.0", domain="actuation")
     manifest["contributions"][0]["kind"] = "effector"
@@ -86,8 +90,9 @@ def test_concurrent_first_versions_cannot_publish_different_domains(tmp_path):
             return exc
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(install, [first, second]))
-    assert sum(isinstance(result, PackageInstallError) for result in results) == 1
-    assert len(list((tmp_path / "installed" / "acme.device").iterdir())) == 1
+    assert not any(isinstance(result, PackageInstallError) for result in results)
+    assert {result.contributions[0].package.domain for result in results} == {"acquisition", "actuation"}
+    assert len(list((tmp_path / "installed" / "acme.device").iterdir())) == 2
 
 
 def test_signed_domain_must_match_archive_domain(tmp_path):
@@ -95,7 +100,7 @@ def test_signed_domain_must_match_archive_domain(tmp_path):
         _installer(tmp_path).install(_archive(tmp_path), expected_domain="processing")
 
 
-@pytest.mark.parametrize("field,value", [("api_version", "1"), ("version", ">=1"), ("version", "*")])
+@pytest.mark.parametrize("field,value", [("api_version", "2"), ("version", ">=1"), ("version", "*")])
 def test_catalog_rejects_legacy_api_and_non_exact_version(tmp_path, field, value):
     _write_package(tmp_path, package_fields={field: value})
     catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(tmp_path, "user", 0)]})

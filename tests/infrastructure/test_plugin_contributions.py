@@ -4,24 +4,21 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
 from omnibci.domain.ports.effector import Effector
-from omnibci.sdk import PluginContext
-from omnibci.infrastructure.plugins.descriptors import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import (
-    AmbiguousPluginError,
-    PluginCatalog,
-    PluginManifestError,
-    PluginNotFoundError,
-    PluginRoot,
+    AmbiguousPluginError, PluginCatalog, PluginNotFoundError, PluginRoot,
 )
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 
 def _contribution(identifier="reader", kind="acquisition", **fields):
-    if kind in {"decoder", "filter", "epoch_detector"}:
-        fields.setdefault("signal_input_contract", 1)
+    if kind == "decoder":
+        fields.setdefault("channel_requirements", {})
     return {
         "id": identifier, "kind": kind, "entrypoint": "driver:Driver", **fields,
     }
@@ -33,7 +30,7 @@ def _write_package(root: Path, directory="device", *, publisher="acme",
     location.mkdir(parents=True)
     package = {
         "id": "device", "publisher": publisher, "version": version,
-        "api_version": "2", "domain": {"acquisition": "acquisition", "trigger": "stimulation",
+        "api_version": "1", "domain": {"acquisition": "acquisition", "trigger": "stimulation",
             "filter": "processing", "epoch_detector": "processing", "decoder": "processing",
             "effector": "actuation", "paradigm": "stimulation"}[(contributions or [_contribution()])[0]["kind"]],
         **(package_fields or {}),
@@ -42,6 +39,8 @@ def _write_package(root: Path, directory="device", *, publisher="acme",
         "manifest_version": 2, "package": package,
         "contributions": contributions if contributions is not None else [_contribution()],
     }
+    for name, contents in output_payload_files(document).items():
+        (location / name).write_text(contents)
     (location / "manifest.toml").write_text(tomlkit.dumps(document), encoding="utf-8")
     return location
 
@@ -58,7 +57,7 @@ def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_
     location = _write_package(tmp_path, contributions=[
         _contribution(display_name="Reader", params={"channels": 8}),
         _contribution("trigger", "trigger", plugin_type="device_trigger"),
-    ], package_fields={"source": "builtin"})
+    ])
     marker = tmp_path / "executed"
     (location / "driver.py").write_text(
         f"from pathlib import Path\nPath({str(marker)!r}).write_text('yes')\n",
@@ -230,18 +229,19 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
         "from omnibci.domain.ports.effector import Effector\n"
         "class Driver(Effector):\n"
         "    plugin_type = 'output'\n"
-        "    def __init__(self, *, parameters, context): pass\n"
+        "    def __init__(self, *, parameters, resource_root): pass\n"
         "    def setup(self): pass\n"
         "    def teardown(self): pass\n"
-        "    def play(self, command): self.command = command\n",
+        "    def execute(self, command): self.command = command\n"
+        "    def quiesce(self): pass\n",
         encoding="utf-8",
     )
     descriptor = _catalog(PluginRoot(tmp_path, "user", 0)).resolve_selection(
         "effector", _selection("output"),
     )
 
-    instance = PluginLoader.instantiate(descriptor, Effector, parameters={}, context=PluginContext())
-    instance.play({"target_id": 2})
+    instance = PluginLoader.instantiate(descriptor, Effector, parameters={})
+    instance.execute({"target_id": 2})
 
     assert isinstance(instance, Effector)
     assert instance.command == {"target_id": 2}

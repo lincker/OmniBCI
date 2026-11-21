@@ -10,6 +10,7 @@ from typing import Optional
 
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.process_lifecycle import StartupReporter
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogForwarder
 from omnibci.infrastructure.acquisition.acquisition import (
     AcquisitionRuntime,
@@ -90,7 +91,9 @@ class AcquisitionWorker(mp.Process):
         ) if self.log_queue is not None else nullcontext())
         with forwarding:
             if self.startup_reporter is not None:
-                self.startup_reporter.ready()
+                self.startup_reporter.ready(execution=execution_receipt(
+                    snapshot, "acquisition", snapshot["CONFIG.operation_id"],
+                ))
             self._startup_stage = "run"
             self.runtime.run()
 

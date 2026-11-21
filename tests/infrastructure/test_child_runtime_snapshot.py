@@ -7,14 +7,19 @@ import pickle
 import subprocess
 import sys
 from copy import deepcopy
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from omnibci.application.configuration.definitions import module_runtime_settings
 from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.process_lifecycle import StartupReport, StartupReporter
+from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer, execution_receipt
+from tests.execution_helpers import output_bindings, synthetic_execution_snapshot
 
 
 MANAGERS = (
@@ -23,23 +28,28 @@ MANAGERS = (
 )
 
 
-def _snapshot(key, revision="revision-1"):
+def _snapshot(key, revision="a" * 64):
     snapshot = {
         key: "selected-plugin",
-        "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.engine_revision": "engine",
+        "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.engine_revision": "c" * 64,
         "CONFIG.generation": "graph-1",
         "STIMULATION.auto_spawn": True,
         "ACTUATION.auto_spawn": True,
-        "PLUGINS.bindings": [{"parameters": {"level": 1}}],
+        "PLUGINS.bindings": [{**output_bindings()[1], "parameters": {"level": 1}}],
     }
     if key == "STIMULATION.paradigm":
         snapshot.pop(key)
         snapshot["PLUGINS.bindings"][0].update({
+            "parameters": {},
             "slot": "stimulation.paradigm", "kind": "paradigm",
             "selection": {"package_id": "OmniBCI.classic40SSVEP",
                           "contribution_id": "default", "version": "0.1.0"},
             "configuration_version": 1, "profile_revision": 0,
         })
+        snapshot = PluginArtifactPreparer(ManagedPluginPackageStore()).prepare_snapshot(snapshot, ("stimulation",))
+    else:
+        snapshot = synthetic_execution_snapshot(snapshot)
+        snapshot.pop("CONFIG.operation_id")
     return snapshot
 
 
@@ -56,6 +66,7 @@ def _mock_spawning(monkeypatch, module, component):
             component, module_revisions={component.lower(): snapshot["CONFIG.module_revisions"][component.lower()]},
             engine_revision=snapshot["CONFIG.engine_revision"],
             generation=snapshot.get("CONFIG.generation"),
+            execution=execution_receipt(snapshot, component.lower(), snapshot["CONFIG.operation_id"]),
         )
         child = Mock(pid=123, exitcode=0)
         child.is_alive.return_value = True
@@ -84,6 +95,8 @@ async def test_host_mode_does_not_override_current_snapshot_default(monkeypatch,
         assert manager.is_ready
     finally:
         manager.stop()
+        await container.engine_service.shutdown()
+        container.package_owner.close()
 
 
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
@@ -100,16 +113,20 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
         assert manager.current_paradigm == "STIMULATION_THUBCI_SSVEP_classic40"
     else:
         assert manager.current_effector == "selected-plugin"
-    assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": original}
+    assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": {**module_runtime_settings(original, component.lower()), "CONFIG.operation_id": manager._settings_snapshot["CONFIG.operation_id"]}}
 
-    saved["CONFIG.module_revisions"][component.lower()] = "revision-2"
+    saved["CONFIG.module_revisions"][component.lower()] = "b" * 64
     saved["PLUGINS.bindings"][0]["parameters"]["level"] = 2
-    assert spawned["kwargs"]["settings_snapshot"] == original
+    assert spawned["kwargs"]["settings_snapshot"] == {**module_runtime_settings(original, component.lower()), "CONFIG.operation_id": manager._settings_snapshot["CONFIG.operation_id"]}
+    if component == "Stimulation":
+        saved["PLUGINS.bindings"][0]["parameters"].pop("level")
+    else:
+        saved = synthetic_execution_snapshot(saved)
     manager.start(settings_snapshot=saved)
 
     assert factory.call_count == 2
     assert manager.is_ready
-    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"]["CONFIG.module_revisions"][component.lower()] == "revision-2"
+    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"]["CONFIG.module_revisions"][component.lower()] == "b" * 64
 
 
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
@@ -123,8 +140,8 @@ def test_processing_update_does_not_restart_or_relabel_output_child(monkeypatch,
     changed["ALGORITHM.decoder"] = "new-decoder"
     manager.start(settings_snapshot=changed)
     assert factory.call_count == 1
-    assert manager._settings_snapshot == original
-    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"] == original
+    assert manager._settings_snapshot == {**original, "CONFIG.operation_id": manager._settings_snapshot["CONFIG.operation_id"]}
+    assert factory.call_args.kwargs["kwargs"]["settings_snapshot"] == {**module_runtime_settings(original, component.lower()), "CONFIG.operation_id": manager._settings_snapshot["CONFIG.operation_id"]}
     manager.stop()
 
 
@@ -137,12 +154,12 @@ def test_output_child_restarts_for_own_identity_changes(monkeypatch, module, man
     manager.start(settings_snapshot=snapshot)
     changed = deepcopy(snapshot)
     if field == "own":
-        changed["CONFIG.module_revisions"][component.lower()] = "replacement"
+        changed["CONFIG.module_revisions"][component.lower()] = "d" * 64
     else:
-        changed[field] = "replacement"
+        changed[field] = "d" * 64
     manager.start(settings_snapshot=changed)
     assert factory.call_count == 2
-    assert manager._settings_snapshot == changed
+    assert manager._settings_snapshot == {**changed, "CONFIG.operation_id": manager._settings_snapshot["CONFIG.operation_id"]}
     manager.stop()
 
 
@@ -212,18 +229,18 @@ def _report_plugin_directory(connection):
         connection.send(os.environ.get("OMNIBCI_PLUGIN_DIR"))
 
 
-def _ready_with_current_plugin_directory(*args, settings_snapshot):
+def _ready_with_current_plugin_directory(*args, settings_snapshot, component, expected_directory):
     stop_event, connection = args[-2:]
     reporter = StartupReporter(
-        connection, component=settings_snapshot["TEST.component"],
-        module_revisions={settings_snapshot["TEST.component"].lower(): settings_snapshot["CONFIG.module_revisions"][settings_snapshot["TEST.component"].lower()]},
+        connection, component=component,
+        module_revisions={component.lower(): settings_snapshot["CONFIG.module_revisions"][component.lower()]},
         engine_revision=settings_snapshot["CONFIG.engine_revision"],
         generation=settings_snapshot["CONFIG.generation"],
     )
-    if os.environ.get("OMNIBCI_PLUGIN_DIR") != settings_snapshot["TEST.plugin_dir"]:
+    if os.environ.get("OMNIBCI_PLUGIN_DIR") != expected_directory:
         reporter.failed("environment", RuntimeError("Child inherited an outdated plugin directory"))
         return
-    reporter.ready()
+    reporter.ready(execution=execution_receipt(settings_snapshot, component.lower(), settings_snapshot["CONFIG.operation_id"]))
     stop_event.wait(10)
 
 
@@ -251,8 +268,9 @@ def _check_current_plugin_directory(component, directory):
     current = directory + "/current"
     os.environ["OMNIBCI_PLUGIN_DIR"] = current
     module, manager_class, _, key = next(item for item in MANAGERS if item[2] == component)
-    setattr(module, f"_run_{component.lower()}", _ready_with_current_plugin_directory)
-    snapshot = {**_snapshot(key), "TEST.component": component, "TEST.plugin_dir": current}
+    setattr(module, f"_run_{component.lower()}", partial(
+        _ready_with_current_plugin_directory, component=component, expected_directory=current))
+    snapshot = _snapshot(key)
     manager = manager_class()
     try:
         manager.start(settings_snapshot=snapshot)
@@ -266,7 +284,7 @@ def _check_current_plugin_directory(component, directory):
 @pytest.mark.parametrize("component", ["Actuation", "Stimulation"])
 def test_managed_child_uses_current_plugin_directory_after_forkserver_start(component, tmp_path):
     result = subprocess.run(
-        [sys.executable, __file__, component, str(tmp_path)],
+        [sys.executable, "-m", "tests.infrastructure.test_child_runtime_snapshot", component, str(tmp_path)],
         capture_output=True, text=True, timeout=40,
     )
     assert result.returncode == 0, result.stdout + result.stderr

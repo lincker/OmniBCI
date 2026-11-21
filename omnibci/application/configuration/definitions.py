@@ -151,7 +151,35 @@ def merge_module_settings(current: dict, selected: dict, modules) -> dict:
                                      if not binding.get("slot", "").startswith(f"{module}.")]
         result["PLUGINS.bindings"].extend(deepcopy(binding) for binding in selected.get("PLUGINS.bindings", ())
                                          if binding.get("slot", "").startswith(f"{module}."))
+        if 'PLUGINS.artifacts' in result or 'PLUGINS.artifacts' in selected:
+            artifacts = {slot: record for slot, record in result.get('PLUGINS.artifacts', {}).items()
+                         if not slot.startswith(f'{module}.')}
+            artifacts.update({slot: deepcopy(record) for slot, record in selected.get('PLUGINS.artifacts', {}).items()
+                              if slot.startswith(f'{module}.')})
+            result['PLUGINS.artifacts'] = artifacts
         result.setdefault("CONFIG.module_revisions", {})[module] = selected.get("CONFIG.module_revisions", {}).get(module)
     result["PLUGINS.bindings"] = sorted(result.get("PLUGINS.bindings", ()),
                                        key=lambda binding: MODULES.index(binding["slot"].split(".", 1)[0]))
+    return result
+
+
+def module_runtime_settings(snapshot: dict, module: str) -> dict:
+    """Copy a host's configuration and only the shared context it consumes."""
+    if module not in MODULES:
+        raise ValueError("Unsupported runtime module")
+    modules = ("acquisition", "processing") if module == "processing" else (module,)
+    prefixes = tuple("ALGORITHM." if name == "processing" else name.upper() + "." for name in modules)
+    shared = {"CONFIG.generation", "CONFIG.engine_revision", "CONFIG.operation_id", "debug"}
+    result = {key: deepcopy(value) for key, value in snapshot.items()
+              if key in shared or key.startswith(prefixes) and key != "ACQUISITION.trigger"}
+    if module == "stimulation" and "ACQUISITION.trigger" in snapshot:
+        result["ACQUISITION.trigger"] = deepcopy(snapshot["ACQUISITION.trigger"])
+    result["CONFIG.module_revisions"] = {
+        name: snapshot.get("CONFIG.module_revisions", {}).get(name) for name in modules
+    }
+    result["PLUGINS.bindings"] = [deepcopy(binding) for binding in snapshot.get("PLUGINS.bindings", ())
+                                 if binding.get("slot", "").split(".", 1)[0] in modules]
+    if "PLUGINS.artifacts" in snapshot:
+        result["PLUGINS.artifacts"] = {slot: deepcopy(record) for slot, record in snapshot["PLUGINS.artifacts"].items()
+                                      if slot.startswith(module + ".")}
     return result

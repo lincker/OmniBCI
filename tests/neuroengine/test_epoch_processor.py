@@ -1,6 +1,9 @@
 """Unit tests for EpochProcessor buffering, epoch construction, and decoding."""
 from __future__ import annotations
+from pathlib import Path
+from tests.processing_helpers import prepared_signal
 
+from traceback import format_exception
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -20,6 +23,16 @@ from omnibci.infrastructure.signal_processing.epoch.epoch_processor import Epoch
 class FakeDecoder(Decoder):
     """Returns a scripted Prediction (or None) and records decode calls."""
 
+    def setup(self):
+        pass
+
+    def begin_epoch(self):
+        pass
+
+    def teardown(self):
+        pass
+
+
     def __init__(
         self,
         complete: bool = True,
@@ -37,19 +50,19 @@ class FakeDecoder(Decoder):
         self.readiness_windows.append(window.copy())
         return self._ready
 
-    def decode(self, window, latest_samples):
-        self.calls.append((window, latest_samples))
+    def decode(self, window, *, latest_raw_segment):
+        self.calls.append((window, latest_raw_segment))
         return Prediction(target_id=self._target) if self._complete else None
 
 
 def _chunk(channels: int = 3, samples: int = 8) -> SignalChunk:
     # raw_data last row is the trigger channel; .data drops it → `channels` rows
     raw = np.ones((channels + 1, samples))
-    return SignalChunk(timestamp=0.0, sequence_id=0, raw_data=raw)
+    return SignalChunk(timestamp=0, sequence_id=0, raw_data=raw)
 
 
 def _data_chunk(data: np.ndarray) -> SignalChunk:
-    return SignalChunk(0.0, 0, np.vstack((data, np.zeros((1, data.shape[1]), dtype=data.dtype))))
+    return SignalChunk(0, 0, np.vstack((data, np.zeros((1, data.shape[1]), dtype=data.dtype))))
 
 
 def _manager(decoder=None, sample_rate=1000) -> EpochProcessor:
@@ -65,7 +78,7 @@ def _manager(decoder=None, sample_rate=1000) -> EpochProcessor:
 
 class TestEpochBuffering:
     @pytest.mark.parametrize("samples", [0, 1])
-    def test_channel_mismatch_does_not_modify_buffer_or_latest_samples(self, samples):
+    def test_channel_mismatch_does_not_modify_buffer_or_latest_raw_segment(self, samples):
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=2), start_idx=0, event_id=1)
         before = mgr._epoch_data
@@ -82,7 +95,7 @@ class TestEpochBuffering:
         decoder.should_decode = lambda window: decoder.readiness_windows.append(window) or True
         mgr = _manager(decoder=decoder)
         raw = np.arange(21, dtype=np.int16).reshape(3, 7)[:, ::-1]
-        initial = SignalChunk(0.0, 0, raw)
+        initial = SignalChunk(0, 0, raw)
         mgr.initialize_epoch(initial, start_idx=2, event_id=7)
         expected = initial.data[:, 2:]
         assert np.shares_memory(mgr._epoch_data, initial.raw_data)
@@ -116,7 +129,9 @@ class TestEpochBuffering:
             for (retained, _), ready_window, snapshot in zip(
                 decoder.calls, decoder.readiness_windows, snapshots,
             ):
-                assert retained is ready_window
+                assert np.shares_memory(retained, ready_window)
+                assert not retained.flags.writeable
+                assert not ready_window.flags.writeable
                 np.testing.assert_array_equal(retained, snapshot)
                 assert retained.dtype == snapshot.dtype
 
@@ -237,12 +252,12 @@ class TestDecoding:
         with pytest.raises(TypeError) as error:
             mgr.process_chunk(_chunk())
 
-        message = str(error.value)
+        message = "".join(format_exception(error.value))
         assert f"{FakeDecoder.__module__}.{FakeDecoder.__qualname__}" in message
         assert "event_id=4" in message
         assert "revision-1" in message
         assert "target_id" in message
-        assert isinstance(error.value.__cause__, TypeError)
+        assert error.value.__cause__ is None
 
     @pytest.mark.parametrize("target", [0, 7, np.int32(7), np.int64(7), np.uint64(2**63)])
     def test_accepts_python_and_numpy_integer_targets(self, target):
@@ -271,16 +286,16 @@ class TestDecoding:
         assert "revision-1" in str(error.value)
         assert isinstance(error.value.__cause__, TypeError)
 
-    @pytest.mark.parametrize("prediction,error_type", [
-        (Prediction(-1), ValueError),
-        (Prediction(1, confidence=-0.1), ValueError),
-        (Prediction(1, confidence=1.1), ValueError),
-        (Prediction(1, confidence=np.nan), ValueError),
-        (Prediction(1, confidence="0.5"), TypeError),
+    @pytest.mark.parametrize("fields,error_type", [
+        ({"target_id": -1}, ValueError),
+        ({"target_id": 1, "confidence": -0.1}, ValueError),
+        ({"target_id": 1, "confidence": 1.1}, ValueError),
+        ({"target_id": 1, "confidence": np.nan}, ValueError),
+        ({"target_id": 1, "confidence": "0.5"}, TypeError),
     ])
-    def test_classification_validation_preserves_error_type_and_adds_context(self, prediction, error_type, monkeypatch):
+    def test_prediction_construction_validation_preserves_error_type_and_adds_context(self, fields, error_type, monkeypatch):
         decoder = FakeDecoder()
-        monkeypatch.setattr(decoder, "decode", MagicMock(return_value=prediction))
+        monkeypatch.setattr(decoder, "decode", lambda *args, **kwargs: Prediction(**fields))
         mgr = EpochProcessor(decoder=decoder, processing_revision="revision-1")
         mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
 
@@ -288,17 +303,17 @@ class TestDecoding:
             mgr.process_chunk(_chunk())
 
         assert type(error.value) is error_type
-        assert type(error.value.__cause__) is error_type
-        assert str(error.value.__cause__) in str(error.value)
-        assert f"{FakeDecoder.__module__}.{FakeDecoder.__qualname__}" in str(error.value)
-        assert "event_id=4" in str(error.value)
-        assert "revision-1" in str(error.value)
+        assert error.value.__cause__ is None
+        rendered = "".join(format_exception(error.value))
+        assert f"{FakeDecoder.__module__}.{FakeDecoder.__qualname__}" in rendered
+        assert "event_id=4" in rendered
+        assert "revision-1" in rendered
 
     @pytest.mark.parametrize("cause", [TypeError("algorithm type failure"), ValueError("algorithm value failure")])
     def test_algorithm_errors_propagate_without_prediction_validation_wrapper(self, cause, monkeypatch):
         decoder = FakeDecoder()
         monkeypatch.setattr(decoder, "decode", MagicMock(side_effect=cause))
-        mgr = _manager(decoder=decoder)
+        mgr = EpochProcessor(decoder=decoder, processing_revision="revision-1")
         mgr.initialize_epoch(_chunk(), start_idx=0, event_id=4)
 
         with pytest.raises(type(cause)) as error:
@@ -306,6 +321,10 @@ class TestDecoding:
 
         assert error.value is cause
         assert error.value.__cause__ is None
+        rendered = "".join(format_exception(error.value))
+        assert f"{FakeDecoder.__module__}.{FakeDecoder.__qualname__}" in rendered
+        assert "event_id=4" in rendered
+        assert "revision-1" in rendered
 
     def test_empty_buffer_returns_incomplete(self):
         assert _manager().force_decode_at_boundary() == (False, None)
@@ -326,7 +345,7 @@ class TestDecoding:
         assert clf.event_id == 4
         assert clf.forced is False
 
-    def test_latest_samples_are_only_the_most_recent_append(self):
+    def test_latest_raw_segment_are_only_the_most_recent_append(self):
         decoder = FakeDecoder(ready=False)
         mgr = _manager(decoder=decoder)
         mgr.initialize_epoch(_chunk(samples=3), start_idx=0, event_id=4)
@@ -337,14 +356,14 @@ class TestDecoding:
         newest_chunk = _chunk(samples=4)
         mgr.process_chunk(newest_chunk)
 
-        window, latest_samples = decoder.calls[0]
+        window, latest_raw_segment = decoder.calls[0]
         assert window.shape == (3, 9)
-        np.testing.assert_array_equal(latest_samples, newest_chunk.data)
-        assert latest_samples.shape == (3, 4)
+        np.testing.assert_array_equal(latest_raw_segment, newest_chunk.data)
+        assert latest_raw_segment.shape == (3, 4)
 
     def test_readiness_sees_accumulated_window_before_filters(self):
         class AddFilter(Filter):
-            def apply(self, data, ctx):
+            def apply(self, data, *, pre_trigger_data):
                 return data + 10
 
         decoder = FakeDecoder()
@@ -372,26 +391,33 @@ class TestDecoding:
 
 
 # ---------------------------------------------------------------------------
-# Decoder.for_new_epoch — per-epoch decoder hook (Scheme A)
+# Required decoder lifecycle.
 # ---------------------------------------------------------------------------
 
-class TestForNewEpoch:
-    def test_default_returns_self(self):
-        # Stateless decoders share one instance across epochs (zero cost).
-        dec = FakeDecoder()
-        assert dec.for_new_epoch() is dec
+def test_decoder_must_implement_model_lifecycle_and_epoch_reset():
+    class MissingLifecycle(Decoder):
+        def should_decode(self, window):
+            return False
+
+        def decode(self, window, *, latest_raw_segment):
+            return None
+
+    with pytest.raises(TypeError, match="begin_epoch.*setup.*teardown"):
+        MissingLifecycle()
 
 
 @pytest.mark.parametrize("algorithm", ["cca", "fbcca"])
 def test_classic40_prediction_matches_numpy_append_reference(algorithm):
     from omnibci.infrastructure.plugins.algorithms.decoders.classic40_cca.classic_40_cca import Classic40CCA
     from omnibci.infrastructure.plugins.algorithms.decoders.classic40_fbcca.classic_40_fbcca import Classic40FBCCA
-    from omnibci.sdk import PluginContext
 
     decoder_class = Classic40CCA if algorithm == "cca" else Classic40FBCCA
-    context = PluginContext(sample_rate=250)
-    decoder = decoder_class(parameters={}, context=context)
-    reference_decoder = decoder_class(parameters={}, context=context)
+    context = prepared_signal(250)
+    decoder = decoder_class(parameters={}, input_signal=context, resource_root=Path(__file__).parent)
+    reference_decoder = decoder_class(parameters={}, input_signal=context, resource_root=Path(__file__).parent)
+    decoder.setup()
+    reference_decoder.setup()
+    reference_decoder.begin_epoch()
     times = np.arange(800) / 250
     signal = np.vstack((
         np.sin(2 * np.pi * 12 * times),
@@ -406,7 +432,7 @@ def test_classic40_prediction_matches_numpy_append_reference(algorithm):
         mgr.append_chunk(chunk)
         reference = np.append(reference, chunk.data, axis=1)
 
-    expected = reference_decoder.decode(reference, chunks[-1].data)
+    expected = reference_decoder.decode(reference, latest_raw_segment=chunks[-1].data)
     complete, classification = mgr.force_decode_at_boundary()
 
     np.testing.assert_array_equal(mgr._epoch_data, reference)

@@ -23,8 +23,12 @@ import multiprocessing
 from copy import deepcopy
 from threading import RLock
 from typing import Any
+from uuid import uuid4
+
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
+from omnibci.application.configuration.definitions import module_runtime_settings
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
@@ -90,9 +94,11 @@ class ActuationProcessManager:
         *,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
         allow_process_termination: bool = True,
+        record_execution=None,
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
+        self._record_execution = record_execution
         self._auto_spawn = True
         self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
@@ -103,6 +109,7 @@ class ActuationProcessManager:
         # Effector from the running subprocess's pinned snapshot.
         self._effector: str | None = None
         self._state = ChildProcessState.STOPPED
+        self._cleanup_error: str | None = None
         self._lifecycle_lock = RLock()
 
     # ── Public API ─────────────────────────────────────────────────────────
@@ -116,6 +123,8 @@ class ActuationProcessManager:
             self._start_locked(settings_snapshot)
 
     def _start_locked(self, settings_snapshot: dict) -> None:
+        if self._process is None and self._cleanup_error is not None:
+            raise RuntimeError(self._cleanup_error)
         snapshot = deepcopy(settings_snapshot)
         effector = snapshot.get("ACTUATION.effector")
         auto_spawn = snapshot.get(
@@ -158,6 +167,8 @@ class ActuationProcessManager:
             # second controller for the same device.
             self._stop_locked()
 
+        snapshot["CONFIG.operation_id"] = uuid4().hex
+        expected_execution = execution_receipt(snapshot, "actuation", snapshot["CONFIG.operation_id"])
         stop_event = mp.Event()
         startup_receiver, startup_sender = mp.Pipe(duplex=False)
         process = mp.Process(
@@ -165,7 +176,7 @@ class ActuationProcessManager:
             args=(stop_event, startup_sender),
             name="ActuationProcess",
             daemon=self._allow_process_termination,
-            kwargs={"settings_snapshot": deepcopy(snapshot)},
+            kwargs={"settings_snapshot": module_runtime_settings(snapshot, "actuation")},
         )
         self._state = ChildProcessState.STARTING
         try:
@@ -206,7 +217,7 @@ class ActuationProcessManager:
             effector or "<config>",
         )
         try:
-            wait_for_startup_report(
+            report = wait_for_startup_report(
                 startup_receiver,
                 process,
                 component="Actuation",
@@ -214,7 +225,10 @@ class ActuationProcessManager:
                 expected_module_revisions={"actuation": snapshot.get("CONFIG.module_revisions", {}).get("actuation")},
                 expected_engine_revision=snapshot.get("CONFIG.engine_revision"),
                 expected_generation=snapshot.get("CONFIG.generation"),
+                expected_execution=expected_execution,
             )
+            if self._record_execution is not None:
+                self._record_execution(report.execution)
         except BaseException as startup_exc:
             self._state = ChildProcessState.FAILED
             try:
@@ -239,9 +253,9 @@ class ActuationProcessManager:
         block and tear the device down.  A child that ignores that request is
         terminated, then killed when the host permits automatic termination.
         Desktop hosts instead report incomplete cleanup for a user decision.
-        State is cleared only after the process is confirmed dead; retaining the
-        handle on failure prevents a later ``start`` from creating a second
-        controller for the same hardware.
+        A live process retains its handle. An unclean or forced exit releases
+        the dead process handle but retains failed ownership and blocks replacement;
+        process death does not establish physical output settlement.
         """
         with self._lifecycle_lock:
             self._stop_locked()
@@ -254,6 +268,8 @@ class ActuationProcessManager:
         process = self._process
         if process is None:
             self._close_startup_receiver()
+            if self._cleanup_error is not None:
+                raise RuntimeError(self._cleanup_error)
             self._state = final_state
             return
 
@@ -274,6 +290,10 @@ class ActuationProcessManager:
             logger.warning(
                 "Actuation subprocess did not stop gracefully; terminating (pid=%s)",
                 pid,
+            )
+            self._cleanup_error = (
+                f"Actuation cleanup was not confirmed after forced termination (pid={pid}); "
+                "replacement is blocked"
             )
             process.terminate()
             process.join(timeout=self._TERMINATE_TIMEOUT_S)
@@ -298,6 +318,11 @@ class ActuationProcessManager:
             raise RuntimeError(message)
 
         exitcode = process.exitcode
+        if exitcode != 0:
+            self._cleanup_error = (
+                f"Actuation cleanup was not confirmed (pid={pid}, exitcode={exitcode}); "
+                "replacement is blocked"
+            )
         logger.info(
             "Actuation subprocess stopped (pid=%s, exitcode=%s)",
             pid,
@@ -316,6 +341,9 @@ class ActuationProcessManager:
         self._process = None
         self._stop_event = None
         self._close_startup_receiver()
+        if self._cleanup_error is not None:
+            self._state = ChildProcessState.FAILED
+            raise RuntimeError(self._cleanup_error)
         self._effector = None
         self._settings_snapshot = None
         self._state = final_state

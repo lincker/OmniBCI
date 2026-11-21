@@ -9,7 +9,7 @@ manifest_version = 2
 domain = "stimulation"
 id = "classic40SSVEP"
 version = "0.1.0"
-api_version = "2"
+api_version = "1"
 publisher = "OmniBCI"
 
 [[contributions]]
@@ -45,7 +45,12 @@ default_sequence = "1-40"
 min = 0
 max = 40
 field = "trial_params"
+payload_key = "event_id"
 
 [contributions.configuration]
 schema = "default.schema.json"
 schema_version = 1
+
+[contributions.payload_schemas]
+trial = "trial.schema.json"
+result = "result.schema.json"

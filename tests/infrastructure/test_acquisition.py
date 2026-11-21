@@ -26,12 +26,13 @@ def _run(coro):
 
 # ---------------------------------------------------------------------------
 # Fakes — stand in for a SignalSource plugin, the command queue and the
-# shared DataManager. The data source mirrors the *post-hardening* port shape
-# (public `is_connected` property backed by `_is_connected`), so the same
-# tests stay green whether shutdown() reads the private flag or the property.
+# shared DataManager. Private device flags instrument calls; the runtime owns
+# the public lifecycle projection.
 # ---------------------------------------------------------------------------
 
 class _FakeDataSource:
+    trigger_mode = 'events'
+    resume_mode = "restart-only"
     def __init__(self, chunks=None, fail_after=None):
         self.calls = []
         self._is_connected = False
@@ -51,25 +52,25 @@ class _FakeDataSource:
     def is_streaming(self) -> bool:
         return self._is_streaming
 
-    async def connect(self) -> bool:
+    async def connect(self) -> None:
         self.calls.append("connect")
         self._is_connected = True
-        return True
+        return None
 
-    async def disconnect(self) -> bool:
+    async def disconnect(self) -> None:
         self.calls.append("disconnect")
         self._is_connected = False
-        return True
+        return None
 
-    async def start_stream(self) -> bool:
+    async def start_stream(self) -> None:
         self.calls.append("start_stream")
         self._is_streaming = True
-        return True
+        return None
 
-    async def stop_stream(self) -> bool:
+    async def stop_stream(self) -> None:
         self.calls.append("stop_stream")
         self._is_streaming = False
-        return True
+        return None
 
     async def read_chunk(self):
         if self._fail_after is not None and self._reads >= self._fail_after:
@@ -81,9 +82,11 @@ class _FakeDataSource:
             return chunk
         return np.zeros((2, 3))
 
-    async def get_metadata(self):
-        self.calls.append("get_metadata")
-        return "Fake source"
+    async def observe(self):
+        from omnibci.domain.ports.acquisition import SourceObservation
+        self.calls.append("observe")
+        return SourceObservation(native_text="Fake source", signal_info=None, native_event="final-row",
+                                 provenance="protocol-defined", layout_error="No test layout")
 
 
 class _FakeQueue:
@@ -299,7 +302,7 @@ class TestAcquisitionCommandDispatch:
         a = _acq()
         _run(a.execute((AcquisitionCommand.connect, None)))
         _run(a.execute((AcquisitionCommand.get_metadata, None)))
-        assert a.data_source.calls == ["connect", "get_metadata"]
+        assert a.data_source.calls == ["connect", "observe"]
 
 
 # ---------------------------------------------------------------------------
@@ -338,10 +341,10 @@ class TestAcquisitionShutdown:
         _run(a.shutdown())
         assert a.data_source.calls == ["connect", "disconnect"]
 
-    def test_shutdown_skips_disconnect_when_not_connected(self):
+    def test_shutdown_cleans_up_even_when_connection_was_not_confirmed(self):
         a = _acq()
         _run(a.shutdown())
-        assert a.data_source.calls == []
+        assert a.data_source.calls == ["disconnect"]
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +361,8 @@ class _SpyBus:
 
 
 class _EOFDataSource(_FakeDataSource):
+    trigger_mode = 'events'
+    resume_mode = "restart-only"
     """Plays out its chunks, then signals a clean end of stream (None)."""
 
     async def read_chunk(self):
@@ -410,18 +415,18 @@ class TestStateProjectionEmission:
         assert second.connection_id == acq.connection_id
         assert first.connection_id != second.connection_id
 
-    def test_preconnected_source_is_projected_without_reconnecting(self):
+    def test_source_flags_do_not_establish_a_host_connection(self):
         source = _FakeDataSource()
         source._is_connected = True
         acq, bus = self._make(source)
-        connection_id = acq.connection_id
+        assert acq.connection_id is None
 
         _run(acq._on_connect())
 
-        assert source.calls == []
+        assert source.calls == ["connect"]
         assert self._snaps(bus) == [(True, False)]
-        assert connection_id
-        assert bus.events[-1].data.connection_id == connection_id
+        assert acq.connection_id
+        assert bus.events[-1].data.connection_id == acq.connection_id
 
     def test_eof_closes_stream_and_emits_truth(self):
         """EOF stops the source and projects streaming=False to clients."""

@@ -8,6 +8,9 @@ import threading
 
 import pytest
 
+from omnibci.infrastructure.plugins.preparation import execution_receipt
+from tests.plugin_configuration_helpers import prepared_snapshot
+
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError,
     ChildProcessStartupTimeout,
@@ -23,14 +26,14 @@ from omnibci.application.commands.stimulation_commands import StartStimulationCo
 
 
 def _paradigm_snapshot():
-    return {"CONFIG.module_revisions": {"stimulation": "revision"},
-            "CONFIG.engine_revision": "engine", "CONFIG.generation": "run",
+    return prepared_snapshot({"CONFIG.module_revisions": {"stimulation": "a" * 64},
+            "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run",
             "PLUGINS.bindings": [{
         "slot": "stimulation.paradigm", "kind": "paradigm", "profile_id": None,
         "selection": {"package_id": "OmniBCI.classic40SSVEP",
                       "contribution_id": "default", "version": "0.1.0"},
         "parameters": {}, "configuration_version": 1, "profile_revision": 0,
-    }]}
+    }]}, ("stimulation",))
 
 
 def _mock_process(*, exits_after_join=None, alive=True, pid=4321):
@@ -51,10 +54,12 @@ def _mock_process(*, exits_after_join=None, alive=True, pid=4321):
 
 @pytest.fixture(autouse=True)
 def startup_pipe(monkeypatch):
+    monkeypatch.setattr(process_manager_module, "uuid4", lambda: SimpleNamespace(hex="prepare-1"))
     receiver = MagicMock()
     receiver.poll.return_value = True
     receiver.recv.return_value = StartupReport.ready(
-        "Stimulation", module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run")
+        "Stimulation", module_revisions={"stimulation": "a" * 64}, engine_revision="b" * 64, generation="run",
+        execution=execution_receipt(_paradigm_snapshot(), "stimulation", "prepare-1"))
     sender = MagicMock()
     pipe = MagicMock(return_value=(receiver, sender))
     monkeypatch.setattr(process_manager_module.mp, "Pipe", pipe)
@@ -124,8 +129,9 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
     mock_process_cls.return_value = process
     manager = StimulationProcessManager()
     snapshot = _paradigm_snapshot()
-    snapshot.update({"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "run"})
-    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run")
+    snapshot.update({"CONFIG.module_revisions": {"stimulation": "a" * 64}, "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run"})
+    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "a" * 64}, engine_revision="b" * 64, generation="run",
+        execution=execution_receipt(_paradigm_snapshot(), "stimulation", "prepare-1"))
     if legacy_alias is not None:
         snapshot["STIMULATION.paradigm"] = legacy_alias
     # A dormant processing profile must not participate in stimulation startup.
@@ -139,7 +145,9 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
 
     paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
     assert manager.current_paradigm == paradigm
-    assert mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"] == snapshot
+    assert mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"] == {
+        **snapshot, "PLUGINS.bindings": [snapshot["PLUGINS.bindings"][0]], "CONFIG.operation_id": "prepare-1",
+    }
     status = api_client.get("/api/v1/stimulation/status").json()["data"]
     assert status["active"] is True and status["process_alive"] is True
     assert status["paradigm"] == paradigm
@@ -213,7 +221,8 @@ def test_stop_escalates_through_kill(mock_process_cls, mock_event_cls):
     manager = StimulationProcessManager()
     manager.start(settings_snapshot=_paradigm_snapshot())
 
-    manager.stop()
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
 
     process.terminate.assert_called_once_with()
     process.kill.assert_called_once_with()
@@ -261,7 +270,7 @@ def test_failed_startup_report_is_raised_and_child_is_reaped(
         "Stimulation",
         stage="initialization",
         error=RuntimeError("renderer unavailable"),
-        module_revisions={"stimulation": "revision"}, engine_revision="engine", generation="run",
+        module_revisions={"stimulation": "a" * 64}, engine_revision="b" * 64, generation="run",
     )
     manager = StimulationProcessManager()
 
@@ -323,3 +332,39 @@ def test_child_entrypoint_forwards_stop_event(mock_stimulation_cls, monkeypatch)
 
     mock_stimulation_cls.assert_called_once_with(stop_event=stop_event, settings_snapshot=snapshot)
     mock_stimulation_cls.return_value.run.assert_called_once_with()
+
+
+@pytest.mark.parametrize("exitcode", [1, -15, None])
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_unclean_exit_keeps_failure_and_blocks_replacement(process_factory, exitcode):
+    process, state = _mock_process()
+    process_factory.return_value = process
+    manager = StimulationProcessManager()
+    manager.start(settings_snapshot=_paradigm_snapshot())
+    state["alive"] = False
+    process.exitcode = exitcode
+
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
+    assert manager.state is ChildProcessState.FAILED
+    assert not manager.is_alive
+    process.close.assert_called_once()
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.start(settings_snapshot=_paradigm_snapshot())
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
+    assert process_factory.call_count == 1
+
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_forced_exit_cannot_claim_cleanup_even_with_zero_exitcode(process_factory):
+    process, _ = _mock_process(exits_after_join=2)
+    process_factory.return_value = process
+    manager = StimulationProcessManager()
+    manager.start(settings_snapshot=_paradigm_snapshot())
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
+    process.terminate.assert_called_once()
+    assert manager.state is ChildProcessState.FAILED
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.start(settings_snapshot=_paradigm_snapshot())
+    assert process_factory.call_count == 1

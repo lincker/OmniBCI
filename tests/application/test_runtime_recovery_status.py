@@ -43,7 +43,7 @@ def test_recovery_flag_reflects_quarantine_even_when_engine_is_not_ready(runtime
 async def test_confirmed_stop_clears_current_recovery_and_allows_apply_with_failed_history(runtime):
     service, bindings, snapshot = runtime
     gate = RuntimeAdmission()
-    service.engine = NeuroEngineService(lambda: None, admission=gate)
+    service.engine = NeuroEngineService(lambda snapshot: None, admission=gate)
     failed = failed_history(service, snapshot.modules["processing"].revision)
     gate.quarantine("Unknown startup outcome")
     assert service.status()["recovery"] == {"engine": "Unknown startup outcome"}

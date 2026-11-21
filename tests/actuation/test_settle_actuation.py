@@ -1,9 +1,11 @@
 """Output settlement requires joined execution and explicit driver confirmation."""
+from pathlib import Path
 import asyncio
 import threading
 from queue import Queue
 from unittest.mock import Mock
 
+from tests.actuation_helpers import actuation_payload
 from omnibci.application.events import CommandRequest
 from omnibci.domain.ports.effector import Effector
 from omnibci.infrastructure.actuation.actuator import Actuator
@@ -21,8 +23,13 @@ def app(actuator):
     instance._execution_task = None
     instance._settlement_tasks = set()
     instance._settlement_lock = asyncio.Lock()
+    instance._device_executor = None
+    instance._device_ready = False
+    instance._outputs_settled = False
+    instance._settlement_error = None
     instance._max_command_age = 0
     instance._runtime_snapshot = {"CONFIG.module_revisions": {"actuation": "revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation"}
+    instance._runtime_snapshot["CONFIG.operation_id"] = "host-operation"
     instance.should_stop = False
     return instance
 
@@ -48,11 +55,11 @@ def test_settlement_joins_execution_cancels_pending_and_keeps_dispatch_nonblocki
         actuator.execute.side_effect = play
         actuator.quiesce.side_effect = lambda: operations.append(("quiesce", None))
         instance = app(actuator)
-        instance._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1, "seq": 1}))
+        instance._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 1}, command_id='1')))
         execution = asyncio.create_task(instance.execute_command())
         try:
             assert await asyncio.to_thread(started.wait, 1)
-            instance._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 2, "seq": 2}))
+            instance._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 2}, command_id='2')))
             # Synchronous listener returns immediately: EventBus can keep forwarding heartbeats.
             instance._request_settlement(Event(EventType.SettleActuation, CommandRequest("settle")))
             tasks = tuple(instance._settlement_tasks)
@@ -61,7 +68,7 @@ def test_settlement_joins_execution_cancels_pending_and_keeps_dispatch_nonblocki
             assert receipts(instance) == []
             assert instance.command_queue.empty()
             actuator.quiesce.assert_not_called()
-            instance._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 3, "seq": 3}))
+            instance._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 3}, command_id='3')))
             assert instance.command_queue.empty()
             release.set()
             await execution
@@ -77,19 +84,20 @@ def test_settlement_joins_execution_cancels_pending_and_keeps_dispatch_nonblocki
             "execution_complete": True, "outputs_settled": True,
             "generation": "generation", "module_revision": "revision", "engine_revision": "engine",
         }
-        cancelled = [call.args[0].data["seq"] for call in instance.event_bus.put_event.call_args_list
+        cancelled = [call.args[0].data["command_id"] for call in instance.event_bus.put_event.call_args_list
                      if call.args[0].type == EventType.ActuationAck
                      and call.args[0].data["status"] == "cancelled"]
-        assert cancelled == [2, 3]
+        assert cancelled == ["2", "3"]
 
     asyncio.run(scenario())
 
 
-def test_effector_without_quiescence_cannot_claim_physical_completion():
+def test_failed_quiescence_cannot_claim_physical_completion():
     class UnconfirmedEffector(Effector):
         def setup(self): pass
         def teardown(self): pass
-        def play(self, command): pass
+        def execute(self, command): pass
+        def quiesce(self): raise RuntimeError("cannot confirm output quiescence")
 
     async def scenario():
         actuator = Actuator(settings_snapshot={})
@@ -109,7 +117,7 @@ def test_effector_without_quiescence_cannot_claim_physical_completion():
 def test_logger_explicitly_confirms_quiescence():
     async def scenario():
         actuator = Actuator(settings_snapshot={})
-        actuator.effector = LogEffector(parameters={})
+        actuator.effector = LogEffector(parameters={}, resource_root=Path(__file__).parent)
         instance = app(actuator)
         await instance._settle_actuation(Event(EventType.SettleActuation, CommandRequest("settle")))
         assert receipts(instance)[0].ok
@@ -121,7 +129,7 @@ def test_logger_explicitly_confirms_quiescence():
 def test_resume_allows_new_commands_without_replaying_cancelled_intents():
     async def scenario():
         instance = app(Mock())
-        instance._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 1, "seq": 1}))
+        instance._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 1}, command_id='1')))
         await instance._settle_actuation(Event(EventType.SettleActuation, CommandRequest("settle")))
         assert instance._paused
         assert instance.command_queue.empty()
@@ -132,7 +140,7 @@ def test_resume_allows_new_commands_without_replaying_cancelled_intents():
         assert result.data == {"resumed": True, "paused": False, "generation": "generation",
                                "module_revision": "revision", "engine_revision": "engine"}
         assert instance.command_queue.empty()
-        instance._enqueue_command(Event(EventType.ActuationCommand, {"target_id": 2, "seq": 2}))
+        instance._enqueue_command(Event(EventType.ActuationCommand, actuation_payload({'target_id': 2}, command_id='2')))
         await instance.execute_command()
         instance.actuator.execute.assert_called_once()
         assert instance.actuator.execute.call_args.args[0]["target_id"] == 2

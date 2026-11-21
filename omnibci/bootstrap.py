@@ -3,7 +3,6 @@
 import logging
 import os
 from contextlib import contextmanager
-from threading import RLock
 from dataclasses import dataclass
 from typing import Callable, Iterable, Tuple
 
@@ -22,7 +21,6 @@ from omnibci.application.services.plugin_installation_service import PluginInsta
 from omnibci.application.services.plugin_package_service import PluginPackageService
 from omnibci.application.services.plugin_market_service import PluginMarketService
 from omnibci.application.plugin_packages import package_references_from_settings
-from omnibci.application.configuration.models import ActivationSet
 from omnibci.infrastructure.server_logging import ServerLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
@@ -30,6 +28,7 @@ from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigur
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.plugins.plugin_catalog import user_plugins_dir
 from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
 from omnibci.infrastructure.plugins.market_adapter import configured_market_service
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
@@ -87,6 +86,7 @@ class AppContainer:
     plugin_package_service: "PluginPackageService | None" = None
     plugin_market_service: "PluginMarketService | None" = None
     signal_setup_service: object | None = None
+    package_owner: PluginStoreOwner | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ def assemble(
             admission=admission,
         ),
         stimulation_process_manager=process_manager,
-        results_service=ResultsService(engine_service),
+        results_service=ResultsService(lambda: engine_service.generation),
         actuation_process_manager=actuation_process_manager,
         command_results=command_results,
     )
@@ -146,40 +146,61 @@ async def build_container(*, host_settings: dict | None = None,
                           allow_process_termination: bool = True) -> AppContainer:
     """Wire services; resolve configuration and build workers on engine start."""
     host_settings = load_host_settings() if host_settings is None else dict(host_settings)
-    return await _build_container_services(host_settings, allow_process_termination)
+    store = ManagedPluginPackageStore()
+    repository = TomlConfigurationRepository()
+    owner = PluginStoreOwner(store.plugin_dir, configuration_root=repository.root)
+    try:
+        container = await _build_container_services(host_settings, allow_process_termination, store, repository, owner)
+    except BaseException:
+        # Composition has not started an engine or executed plugin code.
+        owner.close()
+        raise
+    container.package_owner = owner
+    return container
 
 
-async def _build_container_services(host_settings, allow_process_termination):
-    package_references_lock = RLock()
+async def _build_container_services(host_settings, allow_process_termination, package_store, repository, package_references_lock):
+    from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
+    from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
+    execution_history = PluginExecutionHistory(repository.root)
+    artifact_preparer = PluginArtifactPreparer(package_store)
+
+    def prepare_plugins(snapshot, modules):
+        with package_references_lock:
+            return artifact_preparer.prepare_snapshot(snapshot, modules)
     configuration = ConfigurationService(
-        TomlConfigurationRepository(), CatalogConfigurationAdapter(),
+        repository,
+        CatalogConfigurationAdapter(package_store.catalog, platform_name=package_store.installer.platform_name),
         active_server_settings=host_settings,
         change_guard=lambda: package_references_lock,
+        profile_versions=package_store,
     )
     actuation_manager = ActuationProcessManager(
-        allow_process_termination=allow_process_termination,
+        allow_process_termination=allow_process_termination, record_execution=execution_history.record,
     )
     stimulation_manager = StimulationProcessManager(
-        allow_process_termination=allow_process_termination,
+        allow_process_termination=allow_process_termination, record_execution=execution_history.record,
     )
 
     # Processes are single-use, so every restart requires a fresh engine graph.
     def startup_snapshot():
         try:
-            engine_settings = configuration.repository.get_engine()
+            engine_settings = repository.get_engine()
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             raise RuntimeError(f"Engine configuration is invalid: {exc}") from exc
         if engine_settings is None:
-            configuration.repository.save_engine(configuration.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
+            repository.save_engine(configuration.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
         return accepted_runtime_settings(profiles=configuration, active_kinds=set())
 
     engine_service = NeuroEngineService(
         engine_factory=lambda snapshot: NeuroEngineBuilder(
             settings_snapshot=snapshot, allow_process_termination=allow_process_termination,
+            execution_history_root=repository.root,
         ).build(),
         snapshot_provider=startup_snapshot,
         actuation_process_manager=actuation_manager,
         stimulation_process_manager=stimulation_manager,
+        plugin_preparer=prepare_plugins,
     )
     await engine_service.startup()
     container = assemble(engine_service,
@@ -207,25 +228,23 @@ async def _build_container_services(host_settings, allow_process_termination):
         reference_guard=lambda: package_references_lock,
         executor=RuntimeApplyCoordinator(engine_service, configuration, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results,
+                                          container.command_results, repository=repository,
                                           signal_preparer=container.signal_setup_service.prepare,
                                           signal_detacher=container.signal_setup_service.detach),
     )
     packages = PluginPackageService(
-        ManagedPluginPackageStore(), configuration,
+        package_store, configuration_references=configuration.package_references,
         runtime_references=lambda: tuple(
             reference
             for snapshot in (*engine_service.runtime_package_snapshots,
                              *container.runtime_configuration.pending_package_snapshots)
             for reference in package_references_from_settings(snapshot)
         ),
-        admission_guard=lambda: package_references_lock,
+        admission_guard=package_references_lock.mutation,
     )
     container.plugin_installation_service = packages
     container.plugin_package_service = packages
-    container.plugin_market_service = configured_market_service(
-        packages.store, admission_guard=lambda: package_references_lock,
-    )
+    container.plugin_market_service = configured_market_service(packages)
     return container
 
 
@@ -246,8 +265,7 @@ class _RuntimeSettings:
         snapshot = self.engine.applied_snapshot
         if snapshot is None or not self.engine.is_engine_ready:
             try:
-                accepted = ActivationSet({"acquisition": self.profiles.repository.get_module("acquisition")},
-                                         self.profiles.repository.get_engine())
+                accepted = self.profiles.selected_configuration(("acquisition",))
                 snapshot = self.profiles.materialize(accepted)
             except (ValueError, KeyError, RuntimeError, OSError):
                 # Optional status metadata must not block configuration repair.

@@ -25,13 +25,18 @@ class MemoryEngine:
         self.started = Event()
         self.stopped = Event()
         self.shutdown_complete = False
-        self.event_bus = SimpleNamespace(register_event_listener=lambda *args: None)
         self.modules = set()
         self.module_snapshots = {}
         self.actuation_active = False
-        self.acquisition_worker = SimpleNamespace(is_alive=lambda: "acquisition" in self.modules)
-        self.signal_processing_worker = SimpleNamespace(is_alive=lambda: "processing" in self.modules)
-        self.peer_gateway = SimpleNamespace(peer=lambda name: SimpleNamespace(is_connected=False))
+
+    def subscribe(self, event_type, handler):
+        pass
+
+    def is_peer_connected(self, peer_name):
+        return False
+
+    def is_current_peer_channel(self, peer_name, channel_id):
+        return False
 
     def is_module_running(self, module):
         return module in self.modules
@@ -46,14 +51,8 @@ class MemoryEngine:
     async def set_actuation_active(self, active):
         self.actuation_active = active
 
-    @property
-    def should_stop(self):
-        return self.stopped.is_set()
-
-    @should_stop.setter
-    def should_stop(self, value):
-        if value:
-            self.stopped.set()
+    def request_stop(self):
+        self.stopped.set()
 
     def run(self):
         self.started.set()

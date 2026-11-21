@@ -35,6 +35,9 @@ dependencies = [
     "websockets>=12.0",
 ]
 
+[project.scripts]
+omnibci-plugin = "omnibci.plugin_cli:main"
+
 [project.optional-dependencies]
 # 刺激渲染：只有运行刺激进程的机器需要（多机部署时服务器可不装）
 stim = [
@@ -147,3 +150,26 @@ name = "Configuration management must not depend on runtime services"
 type = "forbidden"
 source_modules = ["omnibci.application.configuration"]
 forbidden_modules = ["omnibci.application.services", "omnibci.application.runtime_admission"]
+
+[[tool.importlinter.contracts]]
+name = "Static plugin manifests must not depend on discovery or execution"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.plugins.manifest"]
+forbidden_modules = [
+    "omnibci.infrastructure.plugins.plugin_catalog",
+    "omnibci.infrastructure.plugins.loader",
+    "omnibci.infrastructure.plugins.runtime_configuration",
+    "omnibci.infrastructure.plugins.package_installer",
+]
+
+[[tool.importlinter.contracts]]
+name = "Shared IPC and output hosts must not depend on engine assembly"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.ipc", "omnibci.infrastructure.stimulation", "omnibci.infrastructure.actuation"]
+forbidden_modules = ["omnibci.infrastructure.neuroengine"]
+
+[[tool.importlinter.contracts]]
+name = "WebSocket presentation must not depend on infrastructure codecs"
+type = "forbidden"
+source_modules = ["omnibci.presentation.websockets"]
+forbidden_modules = ["omnibci.infrastructure"]

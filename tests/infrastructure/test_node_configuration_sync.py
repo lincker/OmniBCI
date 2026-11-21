@@ -1,14 +1,18 @@
 """Real publication and TCP admission reject an old run after an engine restart."""
 import asyncio
 import json
+from uuid import uuid4
+
+from tests.execution_helpers import synthetic_execution_snapshot
+from omnibci.application.plugin_execution import bindings_fingerprint
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 from threading import Event as ThreadEvent
-from types import SimpleNamespace
 
 import pytest
 
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
 from omnibci.application.node_configuration import NodeConfiguration, materialize_node_configuration
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
 from omnibci.application.services.engine_service import NeuroEngineService
@@ -64,22 +68,21 @@ class HardwareFreeGraph:
         self._started = ThreadEvent()
         self._stopped = ThreadEvent()
         self.prepared_outputs = {}
-        self.acquisition_worker = SimpleNamespace(
-            is_alive=lambda: self._started.is_set() and not self._stopped.is_set(),
-        )
-        self.signal_processing_worker = self.acquisition_worker
 
-    @property
-    def should_stop(self):
-        return self._stopped.is_set()
+    def request_stop(self):
+        self._stopped.set()
 
-    @should_stop.setter
-    def should_stop(self, value):
-        if value:
-            self._stopped.set()
+    def is_module_running(self, module):
+        return self._started.is_set() and not self._stopped.is_set()
+
+    def is_peer_connected(self, peer_name):
+        return False
 
     async def ensure_output_ready(self, role, snapshot):
-        self.prepared_outputs[role] = snapshot
+        self.prepared_outputs[role] = uuid4().hex
+
+    def node_operation_id(self, role):
+        return self.prepared_outputs.get(role)
 
     async def set_actuation_active(self, active):
         assert active is False
@@ -101,7 +104,8 @@ async def wait_for(predicate):
 
 
 def identity(snapshot):
-    return PeerIdentity(snapshot["CONFIG.node_role"], snapshot["CONFIG.module_revisions"][snapshot["CONFIG.node_role"]], snapshot["CONFIG.engine_revision"], snapshot["CONFIG.generation"])
+    return PeerIdentity(snapshot["CONFIG.node_role"], snapshot["CONFIG.module_revisions"][snapshot["CONFIG.node_role"]], snapshot["CONFIG.engine_revision"], snapshot["CONFIG.generation"],
+                        snapshot["CONFIG.operation_id"], bindings_fingerprint(snapshot["PLUGINS.bindings"], snapshot["CONFIG.node_role"]))
 
 
 @pytest.mark.parametrize(("role", "kinds", "editable_kind", "event_type"), [
@@ -159,7 +163,7 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
             servers.append(old_server)
             await old_server.start()
             old_port = old_server.server.sockets[0].getsockname()[1]
-            old_client = NetworkClient(server_port=old_port, identity=identity(cached), reconnect=False)
+            old_client = NetworkClient(server_port=old_port, receipt=execution_receipt(synthetic_execution_snapshot(cached), role, cached["CONFIG.operation_id"]), reconnect=False)
             clients.append(old_client)
             old_task = asyncio.create_task(old_client.start())
             tasks.append(old_task)
@@ -179,7 +183,7 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
             servers.append(server)
             await server.start()
             port = server.server.sockets[0].getsockname()[1]
-            stale_client = NetworkClient(server_port=port, identity=identity(cached), reconnect=False)
+            stale_client = NetworkClient(server_port=port, receipt=execution_receipt(synthetic_execution_snapshot(cached), role, cached["CONFIG.operation_id"]), reconnect=False)
             clients.append(stale_client)
             with pytest.raises(asyncio.IncompleteReadError):
                 await asyncio.wait_for(stale_client.start(), 2)
@@ -189,7 +193,7 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
             await wait_for(lambda: not server._pending_clients and not server._closing_writers)
 
             received = []
-            fresh_client = NetworkClient(server_port=port, identity=identity(fresh), reconnect=False)
+            fresh_client = NetworkClient(server_port=port, receipt=execution_receipt(synthetic_execution_snapshot(fresh), role, fresh["CONFIG.operation_id"]), reconnect=False)
             clients.append(fresh_client)
             fresh_client.set_inbound_handler(lambda event: received.append(event) is None)
             fresh_task = asyncio.create_task(fresh_client.start())

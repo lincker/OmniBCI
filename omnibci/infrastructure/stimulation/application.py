@@ -9,15 +9,16 @@ import multiprocessing as mp
 import asyncio
 from dataclasses import dataclass
 from queue import Empty, Queue
-from typing import Any
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
+from omnibci.application.command_contracts import command_contract, stimulation_trial_request
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
+from omnibci.infrastructure.async_lifecycle import await_owned
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
-from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
+from omnibci.infrastructure.ipc.peer_channel import PeerChannel
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.infrastructure.stimulation.engine_channel import engine_peer_config
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
@@ -30,7 +31,7 @@ _EXTERNAL_CONNECT_TIMEOUT_S = 10.0
 class _QueuedStimTrial:
     """Process-local trial item retaining REST correlation until presentation."""
 
-    params: Any
+    params: dict[str, object]
     request: CommandRequest | None = None
 
 
@@ -42,22 +43,21 @@ class Stimulation:
         *,
         settings_snapshot: dict,
     ):
-        self._event_queue = mp.Queue()
-        self._event_queue_closed = False
-        self.event_bus = EventBus(self._event_queue)
-
         self._runtime_snapshot = deepcopy(settings_snapshot)
         source = MODULE_SETTING_DEFAULTS["stimulation"] | self._runtime_snapshot
         host = source["STIMULATION.server_ip"]
         port = int(source["STIMULATION.server_port"])
         self._external_node = source.get("CONFIG.node_role") == "stimulation"
         self._reconnect_requested = False
-        identity = None
+        receipt = None
         if self._external_node:
-            identity = PeerIdentity("stimulation", source["CONFIG.module_revisions"]["stimulation"],
-                                    source["CONFIG.engine_revision"], source["CONFIG.generation"])
+            receipt = execution_receipt(source, "stimulation", source["CONFIG.operation_id"])
+        self._event_queue = mp.Queue()
+        self._event_queue_closed = False
+        self.event_bus = EventBus(self._event_queue)
+
         self.peer_channel = PeerChannel(engine_peer_config(
-            host, port, identity=identity, reconnect=not self._external_node,
+            host, port, receipt=receipt, reconnect=not self._external_node,
             on_disconnect=self._connection_lost if self._external_node else None,
         ), self.event_bus)
 
@@ -69,6 +69,7 @@ class Stimulation:
         self.stimulator = Stimulator(settings_snapshot=self._runtime_snapshot)
         self._render_task = None  # The IPC process survives a closed render window.
         self._paused = False
+        self._stop_requests = []
 
     def run(self):
         print('---StimulationMain run---')
@@ -88,6 +89,7 @@ class Stimulation:
 
     async def serve(self):
         startup_complete = False
+        failure = None
         try:
             try:
                 # A cooperative stop can win the race before the spawned child
@@ -112,7 +114,7 @@ class Stimulation:
                 )
                 # Let start_async() install its RenderLoop before checking the
                 # stop flag again. Without this hand-off an immediate stop can
-                # make stimulator.stop() a no-op and strand the renderer.
+                # make stimulator.request_stop() a no-op and strand the renderer.
                 await asyncio.sleep(0)
 
                 if self._render_task.done() and not self._render_task.cancelled():
@@ -130,7 +132,9 @@ class Stimulation:
                     return
                 reporter = getattr(self, "_startup_reporter", None)
                 if reporter is not None:
-                    reporter.ready()
+                    reporter.ready(execution=execution_receipt(
+                        self._runtime_snapshot, "stimulation", self._runtime_snapshot["CONFIG.operation_id"],
+                    ))
                 startup_complete = True
 
                 # IPC command loop — the engine connection lives as long as this
@@ -153,39 +157,73 @@ class Stimulation:
                 if not startup_complete:
                     self._report_startup_failed("initialization", exc)
                 raise
+        except BaseException as exc:
+            failure = exc
+            raise
         finally:
-            # Ensure GL/paradigm teardown and IPC teardown happen on every exit
-            # path, including render setup failures and task cancellation.
             try:
+                await await_owned(asyncio.create_task(self._shutdown(failure)))
+            except BaseException as cleanup_error:
+                if failure is not None and cleanup_error is not failure:
+                    if isinstance(failure, asyncio.CancelledError):
+                        raise failure from cleanup_error
+                    raise BaseExceptionGroup("Stimulation failed and shutdown also failed", [failure, cleanup_error])
+                raise
+
+    async def _shutdown(self, failure=None):
+        self._paused = True
+        errors = []
+        try:
+            self.stimulator.request_stop()
+        except BaseException as exc:
+            errors.append(exc)
+            if self._render_task is not None and not self._render_task.done():
+                self._render_task.cancel()
+        if self._render_task is not None:
+            try:
+                await self._render_task
+            except BaseException as exc:
+                if exc is not failure:
+                    errors.append(exc)
+        queue = getattr(self, "stim_command_queue", None)
+        while queue is not None:
+            try:
+                queued = queue.get_nowait().data
+            except Empty:
+                break
+            if isinstance(queued, _QueuedStimTrial) and queued.request is not None:
+                result = CommandResult(
+                    queued.request.command_id, EventType.StartStimTrial.name, ok=False,
+                    message="Stimulation stopped before this trial was presented",
+                    error_code="STIMULATION_STOPPING", failure_kind=CommandFailureKind.REJECTED,
+                )
                 try:
-                    self.stimulator.stop()
-                except BaseException:
-                    # A failed stop hook may have left the render coroutine
-                    # blocked forever.  Cancel it, but continue through the
-                    # outer finally so sockets and the EventBus still close.
-                    if (
-                        self._render_task is not None
-                        and not self._render_task.done()
-                    ):
-                        self._render_task.cancel()
-                    raise
-            finally:
-                try:
-                    if self._render_task is not None:
-                        await self._render_task
-                except asyncio.CancelledError:
-                    pass
-                finally:
-                    try:
-                        if (getattr(self, "_external_node", False)
-                                and getattr(self.stimulator, "trigger", None) is not None
-                                and self._render_task is not None and self._render_task.done()):
-                            # No rendering may assert a new trigger after this
-                            # point. A failed clear must prevent automatic retry.
-                            self.stimulator.clear_trigger()
-                    finally:
-                        # Renderer/trigger teardown failures must not skip IPC cleanup.
-                        await self.stop()
+                    if not await self.peer_channel.send(Event(EventType.CommandResult, result)):
+                        raise RuntimeError("Could not deliver cancelled stimulation trial receipt")
+                except Exception as exc:
+                    errors.append(exc)
+        # Emit the terminal result only after the render task's single cleanup path.
+        for request in getattr(self, "_stop_requests", ()):
+            error = failure or (errors[0] if errors else None)
+            result = CommandResult(
+                request.command_id, EventType.StopStimulation.name, ok=error is None,
+                message="Stimulation stopped" if error is None else str(error),
+                error_code=None if error is None else "STIMULATION_STOP_FAILED",
+                failure_kind=None if error is None else CommandFailureKind.EXECUTION_FAILED,
+            )
+            try:
+                if not await self.peer_channel.send(Event(EventType.CommandResult, result)):
+                    raise RuntimeError("Could not deliver stimulation stop receipt")
+            except Exception as exc:
+                errors.append(exc)
+        try:
+            await self.stop()
+        except BaseException as exc:
+            errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("Stimulation shutdown failed", errors)
 
     async def start(self):
         print('---StimulationMain start---')
@@ -253,34 +291,55 @@ class Stimulation:
         if getattr(self, "_external_node", False) and not self.peer_channel.is_connected:
             self._connection_lost()
             return
-        if getattr(self, "_paused", False):
+        if getattr(self, "_paused", False) or self._stop_requested():
             return
-        # Serialize trials: only pull the next StartStimTrial once the paradigm
-        # has finished presenting the current one.  Without this gate the whole
-        # queue is drained within a few loop iterations (~10 ms each) while a
-        # single trial's cue→stim sequence runs for seconds, so N queued trials
-        # collapse into one.  Paradigms that don't report busy-state fall back to
-        # the old immediate behaviour (getattr default False).
-        presenting = getattr(self.stimulator, "is_presenting", False)
-        if not presenting and not self.stim_command_queue.empty():
+        window_closed = self._render_task is None or self._render_task.done()
+        try:
+            # A closed renderer must reject queued trials without querying a
+            # released paradigm or waiting for its last busy state to change.
+            can_present = window_closed or not self.stimulator.is_presenting
+        except Exception as exc:
+            self.should_stop = True
+            while True:
+                try:
+                    queued = self.stim_command_queue.get_nowait().data
+                except Empty:
+                    break
+                params, request = queued.params, queued.request
+                events = []
+                if request is not None:
+                    events.append(Event(EventType.CommandResult, CommandResult(
+                        request.command_id, EventType.StartStimTrial.name, ok=False,
+                        message=str(exc), error_code="STIMULATION_READINESS_FAILED",
+                        failure_kind=CommandFailureKind.EXECUTION_FAILED,
+                    )))
+                events.append(Event(EventType.StimulationAck, make_stimulation_ack(
+                    "StartStimTrial", status="error",
+                    trial_params=params,
+                    message=str(exc),
+                )))
+                # Await terminal writes before serve() closes IPC. Queuing on
+                # the EventBus here could lose receipts during that shutdown.
+                for event in events:
+                    try:
+                        if not await self.peer_channel.send(event):
+                            exc.add_note(f"Could not deliver {event.type.name} after readiness failure")
+                    except Exception as delivery_error:
+                        exc.add_note(f"Could not deliver {event.type.name}: {delivery_error}")
+            raise
+        # Admit at most one trial per iteration, once the current one is idle.
+        if can_present and not self.stim_command_queue.empty():
             stim_command = self.stim_command_queue.get()
             if stim_command.type == EventType.StartStimTrial:
                 # Present the trial, then send an ack back to the engine.
                 # PeerChannel's outbound subscription picks up StimulationAck from
                 # the bus and forwards it to the engine automatically.
-                # `data` is one trial's opaque paradigm parameter (may be None).
                 queued = stim_command.data
-                if isinstance(queued, _QueuedStimTrial):
-                    params = queued.params
-                    request = queued.request
-                else:
-                    params = queued
-                    request = None
-                target = params if isinstance(params, int) else None
-                if self._render_task is None or self._render_task.done():
+                params, request = queued.params, queued.request
+                if window_closed:
                     # Report a closed window instead of stalling the paradigm.
                     ack = make_stimulation_ack(
-                        "StartStimTrial", status="error", target_index=target,
+                        "StartStimTrial", status="error", trial_params=params,
                         message="stimulation window closed",
                     )
                     if request is not None:
@@ -295,7 +354,7 @@ class Stimulation:
                     try:
                         self.stimulator.present_trial(params)
                         ack = make_stimulation_ack(
-                            "StartStimTrial", status="ok", target_index=target
+                            "StartStimTrial", status="ok", trial_params=params
                         )
                         if request is not None:
                             self._emit_command_result(
@@ -308,7 +367,7 @@ class Stimulation:
                     except Exception as exc:
                         ack = make_stimulation_ack(
                             "StartStimTrial", status="error",
-                            target_index=target, message=str(exc),
+                            trial_params=params, message=str(exc),
                         )
                         if request is not None:
                             self._emit_command_result(
@@ -322,22 +381,21 @@ class Stimulation:
 
         if not self.result_command_queue.empty():
             sys_command = self.result_command_queue.get()
-            if sys_command.type == EventType.TrialCompleted:
-                # The TrialCompleted payload arrives over the engine→stimulation
-                # socket as a plain dict (decode_event_body does not rebuild domain
-                # VOs), so extract target_id from the dict shape.  Wrapped in
-                # try/except: a malformed/out-of-range result must NOT crash the
-                # render process and close the stimulation window.
+            if not window_closed and sys_command.type == EventType.TrialCompleted:
+                # Project only the result value; malformed feedback must not
+                # close the rendering window or coerce a different target.
                 from omnibci.domain.classification import Classification
                 data = sys_command.data
                 try:
                     if isinstance(data, Classification):
-                        result = data.target_id
+                        target_id = data.target_id
                     elif isinstance(data, dict):
-                        result = int(data.get("target_id"))
+                        target_id = data.get("target_id")
                     else:
-                        result = int(data)
-                    self.stimulator.present_result(result)
+                        raise ValueError("Feedback requires a classification object")
+                    if type(target_id) is not int or target_id < 0:
+                        raise ValueError("Feedback target_id must be a non-negative integer")
+                    self.stimulator.present_result({"target_id": target_id})
                 except Exception as exc:
                     logging.warning("present_result skipped (bad result %r): %s", data, exc)
 
@@ -363,18 +421,17 @@ class Stimulation:
                     error_code="STIMULATION_PAUSED",
                 )
             return
+        if self._stop_requested():
+            if request is not None:
+                self._emit_command_result(
+                    request, EventType.StartStimTrial, ok=False,
+                    message="Stimulation is stopping",
+                    error_code="STIMULATION_STOPPING",
+                )
+            return
         spec = request.payload if request is not None else command.data
         try:
-            if not isinstance(spec, dict):
-                raise ValueError("trial specification must be an object")
-            n_trials = int(spec.get("n_trials", 1))
-            if n_trials <= 0:
-                raise ValueError("n_trials must be greater than zero")
-            params = spec.get("trial_params")
-            if params is None:
-                params = [None] * n_trials
-            elif not isinstance(params, (list, tuple)) or len(params) != n_trials:
-                raise ValueError("trial_params length must equal n_trials")
+            params = stimulation_trial_request(spec)["trial_params"]
         except (TypeError, ValueError) as exc:
             if request is not None:
                 self._emit_command_result(
@@ -399,14 +456,25 @@ class Stimulation:
             ))
 
     def _put_sys_command_queue(self, command: Event):
-        if getattr(self, "_paused", False):
+        if getattr(self, "_paused", False) or self._stop_requested():
             return
         if command.type == EventType.TrialCompleted:
             self.result_command_queue.put(command)
 
+    def _control_request(self, event):
+        request = CommandRequest.from_value(event.data)
+        if request is not None:
+            try:
+                command_contract(event.type).parse_payload(request.payload)
+            except (TypeError, ValueError) as exc:
+                self._emit_command_result(request, event.type, ok=False,
+                                          message=str(exc), error_code="INVALID_COMMAND_PAYLOAD")
+                return None
+        return request
+
     async def _pause_stimulation(self, event: Event) -> None:
         """Acknowledge only after the real rendering task exits and triggers clear."""
-        request = CommandRequest.from_value(event.data)
+        request = self._control_request(event)
         if request is None:
             return
         self._paused = True
@@ -431,14 +499,8 @@ class Stimulation:
         try:
             if self._render_task is None:
                 raise RuntimeError("Stimulation renderer was not started")
-            self.stimulator.stop()
-            try:
-                await asyncio.shield(self._render_task)
-            finally:
-                # A teardown error still means no more rendering is possible.
-                # Clear the trigger on that path too, without claiming success.
-                if self._render_task.done():
-                    self.stimulator.clear_trigger()
+            self.stimulator.request_stop()
+            await asyncio.shield(self._render_task)
             snapshot = getattr(self, "_runtime_snapshot", {})
             result = CommandResult(
                 request.command_id, EventType.PauseStimulation.name, ok=True,
@@ -459,23 +521,13 @@ class Stimulation:
         self.event_bus.put_event(Event(EventType.CommandResult, result))
 
     async def _stop_stimulation_system(self, event=None):
-        request = CommandRequest.from_value(
-            event.data if isinstance(event, Event) else None
-        )
-        if request is not None:
-            result = Event(
-                EventType.CommandResult,
-                CommandResult(
-                    command_id=request.command_id,
-                    command=EventType.StopStimulation.name,
-                    ok=True,
-                    message="Stimulation stop accepted",
-                ),
-            )
-            # Flush the terminal receipt over IPC before this process tears its
-            # EventBus and peer channel down.
-            await self.peer_channel.send(result)
+        request = self._control_request(event) if isinstance(event, Event) else None
+        if isinstance(event, Event) and event.data is not None and request is None:
+            return
+        self._paused = True
         self.should_stop = True
+        if request is not None:
+            self._stop_requests.append(request)
 
     def _emit_command_result(
         self,

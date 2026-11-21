@@ -6,16 +6,12 @@ from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 
 def signal_info(
     *,
-    source_id: str,
-    connection_id: str,
     sample_rate: int | float,
     signal_channel_count: int,
     channel_labels: list[str | None] | tuple[str | None, ...] | None = None,
     channel_types: list[str] | tuple[str, ...] | None = None,
     channel_units: list[str | None] | tuple[str | None, ...] | None = None,
     channel_ids: list[str] | tuple[str, ...] | None = None,
-    native_event: str = "final-row",
-    provenance: str = "protocol-defined",
 ) -> SignalInfo:
     """Describe adapter output, whose final row contains trigger events."""
     if (isinstance(sample_rate, bool) or not isinstance(sample_rate, (int, float))
@@ -48,7 +44,5 @@ def signal_info(
             signal_type=types[index], unit=units[index],
         ))
     return SignalInfo(
-        source_id=source_id, sample_rate=int(sample_rate), connection_id=connection_id,
-        channels=tuple(channels), trigger_row_index=signal_channel_count,
-        native_event=native_event, provenance=provenance,
+        sample_rate=int(sample_rate), channels=tuple(channels),
     )

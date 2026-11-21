@@ -27,8 +27,12 @@ import multiprocessing
 from copy import deepcopy
 from threading import RLock
 from typing import Any
+from uuid import uuid4
+
+from omnibci.infrastructure.plugins.preparation import execution_receipt
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
+from omnibci.application.configuration.definitions import module_runtime_settings
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessState,
     StartupReporter,
@@ -43,14 +47,10 @@ mp = multiprocessing.get_context("spawn")
 
 
 def _configured_paradigm(snapshot: dict) -> str:
-    from omnibci.infrastructure.plugins.runtime_configuration import configured_bindings
-    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-    from omnibci.infrastructure.plugins.loader import PluginLoadError
+    from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
 
-    bindings = configured_bindings(snapshot, slot="stimulation.paradigm")
-    if not bindings:
-        raise PluginLoadError("No paradigm selected for stimulation.paradigm")
-    return PluginCatalog().resolve_selection("paradigm", bindings[0].selection).plugin_type
+    descriptor, _ = resolve_configured_plugin(snapshot, 'stimulation.paradigm', 'paradigm')
+    return descriptor.plugin_type
 
 
 def _run_stimulation(
@@ -105,9 +105,11 @@ class StimulationProcessManager:
         *,
         startup_timeout_s: float = _STARTUP_TIMEOUT_S,
         allow_process_termination: bool = True,
+        record_execution=None,
     ) -> None:
         if startup_timeout_s <= 0:
             raise ValueError("startup_timeout_s must be greater than zero")
+        self._record_execution = record_execution
         self._auto_spawn = True
         self._settings_snapshot: dict | None = None
         self._startup_timeout_s = float(startup_timeout_s)
@@ -118,6 +120,7 @@ class StimulationProcessManager:
         # Paradigm resolved from the running subprocess's pinned selection.
         self._paradigm: str | None = None
         self._state = ChildProcessState.STOPPED
+        self._cleanup_error: str | None = None
         # Synchronous API routes may run concurrently in a thread pool.  The
         # re-entrant lock also permits start() to reuse the single stop path
         # when a paradigm change requires a restart.
@@ -131,6 +134,8 @@ class StimulationProcessManager:
         The snapshot determines the selected paradigm and managed mode.
         """
         with self._lifecycle_lock:
+            if self._process is None and self._cleanup_error is not None:
+                raise RuntimeError(self._cleanup_error)
             snapshot = deepcopy(settings_snapshot)
             auto_spawn = snapshot.get(
                 "STIMULATION.auto_spawn", MODULE_SETTING_DEFAULTS["stimulation"]["STIMULATION.auto_spawn"],
@@ -176,12 +181,14 @@ class StimulationProcessManager:
                     )
                 self._stop_locked()
 
+            snapshot["CONFIG.operation_id"] = uuid4().hex
+            expected_execution = execution_receipt(snapshot, "stimulation", snapshot["CONFIG.operation_id"])
             stop_event = mp.Event()
             startup_receiver, startup_sender = mp.Pipe(duplex=False)
             process = mp.Process(
                 target=_run_stimulation,
                 args=(stop_event, startup_sender),
-                kwargs={"settings_snapshot": deepcopy(snapshot)},
+                kwargs={"settings_snapshot": module_runtime_settings(snapshot, "stimulation")},
                 name="StimulationProcess",
                 daemon=self._allow_process_termination,
             )
@@ -222,7 +229,7 @@ class StimulationProcessManager:
                 paradigm or "<config>",
             )
             try:
-                wait_for_startup_report(
+                report = wait_for_startup_report(
                     startup_receiver,
                     process,
                     component="Stimulation",
@@ -230,7 +237,10 @@ class StimulationProcessManager:
                     expected_module_revisions={"stimulation": snapshot.get("CONFIG.module_revisions", {}).get("stimulation")},
                     expected_engine_revision=snapshot.get("CONFIG.engine_revision"),
                     expected_generation=snapshot.get("CONFIG.generation"),
+                    expected_execution=expected_execution,
                 )
+                if self._record_execution is not None:
+                    self._record_execution(report.execution)
             except BaseException as startup_exc:
                 self._state = ChildProcessState.FAILED
                 try:
@@ -261,6 +271,8 @@ class StimulationProcessManager:
         process = self._process
         if process is None:
             self._close_startup_receiver()
+            if self._cleanup_error is not None:
+                raise RuntimeError(self._cleanup_error)
             self._state = final_state
             return
 
@@ -282,6 +294,10 @@ class StimulationProcessManager:
                 "Stimulation subprocess did not stop gracefully; terminating "
                 "(pid=%s)",
                 pid,
+            )
+            self._cleanup_error = (
+                f"Stimulation cleanup was not confirmed after forced termination (pid={pid}); "
+                "replacement is blocked"
             )
             process.terminate()
             process.join(timeout=self._TERMINATE_TIMEOUT_S)
@@ -306,6 +322,11 @@ class StimulationProcessManager:
             self._state = ChildProcessState.FAILED
             raise RuntimeError(message)
 
+        if process.exitcode != 0:
+            self._cleanup_error = (
+                f"Stimulation cleanup was not confirmed (pid={pid}, exitcode={process.exitcode}); "
+                "replacement is blocked"
+            )
         logger.info(
             "Stimulation subprocess stopped (pid=%s, exitcode=%s)",
             pid,
@@ -325,6 +346,9 @@ class StimulationProcessManager:
         self._process = None
         self._stop_event = None
         self._close_startup_receiver()
+        if self._cleanup_error is not None:
+            self._state = ChildProcessState.FAILED
+            raise RuntimeError(self._cleanup_error)
         self._paradigm = None
         self._settings_snapshot = None
         self._state = final_state

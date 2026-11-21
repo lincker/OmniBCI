@@ -7,9 +7,11 @@ import pytest
 import tomlkit
 from fastapi.testclient import TestClient
 
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, user_plugins_dir
+from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.project_tools import package_project
 from omnibci.presentation.main import create_app
 
 
@@ -22,11 +24,19 @@ def _plugin(directory):
     (package / "manifest.toml").write_text(tomlkit.dumps({
         "manifest_version": 2,
         "package": {"id": "directory", "publisher": "test", "version": SELECTION.version,
-                    "domain": "actuation", "api_version": "2"},
+                    "domain": "actuation", "api_version": "1"},
         "contributions": [{"id": "default", "kind": "effector", "plugin_type": "directory_probe",
-                           "display_name": "Directory probe", "entrypoint": "driver:Probe"}],
+                           "display_name": "Directory probe", "entrypoint": "driver:Probe",
+                           "payload_schemas": {"command": "command.schema.json"}}],
     }), encoding="utf-8")
-    return package
+    (package / "command.schema.json").write_text('{"type":"object","properties":{},"additionalProperties":false}')
+    (package / "driver.py").write_text("raise AssertionError('Directory discovery must remain static')\n")
+    archive = directory / "package.zip"
+    package_project(package, archive)
+    store = ManagedPluginPackageStore(directory)
+    store.install_archive(archive)
+    store.set_enabled(SELECTION.package_id, SELECTION.version, True)
+    return store._path(SELECTION.package_id, SELECTION.version)
 
 
 def _worker_directory(connection):

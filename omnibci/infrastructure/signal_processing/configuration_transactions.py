@@ -3,6 +3,7 @@
 import hashlib
 import json
 
+from omnibci.application.command_contracts import stage_configuration_request, cancel_configuration_request
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.shared.events import EventType
 from .pipeline_configuration import ConfiguredPipeline, build_pipeline_update
@@ -16,7 +17,8 @@ def configuration_receipt(command_id, status, *, generation, revision, engine_re
 class ConfigurationTransactions:
     """Own pending updates and replay receipts without installing runtime state."""
 
-    def __init__(self):
+    def __init__(self, release_decoder):
+        self._release_decoder = release_decoder
         self._pending: tuple[str, ConfiguredPipeline] | None = None
         # Receipts live for this worker generation. A cancelled command cannot
         # become a new update if a delayed duplicate arrives later.
@@ -55,19 +57,13 @@ class ConfigurationTransactions:
                 if self._pending[0] == request.command_id:
                     return False, None
                 raise ValueError("Another processing configuration is waiting for a trial boundary")
-            payload = request.payload
-            if not isinstance(payload, dict) or set(payload) != {"settings_snapshot", "expected_revision", "engine_revision", "generation", "boundary"}:
-                raise ValueError("Invalid processing configuration request")
-            if (not isinstance(payload["generation"], str) or not payload["generation"]
-                    or payload["generation"] != generation):
+            payload = stage_configuration_request(request.payload)
+            if payload["generation"] != generation:
                 raise ValueError("Signal Processing configuration generation mismatch")
-            if (not isinstance(payload["expected_revision"], str)
-                    or payload["expected_revision"] != revision):
+            if payload["expected_revision"] != revision:
                 raise ValueError("Signal Processing configuration revision mismatch")
             if payload["engine_revision"] != engine_revision:
                 raise ValueError("Signal Processing Engine revision mismatch")
-            if payload["boundary"] not in {"trial", "module"}:
-                raise ValueError("Unknown processing update boundary")
             if payload["boundary"] == "module" and not drained:
                 raise ValueError("Drain processing before replacing its configuration")
             candidate = build_pipeline_update(
@@ -99,23 +95,28 @@ class ConfigurationTransactions:
         self._pending = None
         return self._finish(command_id, ok=True, generation=generation, revision=revision, engine_revision=engine_revision)
 
-    def cancel_pending(self, message, *, generation, revision, engine_revision) -> CommandResult | None:
+    def cancel_pending(self, message, *, generation, revision, engine_revision,
+                       error_code="PROCESSING_CONFIGURATION_CANCELLED") -> CommandResult | None:
         if self._pending is None:
             return None
-        command_id, _ = self._pending
+        command_id, candidate = self._pending
         self._pending = None
+        try:
+            self._release_decoder(candidate.decoder)
+        except Exception as exc:
+            message = f"{message}; decoder cleanup failed: {exc}"
+            error_code = "PROCESSING_CLEANUP_FAILED"
         return self._finish(command_id, ok=False, message=message,
-                            error_code="PROCESSING_CONFIGURATION_CANCELLED",
+                            error_code=error_code,
                             generation=generation, revision=revision, engine_revision=engine_revision)
 
     def cancel(self, request: CommandRequest, *, generation, revision, engine_revision) -> list[CommandResult]:
         """Return a target's terminal receipt before acknowledging cancellation."""
-        payload = request.payload
-        if (not isinstance(payload, dict) or set(payload) != {"command_id", "generation", "engine_revision"}
-                or not isinstance(payload.get("command_id"), str) or not payload["command_id"]
-                or not isinstance(payload.get("generation"), str) or not payload["generation"]
-                or payload.get("generation") != generation
-                or payload.get("engine_revision") != engine_revision):
+        try:
+            payload = cancel_configuration_request(request.payload)
+            if payload["generation"] != generation or payload["engine_revision"] != engine_revision:
+                raise ValueError("Processing cancellation belongs to another runtime")
+        except (TypeError, ValueError):
             return [CommandResult(
                 request.command_id, EventType.CancelProcessingConfiguration.name, False,
                 "Invalid processing configuration cancellation", "INVALID_CONFIGURATION_CANCELLATION",
@@ -135,8 +136,12 @@ class ConfigurationTransactions:
                                   generation=generation, revision=revision, engine_revision=engine_revision)
             results.append(result)
         receipt = result.data or configuration_receipt(target, "cancelled", generation=generation, revision=revision, engine_revision=engine_revision)
+        cleaned = result.error_code != "PROCESSING_CLEANUP_FAILED"
         results.append(CommandResult(
-            request.command_id, EventType.CancelProcessingConfiguration.name, True, data=receipt,
+            request.command_id, EventType.CancelProcessingConfiguration.name, cleaned, data=receipt,
+            message=None if cleaned else result.message,
+            error_code=None if cleaned else result.error_code,
+            failure_kind=None if cleaned else CommandFailureKind.EXECUTION_FAILED,
         ))
         return results
 
@@ -144,7 +149,8 @@ class ConfigurationTransactions:
         result = CommandResult(
             command_id=command_id, command=EventType.StageProcessingConfiguration.name,
             ok=ok, message=message, error_code=error_code,
-            failure_kind=None if ok else CommandFailureKind.REJECTED,
+            failure_kind=(None if ok else CommandFailureKind.EXECUTION_FAILED
+                          if error_code == "PROCESSING_CLEANUP_FAILED" else CommandFailureKind.REJECTED),
             data=configuration_receipt(command_id, "applied" if ok else "cancelled",
                                        generation=generation, revision=revision, engine_revision=engine_revision),
         )

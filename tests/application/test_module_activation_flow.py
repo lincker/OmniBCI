@@ -20,7 +20,7 @@ def flow(tmp_path, monkeypatch):
                                     CatalogConfigurationAdapter())
     engine = NeuroEngineService(lambda _: pytest.fail("Selecting configuration must not start workers"))
     executor = RuntimeApplyCoordinator(engine, profiles, None,
-                                      SimpleNamespace(is_active=False, process_alive=False), None)
+                                      SimpleNamespace(is_active=False, process_alive=False), None, repository=profiles.repository)
     runtime = RuntimeConfigurationService(profiles, engine, executor=executor)
     definition = next(item for item in profiles.catalog.list("acquisition") if item.plugin_type == "file_reader")
     bindings = [{"slot": "acquisition.source", "selection": definition.selection.to_dict(),

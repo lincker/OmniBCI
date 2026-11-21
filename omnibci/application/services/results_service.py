@@ -2,13 +2,14 @@
 from collections import deque
 from copy import deepcopy
 from threading import RLock
+from typing import Callable
 
 from omnibci.application.events import EpochProcessed, TrialOutcome
 
 
 class ResultsService:
-    def __init__(self, engine):
-        self.engine = engine
+    def __init__(self, generation: Callable[[], str | None]):
+        self._generation_provider = generation
         self._generation = None
         self._trials = deque(maxlen=200)
         self._epochs = {}
@@ -59,7 +60,7 @@ class ResultsService:
             }
 
     def _refresh(self):
-        generation = self.engine.generation
+        generation = self._generation_provider()
         if generation != self._generation:
             self._generation = generation
             self._trials.clear()

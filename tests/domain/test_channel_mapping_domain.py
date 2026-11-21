@@ -18,9 +18,8 @@ from omnibci.domain.signal import SignalChunk
 
 
 def source(names=("C3", "C4", "AUX"), **overrides):
-    values = dict(source_id="device", sample_rate=500,
-                  channels=tuple(ChannelDescriptor(i, name, unit="uV", channel_id=f"id-{name}") for i, name in enumerate(names)),
-                  trigger_row_index=len(names), connection_id="connection", provenance="device-reported")
+    values = dict(sample_rate=500,
+                  channels=tuple(ChannelDescriptor(i, name, unit="uV", channel_id=f"id-{name}") for i, name in enumerate(names)))
     values.update(overrides)
     return SignalInfo(**values)
 
@@ -216,9 +215,8 @@ def test_fingerprints_bind_semantics_without_connection_or_runtime_revision():
     observed = source()
     mapping = ProcessingInput(outputs=(ChannelBinding("Left", "id-C3", "eeg"),))
     plan = compile_processing_plan(observed, mapping, "revision")
-    reconnected = compile_processing_plan(replace(observed, connection_id="new"), mapping, "new-revision")
+    reconnected = compile_processing_plan(observed, mapping, "new-revision")
     assert plan.fingerprint == reconnected.fingerprint
-    assert plan.source.fingerprint == reconnected.source.fingerprint
     assert plan.fingerprint != compile_processing_plan(observed, ProcessingInput()).fingerprint
     changed = plan.to_dict()
     changed["fingerprint"] = "wrong"
@@ -247,7 +245,7 @@ def test_generated_names_stay_marked_until_renamed():
 
 def test_channel_ids_identify_duplicate_or_changed_display_names():
     observed = source(channels=(ChannelDescriptor(0, "EEG", channel_id="left"),
-                                ChannelDescriptor(1, "EEG", channel_id="right")), trigger_row_index=2)
+                                ChannelDescriptor(1, "EEG", channel_id="right")))
     assert compile_processing_plan(observed, ProcessingInput()).is_identity
     mapping = ProcessingInput(outputs=(ChannelBinding("Right", "right"),))
     plan = compile_processing_plan(observed, mapping)
@@ -258,14 +256,14 @@ def test_channel_ids_identify_duplicate_or_changed_display_names():
         replace(observed, channels=(observed.channels[0], replace(observed.channels[1], channel_id="left")))
 
 
-def test_adapter_row_ids_are_deterministic_and_immutable():
-    channel = ChannelDescriptor(3, "C3")
+def test_explicit_channel_ids_are_immutable():
+    channel = ChannelDescriptor(3, "C3", channel_id="channel-3")
     assert channel.channel_id == "channel-3"
     with pytest.raises(FrozenInstanceError):
         channel.channel_id = "changed"
 
 
 def test_canonical_channel_types_allow_matching_declarations():
-    observed = source(channels=(ChannelDescriptor(0, "C3", signal_type=" EEG "),), trigger_row_index=1)
+    observed = source(channels=(ChannelDescriptor(0, "C3", signal_type=" EEG ", channel_id="channel-0"),))
     plan = compile_processing_plan(observed, ProcessingInput(outputs=(ChannelBinding("Left", "channel-0", "eeg"),)))
     assert observed.channels[0].signal_type == plan.output_channels[0].signal_type == "eeg"

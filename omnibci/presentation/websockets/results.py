@@ -10,13 +10,14 @@ Data chain:
 """
 
 import asyncio
+from copy import deepcopy
 import logging
 from typing import Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from omnibci.shared.events import Event
-from omnibci.infrastructure.outbound import event_to_wire
+from omnibci.shared.events import Event, EventType
+from omnibci.application.events import TrialOutcome
 from omnibci.presentation.schemas.ws import (
     PingMessage,
     StimulationAckMessage,
@@ -36,6 +37,39 @@ logger = logging.getLogger(__name__)
 # protocol-level ping interval (20 s) so idle dead connections are reaped at
 # least as fast; clients tolerate 3 missed periods before forcing a reconnect.
 HEARTBEAT_INTERVAL_S = 15.0
+
+
+def event_to_wire(event: Event) -> dict | None:
+    """
+    Map an application result event to its WebSocket message.
+
+    The top-level ``event`` key is the discriminator clients route on (matches
+    ``presentation/schemas/ws.py``).  Returns None for events with no outbound
+    representation.
+    """
+    etype = event.type
+    data = event.data
+
+    if etype == EventType.TrialCompleted:
+        if not isinstance(data, TrialOutcome):
+            logger.error("event_to_wire: TrialCompleted payload is %s, not TrialOutcome",
+                         type(data).__name__)
+            return None
+        return {"event": "TrialCompleted", **data.to_dict()}
+
+    if etype == EventType.StimulationAck:
+        # Payload arrives from the stimulation process as a JSON dict over the
+        # socket (see make_stimulation_ack); tolerate missing keys.
+        d = data if isinstance(data, dict) else {}
+        return {
+            "event": "StimulationAck",
+            "command": str(d.get("command", "")),
+            "trial_params": deepcopy(d.get("trial_params")),
+            "status": d.get("status", "ok"),
+            "message": d.get("message"),
+        }
+
+    return None
 
 
 class ResultsBroadcaster:

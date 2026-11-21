@@ -6,7 +6,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from omnibci.application.configuration.models import ModuleActivation, ProfileBinding, PluginSelection, EngineSettings
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ProfileBinding, EngineSettings
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
 from omnibci.presentation.errors import register_exception_handlers
@@ -34,7 +35,8 @@ def node_api():
         ],
     }
     engine = NeuroEngineService(engine_factory=Mock())
-    profiles = SimpleNamespace(materialize=lambda _: snapshot, repository=SimpleNamespace(get_module=lambda role: ModuleActivation(role, {}, ()), get_engine=lambda: EngineSettings({})))
+    profiles = SimpleNamespace(materialize=lambda _: snapshot, selected_configuration=lambda modules: ActivationSet(
+        {role: ModuleActivation(role, {}, ()) for role in modules}, EngineSettings({})))
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v1")
@@ -54,7 +56,7 @@ def test_node_api_selected_then_running_uses_applied_inputs(node_api, role, kind
     assert data["configuration"]["generation"] is None
     assert {item["kind"] for item in data["configuration"]["bindings"]} == kinds
     assert "private.cnt" not in response.text
-    engine._engine = Mock()
+    engine._engine = Mock(node_operation_id=Mock(return_value="prepare-1"))
     engine._running = engine._accepting_commands = True
     engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
     engine._applied_snapshot = {**saved, "CONFIG.generation": "run-1"}
@@ -88,7 +90,7 @@ def test_output_node_configuration_is_available_with_no_acquisition_or_processin
     saved.pop("ACTUATION.enabled")
     saved["PLUGINS.bindings"] = [binding for binding in saved["PLUGINS.bindings"]
                                  if binding["slot"].startswith(f"{role}.")]
-    engine._engine = Mock()
+    engine._engine = Mock(node_operation_id=Mock(return_value="prepare-1"))
     engine._running = engine._accepting_commands = True
     engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
     engine._applied_snapshot = {**saved, "CONFIG.generation": "foundation"}

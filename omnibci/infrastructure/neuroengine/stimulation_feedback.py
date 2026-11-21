@@ -7,16 +7,16 @@ only consumer of ``StimulationAck`` was the presentation layer (WebSocket
 broadcast). The engine itself ignored stimulation feedback. This handler makes
 the engine an actual consumer:
 
-  - records presentation outcomes (ok / error counts, last ack);
-  - surfaces failures (an ``error`` ack means the stimulus never showed, so any
-    epoch opened for that trigger is suspect) via a warning log.
+  - records callback outcomes (ok / error counts, last ack);
+  - surfaces callback failures via a warning log. These receipts do not prove
+    physical stimulus onset or absence.
 
 It is deliberately side-effect-light and is the seam for richer domain reactions
 later (e.g. invalidating the trial whose stimulus failed, or gating acquisition
 on a readiness ack) — those are business decisions, kept out until specified.
 
 The ack payload shape (see ``infrastructure.outbound.make_stimulation_ack``):
-    {"command": str, "status": "ok"|"error", "target_index": int|None,
+    {"command": str, "status": "ok"|"error", "trial_params": dict|None,
      "message": str|None}
 """
 
@@ -41,18 +41,18 @@ class StimulationFeedbackHandler:
         data = event.data if isinstance(event.data, dict) else {}
         command = str(data.get("command", ""))
         status = data.get("status", "ok")
-        target_index = data.get("target_index")
+        trial_params = data.get("trial_params")
         message = data.get("message")
         self.last_ack = data
 
         if status == "error":
             self.error_count += 1
             logger.warning(
-                "Stimulation failed to present %s (target=%s): %s",
-                command, target_index, message,
+                "Stimulation failed to present %s (trial_params=%s): %s",
+                command, trial_params, message,
             )
         else:
             self.ok_count += 1
             logger.info(
-                "Stimulation presented %s (target=%s)", command, target_index
+                "Stimulation presented %s (trial_params=%s)", command, trial_params
             )

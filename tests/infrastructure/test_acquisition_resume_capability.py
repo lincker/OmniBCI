@@ -1,4 +1,5 @@
 """Only explicitly declared live sources resume without replay checkpoints."""
+from pathlib import Path
 from queue import Queue
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -6,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from omnibci.application.events import CommandRequest
+from omnibci.domain.ports.acquisition import SourceCheckpoint
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime, AcquisitionCommand
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
@@ -13,38 +15,43 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import C
 from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import Scan45DataReader, scan45_message_manager
 
 
-@pytest.mark.parametrize("source_type,safe", [(FileReader, False), (Scan45DataReader, True), (Curry8DataReader, True)])
-def test_builtin_sources_declare_live_resume_separately_from_checkpoint(source_type, safe):
+@pytest.mark.parametrize("source_type,mode", [(FileReader, "checkpoint"), (Scan45DataReader, "live-current"),
+                                             (Curry8DataReader, "live-current")])
+def test_builtin_sources_declare_one_resume_mode(source_type, mode):
     parameters = {"data_file_path": "sample.cnt"} if source_type is FileReader else {}
-    source = source_type(parameters=parameters)
-    assert source.resume_without_checkpoint_safe is safe
-    assert source.supports_checkpoint is (source_type is FileReader)
+    assert source_type(parameters=parameters, resource_root=Path(__file__).parent).resume_mode == mode
 
 
-@pytest.mark.parametrize("declared,expected", [(None, False), (False, False), ("true", False), (True, True)])
-def test_checkpoint_receipt_exposes_only_explicit_live_resume_guarantee(declared, expected):
-    source = SimpleNamespace(supports_checkpoint=False, is_streaming=False)
-    if declared is not None:
-        source.resume_without_checkpoint_safe = declared
+@pytest.mark.parametrize("mode,checkpoint,ok", [
+    ("restart-only", None, True), ("live-current", None, True), ("checkpoint", None, False),
+    ("checkpoint", {}, False),
+    ("checkpoint", SourceCheckpoint(resource_id="file", resource_revision="rev", state={}), True),
+    ("live-current", SourceCheckpoint(resource_id="file", resource_revision="rev", state={}), False),
+])
+def test_checkpoint_receipt_validates_the_declared_mode(mode, checkpoint, ok):
+    source = SimpleNamespace(trigger_mode="events", resume_mode=mode, checkpoint=lambda: checkpoint)
     events = []
     acquisition = AcquisitionRuntime(
         source, Queue(), DataManager(Queue()), SimpleNamespace(put_event=events.append),
-        source_id="test-source",
-        generation="run", acquisition_revision="revision", engine_revision="engine",
+        source_id="test-source", generation="run", acquisition_revision="revision", engine_revision="engine",
     )
+    acquisition._connected = True
+    acquisition.connection_id = "connection"
     acquisition._configuration_command(AcquisitionCommand.get_checkpoint, CommandRequest("inspect", {
         "generation": "run", "expected_revision": "revision", "engine_revision": "engine",
     }))
     receipt = events[-1].data
-    assert receipt.ok
-    assert receipt.data == {"generation": "run", "acquisition_revision": "revision", "engine_revision": "engine", "supported": False,
-                            "checkpoint": None, "resume_without_checkpoint_safe": expected}
+    assert receipt.ok is ok
+    if ok:
+        assert receipt.data["resume_mode"] == mode
+        assert set(receipt.data) == {"generation", "acquisition_revision", "engine_revision", "resume_mode", "checkpoint"}
 
 
 @pytest.mark.asyncio
 async def test_scan45_restart_requests_live_delivery_without_resetting_sample_state():
-    source = Scan45DataReader(parameters={})
+    source = Scan45DataReader(parameters={}, resource_root=Path(__file__).parent)
     source.writer = SimpleNamespace(write=MagicMock(), drain=AsyncMock())
+    source._is_connected = True
     source._packets_counter = 12
     source._previous_event = 7
     await source.start_stream()
@@ -60,7 +67,7 @@ async def test_scan45_restart_requests_live_delivery_without_resetting_sample_st
 
 @pytest.mark.asyncio
 async def test_curry8_restart_only_requests_live_delivery():
-    source = Curry8DataReader(parameters={})
+    source = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     source._is_connected = True
     source._metadata = object()
     source.writer = object()

@@ -17,7 +17,7 @@ def publish(service, generation, number, *, revision="revision"):
 
 
 def test_first_decoded_trial_is_available_without_starting_a_session():
-    service = ResultsService(SimpleNamespace(generation="engine-1"))
+    service = ResultsService(lambda: "engine-1")
     publish(service, "engine-1", 1)
 
     snapshot = service.snapshot()
@@ -28,7 +28,7 @@ def test_first_decoded_trial_is_available_without_starting_a_session():
 
 
 def test_duplicate_delivery_and_configuration_changes_do_not_reset_trials():
-    service = ResultsService(SimpleNamespace(generation="engine-1"))
+    service = ResultsService(lambda: "engine-1")
     publish(service, "engine-1", 1)
     publish(service, "engine-1", 1)
     publish(service, "engine-1", 2, revision="next-revision")
@@ -39,7 +39,7 @@ def test_duplicate_delivery_and_configuration_changes_do_not_reset_trials():
 
 def test_restart_discards_previous_generation_and_late_events():
     engine = SimpleNamespace(generation=None)
-    service = ResultsService(engine)
+    service = ResultsService(lambda: engine.generation)
     assert service.snapshot() == {"generation": None, "trials": []}
     engine.generation = "engine-1"
     publish(service, "engine-1", 1)
@@ -52,7 +52,7 @@ def test_restart_discards_previous_generation_and_late_events():
 
 
 def test_result_history_is_bounded_and_snapshots_are_independent():
-    service = ResultsService(SimpleNamespace(generation="engine-1"))
+    service = ResultsService(lambda: "engine-1")
     for number in range(1, 206):
         publish(service, "engine-1", number)
     snapshot = service.snapshot()
@@ -65,7 +65,7 @@ def test_result_history_is_bounded_and_snapshots_are_independent():
 
 def test_generation_is_checked_after_entering_the_result_lock():
     engine = SimpleNamespace(generation="old")
-    service = ResultsService(engine)
+    service = ResultsService(lambda: engine.generation)
 
     class RestartBeforeLock:
         def __enter__(self):
@@ -96,7 +96,7 @@ def publish_epoch(service, number, *, generation="run", status="no_result", reas
 
 
 def test_every_terminal_epoch_is_listed_without_requiring_a_prediction():
-    service = ResultsService(SimpleNamespace(generation="run"))
+    service = ResultsService(lambda: "run")
     for number, (status, reason) in enumerate([
         ("decoded", "prediction"), ("no_result", "next_start"),
         ("interrupted", "stream_stop"), ("error", "error"),
@@ -115,7 +115,7 @@ def test_every_terminal_epoch_is_listed_without_requiring_a_prediction():
 
 
 def test_epoch_history_retains_entire_run_and_supports_independent_pages():
-    service = ResultsService(SimpleNamespace(generation="run"))
+    service = ResultsService(lambda: "run")
     for number in range(1, 206):
         publish_epoch(service, number)
     publish_epoch(service, 205)
@@ -130,7 +130,7 @@ def test_epoch_history_retains_entire_run_and_supports_independent_pages():
 
 def test_epoch_history_resets_on_new_generation_and_rejects_late_records():
     engine = SimpleNamespace(generation="run")
-    service = ResultsService(engine)
+    service = ResultsService(lambda: engine.generation)
     publish_epoch(service, 1)
     engine.generation = "new"
     publish_epoch(service, 2)
@@ -143,4 +143,4 @@ def test_epoch_history_resets_on_new_generation_and_rejects_late_records():
 @pytest.mark.parametrize("arguments", [{"offset": -1}, {"limit": 0}, {"limit": 101}, {"offset": True}])
 def test_epoch_page_rejects_invalid_bounds(arguments):
     with pytest.raises(ValueError, match="epoch page"):
-        ResultsService(SimpleNamespace(generation=None)).epochs(**arguments)
+        ResultsService(lambda: None).epochs(**arguments)

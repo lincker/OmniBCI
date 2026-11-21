@@ -1,4 +1,4 @@
-"""A signed, static plugin repository with explicit installation and no accounts."""
+"""A signed, static plugin repository with verified downloads and no accounts."""
 
 from __future__ import annotations
 
@@ -24,9 +24,9 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from omnibci.application.plugin_market import MarketContribution, MarketPackage, PreparedMarketInstall
-from omnibci.infrastructure.plugins.descriptors import PluginSelection
-from omnibci.infrastructure.plugins.package_installer import InstalledPackage, PluginPackageInstaller
-from omnibci.infrastructure.plugins.plugin_catalog import VALID_CATEGORIES, DOMAIN_KINDS
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_packages import MarketVerification
+from omnibci.infrastructure.plugins.manifest import VALID_CATEGORIES, PACKAGE_DOMAINS
 
 _IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9_-]*"
 _INDEX_FIELDS = frozenset({
@@ -97,18 +97,17 @@ def _text(value, field: str, maximum: int = 256) -> str:
 
 
 class StaticMarketRepository:
-    """Read one operator-configured repository and install exact package versions.
+    """Read one operator-configured repository and download exact package versions.
 
     Public keys must come from operator configuration, never the repository.
     ``allow_http`` is limited to literal loopback addresses for controlled tests.
-    Listing only reads signed metadata. Installation does not enable a package.
+    Listing only reads signed metadata. Downloads do not publish or enable a package.
     """
 
     def __init__(
         self,
         repo_url: str,
         trusted_keys: Mapping[str, bytes | str | Ed25519PublicKey],
-        installer: PluginPackageInstaller,
         cache_dir: Path,
         *,
         expected_repository_id: str | None = None,
@@ -119,7 +118,6 @@ class StaticMarketRepository:
         self.allow_http = allow_http
         self._validate_url(repo_url)
         self.repo_url = repo_url
-        self.installer = installer
         self.cache_dir = Path(cache_dir).resolve()
         self.expected_repository_id = expected_repository_id
         self.limits = limits or MarketLimits()
@@ -178,10 +176,6 @@ class StaticMarketRepository:
             raise MarketRepositoryError("Repository contains duplicate package versions")
         return parsed
 
-    def install(self, package_id: str, version: str) -> InstalledPackage:
-        """Reverify the index, cache verified bytes, then invoke the offline installer."""
-        return self.install_prepared(self.prepare_install(package_id, version))
-
     def prepare_install(self, package_id: str, version: str) -> PreparedMarketInstall:
         proof = self._fetch_index()
         selected = next((
@@ -193,18 +187,18 @@ class StaticMarketRepository:
         archive = self._download(selected)
         return PreparedMarketInstall(selected, archive, proof)
 
-    def install_prepared(self, prepared: PreparedMarketInstall) -> InstalledPackage:
-        # Admission may have delayed publication; verify expiry and signed identity
-        # again, then let the installer hash the cached bytes before publication.
+    def verify_prepared(self, prepared: PreparedMarketInstall) -> MarketVerification:
+        # Called after archive validation, immediately before local publication.
+        # The accepted evidence stays in the host receipt, outside plugin inputs.
         selected = prepared.package
         if selected not in self._parse_index(prepared.proof):
             raise MarketRepositoryError("Prepared package differs from signed repository metadata")
-        return self.installer.install(
-            prepared.archive, expected_sha256=selected.sha256,
-            expected_package_id=selected.package_id, expected_version=selected.version, expected_domain=selected.domain,
-            expected_contributions={
-                item.selection.contribution_id: item.kind for item in selected.contributions
-            },
+        document = json.loads(prepared.proof)
+        key_id = document["signature"]["key_id"]
+        return MarketVerification(
+            selected.repository_id, key_id,
+            hashlib.sha256(self._keys[key_id].public_bytes_raw()).hexdigest(),
+            self.clock().astimezone(UTC).isoformat(), prepared.proof,
         )
 
     def _verify_signature(self, document: dict) -> None:
@@ -265,9 +259,7 @@ class StaticMarketRepository:
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise MarketRepositoryError("Package SHA-256 must use 64 lowercase hexadecimal digits")
         size = item.get("size")
-        if type(size) is not int or not 0 < size <= min(
-            self.limits.max_download_bytes, self.installer.limits.max_archive_bytes,
-        ):
+        if type(size) is not int or not 0 < size <= self.limits.max_download_bytes:
             raise MarketRepositoryError("Package size is invalid or exceeds the download limit")
         download = _text(item.get("download"), "relative package download", 2048)
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~+/-]*", download) or any(
@@ -277,7 +269,7 @@ class StaticMarketRepository:
         download_url = urljoin(self.repo_url, download)
         self._validate_url(download_url)
         domain = item.get("domain")
-        if not isinstance(domain, str) or domain not in DOMAIN_KINDS:
+        if not isinstance(domain, str) or domain not in PACKAGE_DOMAINS:
             raise MarketRepositoryError("Missing or invalid package domain")
         contributions = item.get("contributions")
         if not isinstance(contributions, list) or not 0 < len(contributions) <= 128:
@@ -291,7 +283,7 @@ class StaticMarketRepository:
             kind = contribution["kind"]
             if not re.fullmatch(_IDENTIFIER, identifier) or identifier in identifiers:
                 raise MarketRepositoryError("Invalid or duplicate contribution ID")
-            if not isinstance(kind, str) or kind not in DOMAIN_KINDS[domain]:
+            if not isinstance(kind, str) or kind not in VALID_CATEGORIES:
                 raise MarketRepositoryError("Unknown contribution kind")
             identifiers.add(identifier)
             parsed.append(MarketContribution(kind, PluginSelection(package_id, identifier, version)))

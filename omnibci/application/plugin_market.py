@@ -1,10 +1,10 @@
-"""Signed repository query values and the verified-download installation port."""
+"""Signed repository query values and the verified-download port."""
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from omnibci.application.plugin_packages import PackageInstallation, PluginPackageError
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_packages import MarketVerification, PluginPackageError
+from omnibci.application.plugin_identity import PluginSelection
 
 
 class PluginMarketError(PluginPackageError):
@@ -46,4 +46,4 @@ class PreparedMarketInstall:
 class PluginMarketRepository(Protocol):
     def list_packages(self) -> tuple[MarketPackage, ...]: ...
     def prepare_install(self, package_id: str, version: str) -> PreparedMarketInstall: ...
-    def install_prepared(self, prepared: PreparedMarketInstall) -> PackageInstallation: ...
+    def verify_prepared(self, prepared: PreparedMarketInstall) -> MarketVerification: ...

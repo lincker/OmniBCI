@@ -16,8 +16,8 @@ import logging
 from typing import Dict
 
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.neuroengine.gateway.peer_channel import PeerChannel
-from omnibci.infrastructure.neuroengine.gateway.routing import PeerConfig
+from omnibci.infrastructure.ipc.peer_channel import PeerChannel
+from omnibci.infrastructure.ipc.routing import PeerConfig
 
 logger = logging.getLogger(__name__)
 

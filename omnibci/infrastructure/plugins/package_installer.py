@@ -20,32 +20,25 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass, replace
 from contextlib import contextmanager
-from importlib import metadata
 from pathlib import Path, PurePosixPath
-from typing import Mapping
+from typing import Callable, Mapping
 
-import tomlkit
-
-from omnibci.infrastructure.plugins.descriptors import PluginDescriptor, PluginSelection
-from omnibci.infrastructure.plugins.package_requirements import check_host_compatibility
+from omnibci.application.plugin_packages import MarketVerification, PluginPackageError
+from omnibci.infrastructure.plugins.descriptors import PluginDescriptor
+from omnibci.infrastructure.plugins.artifact_inventory import artifact_inventory, is_bytecode_path
+from omnibci.infrastructure.plugins.package_requirements import (
+    check_dependencies, installed_host_libraries, installed_host_version, normalize_dependency,
+)
 from omnibci.infrastructure.plugins.plugin_catalog import (
     PluginCatalog,
-    PluginResolutionError,
-    PluginRoot,
-    VALID_CATEGORIES,
+)
+
+from omnibci.infrastructure.plugins.manifest import (
+    PluginManifestError, parse_manifest, read_manifest, _unique_json_object,
 )
 
 _RECEIPT = ".omnibci-install.json"
 _CHUNK_SIZE = 1024 * 1024
-_HOST_LIBRARIES = (
-    "numpy", "mne", "scikit-learn", "tomlkit", "platformdirs", "fastapi",
-    "uvicorn", "pydantic", "websockets", "pyopengl", "glfw", "moderngl",
-)
-_PACKAGE_FIELDS = frozenset({
-    "id", "publisher", "version", "api_version", "platforms", "host_version",
-    "requires", "display_name", "description", "license", "homepage", "repository",
-    "icon", "readme", "domain", "engines",
-})
 _WINDOWS_DEVICES = frozenset({
     "con", "prn", "aux", "nul", "conin$", "conout$",
     *(f"com{number}" for number in range(1, 10)),
@@ -85,17 +78,6 @@ class InstalledPackage:
     contributions: tuple[PluginDescriptor, ...]
 
 
-def _distribution_version(name: str) -> str | None:
-    try:
-        return metadata.version(name)
-    except metadata.PackageNotFoundError:
-        return None
-
-
-def _normalized_dependency(name: str) -> str:
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
 def _portable_path(name: str, *, directory: bool = False) -> tuple[str, ...]:
     """Use one portable archive spelling, including on case-insensitive disks."""
     raw = name[:-1] if directory and name.endswith("/") else name
@@ -133,29 +115,35 @@ class PluginPackageInstaller:
         limits: InstallationLimits | None = None,
     ) -> None:
         self.root = Path(root).resolve()
-        self.host_version = host_version or _distribution_version("omnibci")
+        self.host_version = host_version or installed_host_version()
         if host_dependencies is None:
-            host_dependencies = {
-                name: version for name in _HOST_LIBRARIES
-                if (version := _distribution_version(name)) is not None
-            }
+            host_dependencies = installed_host_libraries()
         self.host_dependencies = {
-            _normalized_dependency(name): version
+            normalize_dependency(name): version
             for name, version in host_dependencies.items()
         }
         self.platform_name = platform_name or sys.platform
         self.limits = limits or InstallationLimits()
+        self.catalog = PluginCatalog(plugin_dir=self.root.parent, host_version=self.host_version)
 
     def install(
-        self, archive: Path, *, expected_sha256: str | None = None,
+        self, archive: Path, *, revalidate: Callable[[], MarketVerification] | None = None,
+        development: bool = False,
+        expected_sha256: str | None = None,
         expected_package_id: str | None = None, expected_version: str | None = None,
         expected_contributions: Mapping[str, str] | None = None, expected_domain: str | None = None,
     ) -> InstalledPackage:
         """Validate, extract, and atomically publish; leave activation unchanged."""
+        if type(development) is not bool or development and revalidate is not None:
+            raise PackageInstallError("Development snapshots cannot carry repository admission")
         if expected_sha256 is not None and not re.fullmatch(
             r"[0-9a-fA-F]{64}", expected_sha256,
         ):
             raise PackageInstallError("Expected SHA-256 must contain 64 hexadecimal digits")
+        if revalidate is not None and any(value is None for value in (
+            expected_sha256, expected_package_id, expected_version, expected_domain, expected_contributions,
+        )):
+            raise PackageInstallError("Repository verification requires exact expected artifact metadata")
         self.root.mkdir(parents=True, exist_ok=True)
         # Catalog traversal ignores __ directories, so incomplete installations
         # cannot become visible even when the installation root is being scanned.
@@ -194,10 +182,16 @@ class PluginPackageInstaller:
                 receipt = {
                     "receipt_version": 1, "package_id": package.identifier,
                     "version": package.version, "sha256": digest, "files": files,
+                    "origin": "development" if development else "market" if revalidate is not None else "local",
+                    "market_verification": None,
                 }
-                self._write_receipt(location, receipt)
                 with self._package_lock(package.identifier):
-                    self._check_domain(package.identifier, package.domain, destination_parent)
+                    if revalidate is not None:
+                        verification = revalidate()
+                        if not isinstance(verification, MarketVerification):
+                            raise PackageInstallError("Repository verifier must return accepted evidence")
+                        receipt["market_verification"] = verification.to_dict()
+                    self._write_receipt(location, receipt)
                     destination_parent.mkdir(exist_ok=True)
                     already_installed = self._publish(location, destination, receipt)
                 published = tuple(replace(
@@ -207,7 +201,7 @@ class PluginPackageInstaller:
                     package.identifier, package.version, destination, digest,
                     already_installed, published,
                 )
-            except PackageInstallError:
+            except (PackageInstallError, PluginPackageError):
                 raise
             except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
                 raise PackageInstallError(f"Cannot install plugin archive: {exc}") from exc
@@ -280,8 +274,12 @@ class PluginPackageInstaller:
                 raise PackageInstallError("Archive member contains a null byte")
             directory = member.is_dir()
             parts = _portable_path(member.filename, directory=directory)
+            if _path_key(parts)[0] in {"omnibci", "omnibci.py"}:
+                raise PackageInstallError("Archive must not vendor the omnibci host namespace")
             if len(parts) == 1 and _path_key(parts) == _path_key((_RECEIPT,)):
                 raise PackageInstallError("Archive contains reserved installation metadata")
+            if is_bytecode_path(Path(*parts)):
+                raise PackageInstallError("Archive must not contain Python bytecode or cache directories")
             mode = stat.S_IFMT(member.external_attr >> 16)
             if mode not in (0, stat.S_IFDIR if directory else stat.S_IFREG):
                 raise PackageInstallError(f"Archive member is not a regular file: {member.filename}")
@@ -343,53 +341,24 @@ class PluginPackageInstaller:
         return files
 
     def _validate_package(self, location: Path) -> tuple[PluginDescriptor, ...]:
-        document = tomlkit.loads((location / "manifest.toml").read_text(encoding="utf-8")).unwrap()
-        if type(document.get("manifest_version")) is not int or document["manifest_version"] != 2:
-            raise PackageInstallError("Installable packages require manifest_version = 2")
-        package = document.get("package")
-        contributions = document.get("contributions")
-        if not isinstance(package, dict) or not isinstance(contributions, list) or not contributions:
-            raise PackageInstallError("Package metadata and contributions are required")
-        self._check_requirements(package)
-        catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(location, "user", 0)]}, host_version=self.host_version)
-        descriptors = []
-        for contribution in contributions:
-            if not isinstance(contribution, dict) or not isinstance(
-                contribution.get("kind"), str,
-            ) or contribution["kind"] not in VALID_CATEGORIES:
-                raise PackageInstallError("Invalid package contribution")
-            try:
-                descriptor = catalog.resolve_selection(contribution["kind"], PluginSelection(
-                    f"{package.get('publisher')}.{package.get('id')}",
-                    contribution.get("id"), package.get("version"),
-                ))
-            except (PluginResolutionError, ValueError) as exc:
-                raise PackageInstallError(f"Invalid package manifest: {exc}") from exc
+        try:
+            document = read_manifest(location)
+            descriptors = parse_manifest(document, location, source="user", precedence=0,
+                                         host_version=self.host_version)
+        except PluginManifestError as exc:
+            raise PackageInstallError(f"Cannot install invalid package manifest: {exc}") from exc
+        self._check_requirements(document["package"])
+        for descriptor in descriptors:
             self._check_entrypoint(descriptor)
-            descriptors.append(descriptor)
         if not any(item.supports_platform(self.platform_name) for item in descriptors):
             raise PackageInstallError(f"Package has no contributions compatible with {self.platform_name}")
         return tuple(descriptors)
 
     def _check_requirements(self, package: dict) -> None:
-        unknown = package.keys() - _PACKAGE_FIELDS
-        if unknown:
-            raise PackageInstallError(f"Unsupported package fields: {', '.join(sorted(unknown))}")
         try:
-            check_host_compatibility(package, self.host_version)
+            check_dependencies(package.get("requires", {}), self.host_dependencies)
         except ValueError as exc:
             raise PackageInstallError(str(exc)) from exc
-        requirements = package.get("requires", {})
-        if not isinstance(requirements, dict):
-            raise PackageInstallError("package.requires must map host library names to exact versions")
-        seen = set()
-        for name, version in requirements.items():
-            normalized = _normalized_dependency(name)
-            if normalized in seen or not isinstance(version, str) or not version:
-                raise PackageInstallError(f"Invalid host dependency requirement: {name}")
-            seen.add(normalized)
-            if self.host_dependencies.get(normalized) != version:
-                raise PackageInstallError(f"Unavailable or incompatible host dependency: {name}=={version}")
 
     @staticmethod
     def _check_entrypoint(descriptor: PluginDescriptor) -> None:
@@ -448,22 +417,6 @@ class PluginPackageInstaller:
                 finally:
                     fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
-    def _check_domain(self, package_id: str, domain: str, parent: Path) -> None:
-        if parent.exists():
-            for version in parent.iterdir():
-                if version.is_symlink() or not version.is_dir():
-                    raise PackageInstallError("Installed package versions must be real directories")
-                try:
-                    package = tomlkit.loads((version / "manifest.toml").read_text(encoding="utf-8")).unwrap().get("package", {})
-                except (OSError, ValueError) as exc:
-                    raise PackageInstallError(f"Installed package version has conflicting content: {version}") from exc
-                if package.get("domain") != domain:
-                    raise PackageInstallError("Package domain cannot change across installed versions")
-        catalog = PluginCatalog(host_version=self.host_version)
-        descriptors, _ = catalog._scan("acquisition", all_categories=True)
-        if any(item.identifier == package_id and item.package.domain != domain for item in descriptors):
-            raise PackageInstallError("Package domain cannot change across discovered versions")
-
     @staticmethod
     def _write_receipt(location: Path, receipt: dict) -> None:
         with (location / _RECEIPT).open("x", encoding="utf-8") as writer:
@@ -471,39 +424,88 @@ class PluginPackageInstaller:
             writer.flush()
             os.fsync(writer.fileno())
 
+    def read_receipt(self, location: Path, package_id: str, version: str) -> dict:
+        """Read bounded host records without refreshing repository trust."""
+        path = location / _RECEIPT
+        # Reserve space for one bounded signed proof as well as escaped paths.
+        limit = self.limits.max_entries * (6 * 4096 + 128) + 2 * 1024 * 1024
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+            raise PackageInstallError("Installation receipt must be a bounded regular file")
+        receipt = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_json_object)
+        if (not isinstance(receipt, dict)
+                or receipt.keys() != {"receipt_version", "package_id", "version", "sha256", "files",
+                                      "origin", "market_verification"}
+                or type(receipt["receipt_version"]) is not int or receipt["receipt_version"] != 1
+                or receipt["package_id"] != package_id or receipt["version"] != version):
+            raise PackageInstallError("Installation receipt identity or format is invalid")
+        files = receipt["files"]
+        if not isinstance(files, dict) or not files or len(files) > self.limits.max_entries:
+            raise PackageInstallError("Installation receipt file list is invalid")
+        for value in [receipt["sha256"], *files.values()]:
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise PackageInstallError("Installation receipt digest is invalid")
+        for name in files:
+            _portable_path(name)
+        if "manifest.toml" not in files:
+            raise PackageInstallError("Installation receipt does not include the manifest")
+        if receipt["origin"] not in ("local", "market", "development"):
+            raise PackageInstallError("Installation receipt origin is invalid")
+        verification = receipt["market_verification"]
+        if receipt["origin"] == "development" and verification is not None:
+            raise PackageInstallError("Development snapshots cannot carry repository admission")
+        if verification is not None:
+            MarketVerification.from_dict(verification)
+        elif receipt["origin"] == "market":
+            raise PackageInstallError("Market origin requires accepted repository evidence")
+        return receipt
+
     def _publish(self, source: Path, destination: Path, receipt: dict) -> bool:
-        if destination.exists():
-            self._verify_existing(destination, receipt)
-            return True
-        try:
-            source.rename(destination)
-        except OSError:
-            # Another installer may have published this exact version first.
-            if not destination.exists():
-                raise
-            self._verify_existing(destination, receipt)
-            return True
-        return False
+        if not destination.exists():
+            try:
+                source.rename(destination)
+                return False
+            except OSError:
+                if not destination.exists():
+                    raise
+        actual = self._verify_existing(destination, receipt)
+        if "development" in (actual["origin"], receipt["origin"]) and actual["origin"] != receipt["origin"]:
+            raise PackageInstallError("Development snapshots and installed releases require separate stores")
+        incoming = receipt["market_verification"]
+        retained = actual["market_verification"]
+        # Identical proof retries retain their first acceptance timestamp.
+        if incoming is not None and (retained is None or any(
+            incoming[key] != retained[key] for key in incoming if key != "accepted_at"
+        )):
+            actual["market_verification"] = incoming
+            self._replace_receipt(destination, actual)
+        return True
 
     @staticmethod
-    def _verify_existing(destination: Path, expected: dict) -> None:
+    def _replace_receipt(destination: Path, receipt: dict) -> None:
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix="__receipt-",
+                                             dir=destination.parent, delete=False) as writer:
+                temporary = Path(writer.name)
+                json.dump(receipt, writer, sort_keys=True)
+                writer.flush()
+                os.fsync(writer.fileno())
+            os.replace(temporary, destination / _RECEIPT)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    def _verify_existing(self, destination: Path, expected: dict) -> dict:
         try:
             if destination.is_symlink() or not destination.is_dir():
                 raise ValueError("destination is not a real directory")
-            receipt_path = destination / _RECEIPT
-            if receipt_path.is_symlink():
-                raise ValueError("receipt is a symlink")
-            actual = json.loads(receipt_path.read_text(encoding="utf-8"))
-            if actual != expected:
-                raise ValueError("different archive or receipt")
-            for name, digest in expected["files"].items():
-                path = destination.joinpath(*PurePosixPath(name).parts)
-                if any(item.is_symlink() for item in (path, *path.parents) if item != destination.parent):
-                    raise ValueError("installed file is a symlink")
-                with path.open("rb") as reader:
-                    if hashlib.file_digest(reader, "sha256").hexdigest() != digest:
-                        raise ValueError("installed file content changed")
-        except (OSError, ValueError, TypeError) as exc:
+            actual = self.read_receipt(destination, expected["package_id"], expected["version"])
+            if any(actual[key] != expected[key] for key in ("package_id", "version", "sha256", "files")):
+                raise ValueError("different archive or file inventory")
+            if artifact_inventory(destination) != expected["files"]:
+                raise ValueError("installed file inventory or content changed")
+            return actual
+        except (OSError, ValueError, TypeError, PackageInstallError) as exc:
             raise PackageInstallError(
                 f"Package version already exists with conflicting content: {destination} ({exc})"
             ) from exc

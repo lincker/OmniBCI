@@ -1,54 +1,57 @@
-"""External stimulation clears its real trigger only after rendering stops."""
-
-from unittest.mock import AsyncMock, Mock
+"""Local and external stimulation nodes share the same resource cleanup owner."""
+from unittest.mock import AsyncMock
 
 import pytest
 
-from omnibci.infrastructure.stimulation import application as module
-from omnibci.infrastructure.stimulation.render_loop import RenderLoop
+from tests.execution_helpers import synthetic_execution_snapshot
+
+from omnibci.infrastructure.stimulation.application import Stimulation
 
 
-def make_app(monkeypatch, *, external=True, render_error=False, clear_error=False,
-             setup_error=False, initialize_trigger=True):
-    monkeypatch.setattr(module.mp, "Queue", Mock())
-    app = module.Stimulation(settings_snapshot={
-        "CONFIG.node_role": "stimulation" if external else None,
-        "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64,
-        "CONFIG.generation": "run-1",
-    })
+def make_app(monkeypatch, *, clear_error=False, render_error=False, setup_error=False,
+             initialize_trigger=True, external=True):
+    snapshot = {"CONFIG.node_role": "stimulation", "CONFIG.module_revisions": {"stimulation": "1" * 64},
+                "CONFIG.engine_revision": "2" * 64, "CONFIG.generation": "generation"} if external else {}
+    if external:
+        snapshot = synthetic_execution_snapshot(snapshot)
+    app = Stimulation(settings_snapshot=snapshot)
     steps = []
 
     class Trigger:
+        def setup(self):
+            if not initialize_trigger:
+                raise RuntimeError('trigger initialization failed')
         def clear(self):
-            assert app._render_task.done()
-            steps.append("trigger-clear")
+            steps.append('trigger-clear')
             if clear_error:
-                raise RuntimeError("trigger release unconfirmed")
+                raise RuntimeError('trigger release unconfirmed')
+        def teardown(self):
+            steps.append('trigger-teardown')
 
     class Renderer:
+        def initialize(self, **kwargs):
+            pass
         def should_close(self):
             return False
         def poll_events(self):
             pass
-        def end_frame(self):
+        def begin_frame(self):
+            return None
+        def end_frame(self, frame, *, submit):
             pass
         def shutdown(self):
-            steps.append("renderer-shutdown")
+            steps.append('renderer-shutdown')
 
     class Paradigm:
-        def render_frame(self, time):
-            pass
-        def teardown(self, renderer):
-            steps.append("paradigm-teardown")
+        def setup(self, *, renderer, trigger):
+            if setup_error:
+                raise RuntimeError('paradigm initialization failed')
+        def render_frame(self, frame):
+            return False
+        def teardown(self):
+            steps.append('paradigm-teardown')
             if render_error:
-                raise RuntimeError("renderer release unconfirmed")
-
-    def setup():
-        if initialize_trigger:
-            app.stimulator.trigger = Trigger()
-        if setup_error:
-            raise RuntimeError("renderer initialization failed")
-        app.stimulator._loop = RenderLoop(Renderer(), Paradigm())
+                raise RuntimeError('renderer release unconfirmed')
 
     async def ready():
         if external:
@@ -56,42 +59,48 @@ def make_app(monkeypatch, *, external=True, render_error=False, clear_error=Fals
         else:
             app.should_stop = True
 
-    monkeypatch.setattr(app.stimulator, "_setup", setup)
-    monkeypatch.setattr(app, "start", AsyncMock())
-    monkeypatch.setattr(app, "_await_managed_readiness", ready)
-    monkeypatch.setattr(app, "stop", AsyncMock(side_effect=lambda: steps.append("ipc-stop")))
+    monkeypatch.setattr(app.stimulator, '_load_trigger', lambda: Trigger())
+    monkeypatch.setattr(app.stimulator, '_load_paradigm', lambda: Paradigm())
+    monkeypatch.setattr('omnibci.infrastructure.stimulation.stimulator._create_renderer', lambda name: Renderer())
+    monkeypatch.setattr(app, 'start', AsyncMock())
+    monkeypatch.setattr(app, '_await_managed_readiness', ready)
+    async def close():
+        steps.append('ipc-stop')
+        app._close_event_queue()
+    monkeypatch.setattr(app, 'stop', close)
     return app, steps
 
 
-def test_reconnect_requires_stopped_renderer_then_cleared_trigger(monkeypatch):
+def test_reconnect_requires_stopped_renderer_and_cleared_trigger(monkeypatch):
     app, steps = make_app(monkeypatch)
     assert app.run() is True
-    assert steps == ["paradigm-teardown", "renderer-shutdown", "trigger-clear", "ipc-stop"]
+    assert steps == ['trigger-clear', 'paradigm-teardown', 'trigger-clear', 'trigger-teardown', 'renderer-shutdown', 'ipc-stop']
 
 
 def test_trigger_clear_failure_is_fatal_and_still_closes_ipc(monkeypatch):
     app, steps = make_app(monkeypatch, clear_error=True)
-    with pytest.raises(RuntimeError, match="trigger release unconfirmed"):
+    with pytest.raises(ExceptionGroup, match='cleanup also failed'):
         app.run()
-    assert steps == ["paradigm-teardown", "renderer-shutdown", "trigger-clear", "ipc-stop"]
+    assert steps == ['trigger-clear', 'trigger-clear', 'trigger-teardown', 'renderer-shutdown', 'ipc-stop']
 
 
-def test_render_teardown_failure_still_clears_trigger_and_remains_fatal(monkeypatch):
+def test_render_teardown_failure_still_clears_trigger_and_closes_renderer(monkeypatch):
     app, steps = make_app(monkeypatch, render_error=True)
-    with pytest.raises(RuntimeError, match="renderer release unconfirmed"):
+    with pytest.raises(RuntimeError, match='renderer release unconfirmed'):
         app.run()
-    assert steps == ["paradigm-teardown", "trigger-clear", "ipc-stop"]
+    assert steps == ['trigger-clear', 'paradigm-teardown', 'trigger-clear', 'trigger-teardown', 'renderer-shutdown', 'ipc-stop']
 
 
-@pytest.mark.parametrize("initialize_trigger", [False, True])
-def test_failed_setup_clears_only_an_initialized_trigger(monkeypatch, initialize_trigger):
+@pytest.mark.parametrize('initialize_trigger', [False, True])
+def test_failed_setup_clears_only_a_successfully_initialized_trigger(monkeypatch, initialize_trigger):
     app, steps = make_app(monkeypatch, setup_error=True, initialize_trigger=initialize_trigger)
-    with pytest.raises(RuntimeError, match="renderer initialization failed"):
+    with pytest.raises(RuntimeError, match='initialization failed'):
         app.run()
-    assert steps == (["trigger-clear"] if initialize_trigger else []) + ["ipc-stop"]
+    assert steps == (['trigger-clear', 'paradigm-teardown', 'trigger-clear'] if initialize_trigger else []) + [
+        'trigger-teardown', 'renderer-shutdown', 'ipc-stop']
 
 
-def test_managed_shutdown_preserves_existing_trigger_lifecycle(monkeypatch):
+def test_managed_shutdown_uses_same_trigger_lifecycle(monkeypatch):
     app, steps = make_app(monkeypatch, external=False)
     assert app.run() is False
-    assert steps == ["paradigm-teardown", "renderer-shutdown", "ipc-stop"]
+    assert steps == ['trigger-clear', 'paradigm-teardown', 'trigger-clear', 'trigger-teardown', 'renderer-shutdown', 'ipc-stop']

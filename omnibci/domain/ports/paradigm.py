@@ -3,40 +3,49 @@ Paradigm — domain port for stimulus-presentation plugins.
 
 The stimulation subsystem loads a Paradigm plugin (selected by
 STIMULATION.paradigm) and drives it to present stimuli. Each paradigm owns its
-own per-trial parameter shape (SSVEP: target/event id; P300: flash sequence;
+own per-trial JSON object shape (SSVEP: event_id; P300: flash sequence;
 MI: cue class), opaque to the dispatch/queue layer.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 
-from omnibci.domain.ports.renderer import Renderer
-from omnibci.domain.ports.acquisition import TriggerEmitter
+from omnibci.domain.ports.renderer import FrameTiming, RenderSurface
+from omnibci.domain.ports.acquisition import TriggerOutput
 
 
 class Paradigm(ABC):
 
-    def bind_trigger(self, trigger: TriggerEmitter) -> None:
-        """Receive the host-selected trigger before renderer setup."""
-        self.trigger = trigger
+    @abstractmethod
+    def setup(self, *, renderer: RenderSurface, trigger: TriggerOutput) -> None:
+        """Borrow drawing/output capabilities and prepare stimulus resources."""
 
     @abstractmethod
-    def setup(self, renderer: Renderer | None = None) -> None:
-        """Prepare stimulus resources on the thread owning the renderer."""
+    def teardown(self) -> None:
+        """Release partial or complete stimulus resources on the owner thread."""
 
     @abstractmethod
-    def teardown(self, renderer: Renderer | None = None) -> None:
-        """Release stimulus resources on the thread owning the renderer."""
+    def present_trial(self, parameters: Mapping[str, object]) -> None:
+        """Present one trial using the declared, host-validated JSON object."""
 
     @abstractmethod
-    def trial_stimulus_present(self, params) -> None:
-        """Present one trial.
+    def present_result(self, result: Mapping[str, object]) -> None:
+        """Present feedback using the declared, host-validated JSON object."""
 
-        *params* is this paradigm's per-trial parameter, opaque to the
-        dispatch/queue layer.  Each paradigm defines its own shape (e.g. SSVEP:
-        an int target/event id; P300: a flash-sequence spec; MI: a cue class).
+    @abstractmethod
+    def render_frame(self, frame: FrameTiming) -> bool:
+        """Draw for this display opportunity on the renderer owner thread.
+
+        Return True for ready content, False to retain the displayed content.
+        The host discards expired output; a successful return is not evidence
+        of presentation. Select content from timing, not callback counts.
         """
-        pass
 
     @abstractmethod
-    def trial_result_present(self, result) -> None: pass
+    def is_presenting(self) -> bool:
+        """Report trial or feedback activity on the renderer owner thread.
+
+        Return a bool: False admits another trial. Query failures propagate;
+        neither a missing method nor an invalid result means the paradigm is idle.
+        """

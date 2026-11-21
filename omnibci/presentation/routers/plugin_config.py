@@ -1,17 +1,14 @@
 """Schema-driven profiles; saving never silently activates changed values."""
-from contextlib import contextmanager
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, Query
 
 from omnibci.application.configuration.definitions import MODULES, ENGINE_SETTING_DEFAULTS
-from omnibci.application.configuration.errors import ConfigProfileConflictError
-from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileValidationError, ProfileRevisionConflict
-from omnibci.application.configuration.models import PluginSelection
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.configuration.errors import PluginProfileValidationError
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.configuration.service import ConfigurationService
-from omnibci.presentation.errors import ApiError
+from omnibci.presentation.errors import ApiError, configuration_errors
 from omnibci.presentation.dependencies import get_configuration_service
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.plugin_config import (
@@ -23,41 +20,30 @@ from omnibci.presentation.schemas.plugin_config import (
 router = APIRouter(prefix="/config", tags=["Plugin configuration"])
 
 
-@contextmanager
-def _configuration_errors():
-    try:
-        yield
-    except (PluginSchemaError, PluginProfileValidationError, ValueError) as exc:
-        raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc)) from exc
-    except (ProfileRevisionConflict, ConfigProfileConflictError) as exc:
-        raise ApiError(409, ErrorCode.CONFLICT, str(exc)) from exc
-    except PluginProfileNotFoundError as exc:
-        raise ApiError(404, ErrorCode.CONFIG_PROFILE_NOT_FOUND, f"Profile not found: {exc}") from exc
-    except OSError as exc:
-        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, str(exc)) from exc
-
-
 @router.get("/plugin-catalog/{kind}", response_model=ApiResponse[list[PluginConfigurationResponse]])
 def plugin_catalog(kind: PluginKind, svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
-        return ApiResponse(data=[asdict(item) for item in svc.catalog.list(kind)])
+    with configuration_errors():
+        return ApiResponse(data=[asdict(item) for item in svc.list_plugin_configurations(kind)])
 
 
 @router.get("/plugin-profiles", response_model=ApiResponse[list[PluginProfileResponse]])
 def list_profiles(kind: PluginKind | None = None,
                   svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
-        return ApiResponse(data=[item.to_dict() for item in svc.repository.list_profiles(kind)])
+    with configuration_errors():
+        return ApiResponse(data=[item.to_dict() for item in svc.list_profiles(kind)])
 
 
 @router.post("/plugin-profiles", status_code=201, response_model=ApiResponse[PluginProfileResponse])
 def create_profile(body: CreatePluginProfileRequest,
                    svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
-        selection = PluginSelection(**body.selection.model_dump())
+    with configuration_errors():
         values = {}
-        if body.processing_input is not None:
-            values["processing_input"] = ProcessingInput.from_dict(body.processing_input.model_dump(exclude_none=True))
+        try:
+            selection = PluginSelection(**body.selection.model_dump())
+            if body.processing_input is not None:
+                values["processing_input"] = ProcessingInput.from_dict(body.processing_input.model_dump(exclude_none=True))
+        except (ValueError, TypeError) as exc:
+            raise PluginProfileValidationError(str(exc)) from exc
         profile = svc.create(body.kind, selection, body.name, body.parameters,
                              **values)
         return ApiResponse(message="Profile created", data=profile.to_dict())
@@ -65,19 +51,22 @@ def create_profile(body: CreatePluginProfileRequest,
 
 @router.get("/plugin-profiles/{profile_id}", response_model=ApiResponse[PluginProfileResponse])
 def get_profile(profile_id: str, svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
-        return ApiResponse(data=svc.repository.get_profile(profile_id).to_dict())
+    with configuration_errors():
+        return ApiResponse(data=svc.get_profile(profile_id).to_dict())
 
 
 @router.put("/plugin-profiles/{profile_id}", response_model=ApiResponse[PluginProfileResponse])
 def update_profile(profile_id: str, body: UpdatePluginProfileRequest,
                    svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
+    with configuration_errors():
         values = body.model_dump(exclude={"processing_input"})
         if "processing_input" in body.model_fields_set:
-            values["processing_input"] = (
-                ProcessingInput.from_dict(body.processing_input.model_dump(exclude_none=True))
-                if body.processing_input is not None else None)
+            try:
+                values["processing_input"] = (
+                    ProcessingInput.from_dict(body.processing_input.model_dump(exclude_none=True))
+                    if body.processing_input is not None else None)
+            except (ValueError, TypeError) as exc:
+                raise PluginProfileValidationError(str(exc)) from exc
         profile = svc.update(profile_id, **values)
         return ApiResponse(message="Profile saved", data=profile.to_dict())
 
@@ -85,7 +74,7 @@ def update_profile(profile_id: str, body: UpdatePluginProfileRequest,
 @router.delete("/plugin-profiles/{profile_id}", response_model=ApiResponse)
 def delete_profile(profile_id: str, expected_revision: int = Query(ge=1),
                    svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
+    with configuration_errors():
         svc.delete(profile_id, expected_revision=expected_revision)
         return ApiResponse(message="Profile deleted")
 
@@ -105,11 +94,11 @@ def get_modules(svc: ConfigurationService = Depends(get_configuration_service)):
     modules, errors = {}, {}
     for module in MODULES:
         try:
-            modules[module] = _module_response(module, svc.repository.get_module(module), svc)
+            modules[module] = _module_response(module, svc.get_module(module), svc)
         except (ValueError, KeyError, RuntimeError, OSError) as exc:
             errors[module] = str(exc)
     try:
-        engine_settings = _engine_response(svc.repository.get_engine())
+        engine_settings = _engine_response(svc.get_engine())
     except (ValueError, KeyError, RuntimeError, OSError) as exc:
         engine_settings = None
         errors["engine"] = str(exc)
@@ -118,25 +107,25 @@ def get_modules(svc: ConfigurationService = Depends(get_configuration_service)):
 
 @router.get("/modules/{module}", response_model=ApiResponse[ModuleActivationResponse])
 def get_module(module: ConfigurationModule, svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
-        return ApiResponse(data=_module_response(module, svc.repository.get_module(module), svc))
+    with configuration_errors():
+        return ApiResponse(data=_module_response(module, svc.get_module(module), svc))
 
 
 @router.get("/modules/{module}/history", response_model=ApiResponse[list[ModuleHistoryResponse]])
 def module_history(module: ConfigurationModule, svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
+    with configuration_errors():
         return ApiResponse(data=[{
             "entry_id": entry.entry_id, "revision": entry.revision, "saved_at": entry.saved_at,
             "restored_from": entry.restored_from,
             "binding_summary": [f"{b.slot}: {b.selection.package_id}@{b.selection.version}/{b.selection.contribution_id}" for b in entry.activation.bindings],
-        } for entry in svc.repository.list_module_history(module)])
+        } for entry in svc.module_history(module)])
 
 
 @router.get("/modules/{module}/history/{entry_id}", response_model=ApiResponse[ModuleActivationResponse])
 def module_history_entry(module: ConfigurationModule, entry_id: str,
                          svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
-        entry = svc.repository.get_module_history_entry(module, entry_id)
+    with configuration_errors():
+        entry = svc.module_history_entry(module, entry_id)
         if entry is None:
             raise ApiError(404, ErrorCode.NOT_FOUND, "Module history entry not found")
         return ApiResponse(data=entry.activation.to_dict())
@@ -144,19 +133,19 @@ def module_history_entry(module: ConfigurationModule, entry_id: str,
 
 @router.get("/engine", response_model=ApiResponse[EngineSettingsResponse])
 def get_engine(svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
-        return ApiResponse(data=_engine_response(svc.repository.get_engine()))
+    with configuration_errors():
+        return ApiResponse(data=_engine_response(svc.get_engine()))
 
 
 @router.get("/plugin-profiles/{profile_id}/history", response_model=ApiResponse[list[ProfileHistoryResponse]])
 def profile_history(profile_id: str, svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
+    with configuration_errors():
         return ApiResponse(data=[entry.to_dict() for entry in svc.profile_history(profile_id)])
 
 
 @router.post("/plugin-profiles/{profile_id}/revert", response_model=ApiResponse[PluginProfileResponse])
 def revert_profile(profile_id: str, body: RevertProfileRequest,
                    svc: ConfigurationService = Depends(get_configuration_service)):
-    with _configuration_errors():
+    with configuration_errors():
         profile = svc.revert_profile(profile_id, body.revision, expected_revision=body.expected_revision)
         return ApiResponse(data=profile.to_dict(), message="Profile restored as a new revision")

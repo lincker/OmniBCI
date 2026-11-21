@@ -1,4 +1,5 @@
 """File playback resumes exactly at the next sample delivered by acquisition."""
+from pathlib import Path
 import asyncio
 import os
 from copy import deepcopy
@@ -6,11 +7,13 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
-from omnibci.domain.ports.acquisition import SignalSource
+from omnibci.domain.ports.acquisition import SignalSource, SourceCheckpoint
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 
 
 class FakeAdapter:
+    trigger_mode = 'events'
+    resume_mode = "restart-only"
     def __init__(self, _path):
         self.data = np.arange(22).reshape(2, 11)
         self.read_calls = []
@@ -36,9 +39,7 @@ def reader_factory(tmp_path, monkeypatch):
     path.write_bytes(b"sample-file")
 
     def create(file_path=path):
-        return FileReader(parameters={
-            "data_file_path": str(file_path), "file_reader_chunk_size": 4,
-        })
+        return FileReader(parameters={'data_file_path': str(file_path), 'file_reader_chunk_size': 4}, resource_root=Path(__file__).parent)
 
     return create
 
@@ -51,20 +52,19 @@ def test_resume_delivers_every_sample_once_and_manual_start_resets(reader_factor
         chunks = [await first.read_chunk(), await first.read_chunk()]
         await first.stop_stream()
         checkpoint = first.checkpoint()
-        assert checkpoint["next_sample"] == 8
+        assert checkpoint.state["next_sample"] == 8
         await first.disconnect()
 
         resumed = reader_factory()
-        # Staging before connect also works; start rechecks identity and bounds.
-        resumed.restore_checkpoint(checkpoint)
-        checkpoint["next_sample"] = 0
         await resumed.connect()
+        resumed.restore_checkpoint(checkpoint)
+        checkpoint.state["next_sample"] = 0
         await resumed.start_stream()
         chunks.append(await resumed.read_chunk())
         assert chunks[-1].shape[1] == 3
         assert resumed.file_pointer == 11
         assert await resumed.read_chunk() is None
-        assert resumed.checkpoint()["next_sample"] == 11
+        assert resumed.checkpoint().state["next_sample"] == 11
         np.testing.assert_array_equal(np.concatenate(chunks, axis=1), FakeAdapter(None).data)
 
         await resumed.start_stream()
@@ -100,7 +100,7 @@ def test_cancelled_read_does_not_advance_cursor(reader_factory, monkeypatch, dur
         with pytest.raises(asyncio.CancelledError):
             await task
         assert reader.file_pointer == 0
-        assert reader.checkpoint()["next_sample"] == 0
+        assert reader.checkpoint().state["next_sample"] == 0
 
     asyncio.run(scenario())
 
@@ -129,6 +129,7 @@ def test_checkpoint_rejects_different_file(reader_factory, tmp_path):
         other_path = tmp_path / "other.cnt"
         other_path.write_bytes(b"sample-file")
         other = reader_factory(other_path)
+        await other.connect()
         with pytest.raises(ValueError, match="differs"):
             other.restore_checkpoint(checkpoint)
 
@@ -177,7 +178,7 @@ def test_checkpoint_rejects_changed_file(reader_factory, after_staging):
         if after_staging:
             with pytest.raises(ValueError, match="changed"):
                 await reader.start_stream()
-            assert not reader.is_streaming
+            assert not reader._is_streaming
         else:
             with pytest.raises(ValueError, match="changed"):
                 reader.restore_checkpoint(checkpoint)
@@ -188,33 +189,32 @@ def test_checkpoint_rejects_changed_file(reader_factory, after_staging):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("format_version", True), ("format_version", 2), ("source", "live_source"),
-    ("next_sample", True), ("next_sample", -1), ("next_sample", 12), ("file", {}),
+    ("next_sample", True), ("next_sample", -1), ("next_sample", 12), ("unexpected", {}),
 ])
 def test_checkpoint_rejects_malformed_or_out_of_range_data(reader_factory, field, value):
     async def scenario():
         reader = reader_factory()
         await reader.connect()
         checkpoint = deepcopy(reader.checkpoint())
-        checkpoint[field] = value
+        checkpoint.state[field] = value
         with pytest.raises(ValueError):
             reader.restore_checkpoint(checkpoint)
 
     asyncio.run(scenario())
 
 
-def test_existing_source_implementations_need_no_checkpoint_methods():
+def test_non_checkpoint_sources_use_none_and_reject_restore():
     class LiveSource(SignalSource):
-        async def get_metadata(self): pass
-        async def connect(self): return True
-        async def start_stream(self): return True
+        trigger_mode = "events"
+        resume_mode = "live-current"
+        async def observe(self): pass
+        async def connect(self): return None
+        async def start_stream(self): return None
         async def read_chunk(self): return None
-        async def stop_stream(self): return True
-        async def disconnect(self): return True
+        async def stop_stream(self): return None
+        async def disconnect(self): return None
 
     source = LiveSource()
-    assert not source.supports_checkpoint
+    assert source.checkpoint() is None
     with pytest.raises(NotImplementedError):
-        source.checkpoint()
-    with pytest.raises(NotImplementedError):
-        source.restore_checkpoint({})
+        source.restore_checkpoint(SourceCheckpoint(resource_id="file", resource_revision="rev", state={}))

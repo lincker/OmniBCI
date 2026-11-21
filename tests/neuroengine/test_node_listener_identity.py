@@ -1,6 +1,9 @@
 """Engine listeners pin only externally managed nodes to runtime identities."""
 
 import asyncio
+
+from tests.execution_helpers import output_bindings
+from omnibci.application.plugin_execution import bindings_fingerprint
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,7 +30,7 @@ async def build_graph(monkeypatch):
     async def build(**settings):
         snapshot = {"CONFIG.module_revisions": {role: "a" * 64 for role in (
             "acquisition", "processing", "stimulation", "actuation")},
-            "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1", **settings}
+            "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1", "PLUGINS.bindings": output_bindings(), **settings}
         engine = builder.NeuroEngineBuilder(settings_snapshot=snapshot).build()
         assert not engine.peer_gateway._channels
         engine._loop = asyncio.get_running_loop()
@@ -54,7 +57,8 @@ async def test_prepared_listener_uses_its_own_external_identity(
     for role, managed in (("stimulation", stim_managed), ("actuation", actuation_managed)):
         await engine.ensure_output_ready(role, snapshot)
         server = engine.peer_gateway.peer(role)._transport._server
-        expected = None if managed else PeerIdentity(role, "a" * 64, "c" * 64, "run-1")
+        expected = None if managed else PeerIdentity(role, "a" * 64, "c" * 64, "run-1",
+                                                    engine.node_operation_id(role), bindings_fingerprint(output_bindings(), role))
         assert server.identity == expected
         assert server.max_clients == (None if role == "stimulation" and managed else 1)
 
@@ -92,7 +96,8 @@ async def test_external_actuation_is_prepared_before_module_activation(build_gra
     assert not engine.peer_gateway._channels
     await engine.ensure_output_ready("actuation", snapshot)
     assert engine.peer_gateway.peer("actuation")._transport._server.identity == PeerIdentity(
-        "actuation", "a" * 64, "c" * 64, "run-1")
+        "actuation", "a" * 64, "c" * 64, "run-1",
+        engine.node_operation_id("actuation"), bindings_fingerprint(output_bindings(), "actuation"))
     assert not engine._actuation_active
 
 
@@ -109,16 +114,31 @@ async def test_invalid_external_identity_fails_when_preparing_only_that_role(bui
 
 
 def test_peer_factories_preserve_routing_while_limiting_external_stimulation():
-    identity = PeerIdentity("stimulation", "a" * 64, "c" * 64, "run-1")
+    identity = PeerIdentity("stimulation", "a" * 64, "c" * 64, "run-1", "prepare-1", "d" * 64)
     managed = stimulation_peer_config("127.0.0.1", 8000)
     external = stimulation_peer_config("127.0.0.1", 8000, identity=identity)
     assert managed.routes == external.routes
     assert managed.transport._server.max_clients is None
     assert external.transport._server.max_clients == 1
 
-    identity = PeerIdentity("actuation", "a" * 64, "c" * 64, "run-1")
+    identity = PeerIdentity("actuation", "a" * 64, "c" * 64, "run-1", "prepare-1", "d" * 64)
     managed = actuation_peer_config("127.0.0.1", 8001, watchdog_timeout_s=2)
     external = actuation_peer_config("127.0.0.1", 8001, watchdog_timeout_s=2, identity=identity)
     assert managed.routes == external.routes
     assert managed.transport._server.max_clients == external.transport._server.max_clients == 1
     assert managed.transport._server.idle_timeout == external.transport._server.idle_timeout == 4
+
+
+@pytest.mark.asyncio
+async def test_replacing_a_listener_invalidates_its_operation_even_with_same_configuration(build_graph):
+    engine, snapshot = await build_graph(**{"ACTUATION.auto_spawn": False})
+    assert engine.node_operation_id("actuation") is None
+    await engine.ensure_output_ready("actuation", snapshot)
+    first = engine.node_operation_id("actuation")
+    assert first
+    await engine.ensure_output_ready("actuation", snapshot)
+    assert engine.node_operation_id("actuation") == first
+    await engine.reconfigure_output_modules(snapshot, ("actuation",))
+    assert engine.node_operation_id("actuation") not in (None, first)
+    await engine.peer_gateway.stop()
+    assert engine.node_operation_id("actuation") is None

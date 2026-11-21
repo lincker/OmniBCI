@@ -1,4 +1,6 @@
 """Saved experiment values are compared with independently observed signal facts."""
+from omnibci.application.source_metadata import source_descriptor
+from omnibci.domain.ports.acquisition import SourceObservation
 from copy import deepcopy
 
 import pytest
@@ -10,8 +12,7 @@ from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 
 
 def source_info(provenance="device-reported"):
-    return SignalInfo("source", 500, (ChannelDescriptor(0, "C3"), ChannelDescriptor(1, "C4")),
-                      2, connection_id="connection", provenance=provenance)
+    return source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=500, channels=(ChannelDescriptor(0, "C3", channel_id="channel-0"), ChannelDescriptor(1, "C4", channel_id="channel-1"))), native_event="final-row", provenance=provenance), source_id="source", connection_id="connection")
 
 
 def source_binding(**parameters):
@@ -68,7 +69,7 @@ def test_mismatch_reports_expected_and_observed_values_without_modifying_them(pa
         validate_source_expectations({"PLUGINS.bindings": [binding]}, info)
     assert "expected None" not in str(error.value)
     assert binding == original
-    assert info.sample_rate == 500 and info.output_row_count == 3
+    assert info["sample_rate"] == 500 and info["output_row_count"] == 3
 
 
 @pytest.mark.parametrize("provenance", ["user-declared", "protocol-defined"])

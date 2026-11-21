@@ -5,7 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ModuleActivationRevision, PluginProfile, PluginSelection, ProfileBinding, ProfileRevision, EngineSettings, module_for_slot
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ModuleActivationRevision, PluginProfile, ProfileBinding, ProfileRevision, EngineSettings, module_for_slot
 from omnibci.application.configuration.errors import PluginProfileValidationError
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 
@@ -103,12 +104,6 @@ def test_module_and_setting_ownership_are_checked():
             ModuleActivation(module, settings, bindings)
     with pytest.raises(PluginProfileValidationError):
         EngineSettings({"ACTUATION.auto_spawn": True})
-
-
-@pytest.mark.parametrize("version", [None, "", "*", ">=1", "1.0.*", " 1.0.0", "1.0.0."])
-def test_selections_require_exact_versions(version):
-    with pytest.raises(PluginProfileValidationError):
-        PluginSelection("acme.test", "main", version)
 
 
 @pytest.mark.parametrize("fields", [

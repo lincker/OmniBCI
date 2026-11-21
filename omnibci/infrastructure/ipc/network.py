@@ -12,6 +12,8 @@ import math
 import time
 
 from omnibci.shared.events import Event, EventType
+from omnibci.infrastructure.async_lifecycle import await_owned
+from omnibci.application.plugin_execution import PluginExecutionReceipt
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.infrastructure.ipc.contracts import (
     InvalidEventBody,
@@ -135,6 +137,7 @@ class NetworkServer:
         idle_timeout: float | None = None,
         write_timeout: float = DEFAULT_WRITE_TIMEOUT,
         identity: PeerIdentity | None = None,
+        record_execution=None,
     ):
         if max_clients is not None and max_clients < 1:
             raise ValueError("max_clients must be >= 1 or None")
@@ -144,6 +147,8 @@ class NetworkServer:
         self.idle_timeout = _validate_idle_timeout(idle_timeout)
         self.write_timeout = _validate_write_timeout(write_timeout)
         self.identity = identity
+        self._record_execution = record_execution
+        self.execution_receipt: PluginExecutionReceipt | None = None
         self.status = "INIT"
         self.server = None
         self._clients: set = set()
@@ -248,10 +253,18 @@ class NetworkServer:
                 event = await asyncio.wait_for(
                     read_event_frame(reader), timeout=PEER_HANDSHAKE_TIMEOUT,
                 )
-                if (event is None or event.type != EventType.PeerHello
-                        or not self.identity.matches(event.data)):
+                if event is None or event.type != EventType.PeerHello:
                     raise InvalidEventBody("Peer identity does not match the current runtime")
-                writer.write(encode_event(Event(EventType.PeerAccepted, self.identity.to_dict())))
+                receipt = PluginExecutionReceipt.from_dict(event.data)
+                if (not self.identity.accepts(receipt)
+                        or self.execution_receipt is not None and self.execution_receipt != receipt):
+                    raise InvalidEventBody("Peer execution identity does not match the current operation")
+                # Pin before acknowledging: a lost acknowledgement must not permit new bytes
+                # to substitute for the same preparation operation on the next connection.
+                self.execution_receipt = receipt
+                if self._record_execution is not None:
+                    await await_owned(asyncio.create_task(asyncio.to_thread(self._record_execution, receipt)))
+                writer.write(encode_event(Event(EventType.PeerAccepted, receipt.to_dict())))
                 await asyncio.wait_for(writer.drain(), timeout=self.write_timeout)
             if self._stopping:
                 return
@@ -449,7 +462,7 @@ class NetworkClient:
         reconnect_max: float = 10.0,
         idle_timeout: float | None = None,
         write_timeout: float = DEFAULT_WRITE_TIMEOUT,
-        identity: PeerIdentity | None = None,
+        receipt: PluginExecutionReceipt | None = None,
         reconnect: bool = True,
     ):
         self.server_ip = server_ip
@@ -465,7 +478,7 @@ class NetworkClient:
         self._reconnect_max = reconnect_max
         self._idle_timeout = _validate_idle_timeout(idle_timeout)
         self._write_timeout = _validate_write_timeout(write_timeout)
-        self.identity = identity
+        self.receipt = receipt
         self._reconnect = reconnect
         self._should_run = False
         self._supervisor_task: asyncio.Task | None = None
@@ -599,16 +612,16 @@ class NetworkClient:
                     if self._should_run and self.writer is None:
                         self.reader = reader
                         self.writer = writer
-                        self.status = "HANDSHAKING" if self.identity is not None else "CONNECTED"
+                        self.status = "HANDSHAKING" if self.receipt is not None else "CONNECTED"
                         accepted = True
-                if accepted and self.identity is not None:
-                    writer.write(encode_event(Event(EventType.PeerHello, self.identity.to_dict())))
+                if accepted and self.receipt is not None:
+                    writer.write(encode_event(Event(EventType.PeerHello, self.receipt.to_dict())))
                     await asyncio.wait_for(writer.drain(), timeout=self._write_timeout)
                     event = await asyncio.wait_for(
                         read_event_frame(reader), timeout=PEER_HANDSHAKE_TIMEOUT,
                     )
                     if (event is None or event.type != EventType.PeerAccepted
-                            or not self.identity.matches(event.data)):
+                            or event.data != self.receipt.to_dict()):
                         raise InvalidEventBody("Peer identity was not accepted by the engine")
                     async with self._connection_lock:
                         accepted = self._should_run and self.writer is writer
@@ -649,7 +662,7 @@ class NetworkClient:
                 )
                 return False
             writer = self.writer
-            if writer is None or (self.identity is not None and not self.is_connected):
+            if writer is None or (self.receipt is not None and not self.is_connected):
                 logger.warning(
                     "NetworkClient.send: not connected; dropping %d-byte frame",
                     len(frame),

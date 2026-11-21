@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from tests.execution_helpers import synthetic_execution_snapshot
+
 
 @pytest.fixture(params=["stimulation", "actuation"])
 def role(request):
@@ -27,9 +29,16 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
             self.ready = True
 
         async def start_async(self):
-            self.setup()
-            self.released = asyncio.Event()
-            await self.released.wait()
+            try:
+                self.setup()
+                self.released = asyncio.Event()
+                await self.released.wait()
+            finally:
+                self.teardown()
+
+        def request_stop(self):
+            if self.released is not None:
+                self.released.set()
 
         def teardown(self):
             lifecycle.append("teardown")
@@ -37,8 +46,6 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
                 self.released.set()
             if cleanup_error:
                 raise RuntimeError("hardware cleanup failed")
-
-        stop = teardown
 
         def quiesce(self):
             lifecycle.append("quiesce")
@@ -67,22 +74,27 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
     snapshot = {"CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1"}
     if external:
         snapshot["CONFIG.node_role"] = role
+        snapshot = synthetic_execution_snapshot(snapshot)
     app = getattr(module, role.capitalize())(settings_snapshot=snapshot)
     return app, peer, peer_factory.call_args.args[0], lifecycle, queue
 
 
 def test_managed_process_keeps_existing_transport_without_identity(monkeypatch, role):
     app, peer, config, lifecycle, queue = make_app(monkeypatch, role, external=False)
-    assert config.transport._client.identity is None
+    assert config.transport._client.receipt is None
     assert config.transport._client._reconnect is True
     assert app._external_node is False
 
 
 def test_external_process_has_pinned_identity_and_single_connection(monkeypatch, role):
     app, peer, config, lifecycle, queue = make_app(monkeypatch, role)
-    assert config.transport._client.identity.to_dict() == {
-        "role": role, "module_revision": "a" * 64, "engine_revision": "c" * 64, "generation": "run-1",
-    }
+    receipt = config.transport._client.receipt
+    assert receipt.module == role
+    assert receipt.module_revision == "a" * 64
+    assert receipt.engine_revision == "c" * 64
+    assert receipt.generation == "run-1"
+    assert receipt.operation_id == "prepare-1"
+    assert set(receipt.artifacts) == {"stimulation.paradigm" if role == "stimulation" else "actuation.effector"}
     assert config.transport._client._reconnect is False
 
 
@@ -175,7 +187,8 @@ def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch
     from omnibci.infrastructure.plugins import node_client
 
     app, peer, config, lifecycle, queue = make_app(monkeypatch, "actuation")
-    effector = Mock()
+    effector = Mock(setup=Mock(return_value=None), execute=Mock(return_value=None),
+                    quiesce=Mock(return_value=None), teardown=Mock(return_value=None))
     getattr(effector, failure).side_effect = RuntimeError("device still held")
     actuator = Actuator(settings_snapshot={})
     actuator._load_effector = Mock(return_value=effector)
@@ -192,7 +205,7 @@ def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch
     factory = Mock(return_value=app)
     sleep = Mock()
     monkeypatch.setattr(node_client, "fetch_node_configuration", fetch)
-    monkeypatch.setattr(node_client, "materialize_node_configuration", Mock(return_value={}))
+    monkeypatch.setattr(node_client, "materialize_node_configuration", Mock(return_value={"PLUGINS.bindings": []}))
     monkeypatch.setattr(node_client, "CatalogConfigurationAdapter", Mock())
     monkeypatch.setattr(node_client.time, "sleep", sleep)
 

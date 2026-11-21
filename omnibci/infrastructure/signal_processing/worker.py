@@ -7,8 +7,10 @@ It starts in standby until its signal pipeline has been prepared.
 import logging
 import multiprocessing as mp
 from copy import deepcopy
+from pathlib import Path
 from typing import Optional
 
+from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 
@@ -26,7 +28,8 @@ class SignalProcessingWorker(mp.Process):
                  baseline_duration: float = 0.0,
                  *, settings_snapshot: dict,
                  startup_reporter: StartupReporter | None = None,
-                 runtime_counters=None) -> None:
+                 runtime_counters=None,
+                 execution_history_root: Path | None = None) -> None:
         super().__init__()
         self.data_manager = data_manager
         self.event_bus = event_bus
@@ -37,6 +40,7 @@ class SignalProcessingWorker(mp.Process):
         self.signal_processor: Optional[SignalProcessor] = None
         self.startup_reporter = startup_reporter
         self.runtime_counters = runtime_counters
+        self.execution_history_root = execution_history_root.resolve() if execution_history_root is not None else None
 
     def run(self) -> None:
         try:
@@ -51,6 +55,8 @@ class SignalProcessingWorker(mp.Process):
                 self.startup_reporter.close()
 
     def _run_processor(self) -> None:
+        record_execution = (PluginExecutionHistory(self.execution_history_root).record
+                            if self.execution_history_root is not None else None)
         self.signal_processor = SignalProcessor(
             decoder=None,
             detector=None,
@@ -65,6 +71,7 @@ class SignalProcessingWorker(mp.Process):
             engine_revision=self.settings_snapshot.get("CONFIG.engine_revision"),
             settings_snapshot=self.settings_snapshot,
             runtime_counters=self.runtime_counters,
+            record_execution=record_execution,
         )
         if self.startup_reporter is not None:
             self.startup_reporter.ready()

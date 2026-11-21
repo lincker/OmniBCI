@@ -6,7 +6,8 @@ from uuid import uuid4
 import pytest
 import tomlkit
 
-from omnibci.application.configuration.models import ModuleActivation, PluginProfile, PluginSelection, ProfileBinding, EngineSettings
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import ModuleActivation, PluginProfile, ProfileBinding, EngineSettings
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileStorageError, PluginProfileValidationError, ProfileRevisionConflict
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
@@ -55,6 +56,21 @@ def test_profile_save_writes_integer_history_and_preserves_current(repository, p
     entries[0].profile.parameters["channels"].append(4)
     assert fresh.get_profile(profile.profile_id).parameters["channels"] == [1, 2]
     assert (repository.root / "plugin-profiles" / profile.profile_id / "current.toml").is_file()
+
+
+def test_invalid_stored_selection_is_reported_without_replacing_the_profile(repository, profile):
+    saved = repository.save_profile(profile)
+    path = repository.root / "plugin-profiles" / saved.profile_id / "current.toml"
+    document = tomlkit.parse(path.read_text())
+    document["selection"]["version"] = "1.0.0."
+    path.write_text(tomlkit.dumps(document))
+    invalid = path.read_bytes()
+
+    with pytest.raises(ValueError, match="exact package version"):
+        repository.get_profile(saved.profile_id)
+    with pytest.raises(ValueError, match="exact package version"):
+        repository.list_profiles()
+    assert path.read_bytes() == invalid
 
 
 def test_engine_namespace_change_preserves_existing_settings_modules_and_history(repository, profile):

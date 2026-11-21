@@ -81,3 +81,21 @@ def test_unrelated_processing_transition_and_recovery_do_not_block_stimulation_p
             engine.node_configuration_snapshot(lambda: {}, module="processing")
     finally:
         engine.admission.release_reservation(reservation)
+
+
+def test_running_node_publication_requires_a_prepared_output_operation(engine):
+    running(engine, {"STIMULATION.auto_spawn": False, "CONFIG.generation": "run-1"})
+    engine._engine.node_operation_id.return_value = None
+    with pytest.raises(ConfigProfileConflictError, match="Prepare"):
+        engine.node_configuration_snapshot(Mock(), module="stimulation")
+
+
+def test_node_operation_is_read_from_the_current_host_without_mutating_applied_state(engine):
+    running(engine, {"STIMULATION.auto_spawn": False, "CONFIG.generation": "run-1"})
+    engine._engine.node_operation_id.return_value = "operation-1"
+    state, snapshot = engine.node_configuration_snapshot(Mock(), module="stimulation")
+    assert state == "running"
+    assert snapshot["CONFIG.operation_id"] == "operation-1"
+    assert "CONFIG.operation_id" not in engine._applied_snapshot
+    engine._engine.node_operation_id.return_value = "operation-2"
+    assert engine.node_configuration_snapshot(Mock(), module="stimulation")[1]["CONFIG.operation_id"] == "operation-2"

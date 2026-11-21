@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, ProcessingInputStart, StreamBarrier
+from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart, StreamBarrier
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig
 from omnibci.shared.events import EventType
-from tests.neuroengine.test_channel_mapping import _processor
+from tests.neuroengine.test_channel_mapping import _plan, _processor, _receipt
 from tests.neuroengine.test_independent_input_boundaries import input_pair
 
 
@@ -29,7 +29,7 @@ def bounded_data():
 
 def test_builder_bounds_signal_and_boundary_messages_in_one_fifo(bounded_data):
     data = bounded_data
-    start = ProcessingInputStart("attach", {"input_id": "input-one"}, -1)
+    start = ProcessingInputStart("attach", SignalPreparationReceipt.from_value({**_receipt(_plan()), "input_id": "input-one"}), -1)
     barrier = StreamBarrier("detach", "engine", "acquisition", 0)
     data.put_data(start)
     data.processing_active.set()
@@ -87,7 +87,7 @@ async def test_new_attachment_discards_old_backlog_and_recovers_after_full_bound
                 "expected_revision": acquisition.acquisition_revision}
     await acquisition.execute((AcquisitionCommand.detach_processing, CommandRequest("full-detach", identity)))
     assert not events[-1].data.ok
-    assert acquisition.data_source.is_streaming
+    assert acquisition._streaming
     if restart_processor:
         processor = _processor(plan)
         processor.data_manager = data
@@ -153,7 +153,8 @@ async def test_full_queue_never_confirms_a_missing_boundary_on_retry(monkeypatch
                 "expected_revision": acquisition.acquisition_revision}
 
     for command_id in ("full-boundary", "retry-boundary"):
-        await acquisition.execute((command, CommandRequest(command_id, identity)))
+        payload = identity if command is AcquisitionCommand.detach_processing else None
+        await acquisition.execute((command, CommandRequest(command_id, payload)))
         result = next(event.data for event in events if event.type is EventType.CommandResult
                       and event.data.command_id == command_id)
         assert not result.ok

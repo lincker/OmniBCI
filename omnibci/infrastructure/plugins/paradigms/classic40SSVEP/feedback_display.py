@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
-"""Feedback display widget — renders BCI speller output via the Renderer protocol."""
+"""Feedback display widget — renders BCI speller output via the RenderSurface protocol."""
 from __future__ import annotations
 
 import threading
@@ -9,7 +9,7 @@ import threading
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from omnibci.sdk import Renderer, Rect, TextureHandle
+from omnibci.sdk import RenderSurface, Rect, TextureHandle
 
 
 def _center_rect(
@@ -25,7 +25,7 @@ def _center_rect(
 
 
 class FeedbackDisplay:
-    """Mutable text surface rendered via the Renderer protocol.
+    """Mutable text surface rendered via the RenderSurface protocol.
 
     Thread-safe: ``add_text`` / ``remove_last`` may be called from any thread;
     texture upload always happens on the GL thread inside ``draw``.
@@ -60,11 +60,11 @@ class FeedbackDisplay:
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
-    def setup(self, renderer: Renderer) -> None:
+    def setup(self, renderer: RenderSurface) -> None:
         """Upload initial (blank) texture. Call once from GL thread."""
         self._tex = renderer.upload_texture(self._render(""))
 
-    def teardown(self, renderer: Renderer) -> None:
+    def teardown(self, renderer: RenderSurface) -> None:
         """Release GPU texture. Call from GL thread."""
         if self._tex is not None:
             renderer.release_texture(self._tex)
@@ -84,15 +84,21 @@ class FeedbackDisplay:
 
     # ── Rendering (GL thread only) ─────────────────────────────────────────
 
-    def draw(self, renderer: Renderer) -> None:
+    def draw(self, renderer: RenderSurface) -> None:
         """Re-upload texture if content changed, then draw. GL thread only."""
         if self._dirty:
             with self._lock:
                 snapshot    = self._content
                 self._dirty = False
-            if self._tex is not None:
-                renderer.release_texture(self._tex)
-            self._tex = renderer.upload_texture(self._render(snapshot))
+            try:
+                replacement = renderer.upload_texture(self._render(snapshot))
+            except BaseException:
+                with self._lock:
+                    self._dirty = True
+                raise
+            previous, self._tex = self._tex, replacement
+            if previous is not None:
+                renderer.release_texture(previous)
         if self._tex is not None:
             renderer.draw_texture(self._tex, self._rect)
 

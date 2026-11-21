@@ -11,11 +11,11 @@ import numpy as np
 import pytest
 
 from tests.processing_helpers import make_processor
-from omnibci.application.events import CommandRequest, ProcessingInputStart
+from omnibci.application.events import CommandRequest, ProcessingInputStart, SignalPreparationReceipt
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.domain.signal_info import SignalInfo
+from omnibci.application.source_metadata import descriptor_layout, source_fingerprint
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand, AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
@@ -118,6 +118,8 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
                            {}).to_dict(),
         ],
     }
+    from tests.plugin_configuration_helpers import prepared_snapshot
+    snapshot = prepared_snapshot(snapshot)
     source = load_configured_plugin(snapshot, "acquisition.source", "acquisition", SignalSource)
     events = []
     bus = SimpleNamespace(put_event=events.append)
@@ -156,7 +158,7 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
     try:
         await acquisition_command(AcquisitionCommand.connect, "connect")
         metadata = await acquisition_command(AcquisitionCommand.get_metadata, "metadata")
-        descriptor = SignalInfo.from_dict(metadata["descriptor"])
+        descriptor = descriptor_layout(metadata["descriptor"])
         assert descriptor.sample_rate == sample_rate
         assert descriptor.output_row_count == len(labels)
         assert [channel.name for channel in descriptor.channels] == list(labels[:-1])
@@ -166,13 +168,13 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         plan = compile_processing_plan(descriptor, inputs, acquisition_revision="curry-revision")
         receipt = {
             "generation": "curry-generation", "acquisition_revision": "curry-revision", "processing_revision": "curry-revision", "engine_revision": "engine",
-            "connection_id": descriptor.connection_id,
-            "source_fingerprint": descriptor.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
+            "connection_id": metadata["connection_id"],
+            "source_fingerprint": source_fingerprint(metadata["descriptor"]), "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
         }
         processing_command(SignalProcessorCommand.prepare_signal, "prepare", {
             "plan": plan.to_dict(), "receipt": receipt,
         })
-        processor._on_input_start(ProcessingInputStart("attach", receipt, -1))
+        processor._on_input_start(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(receipt), -1))
         await acquisition_command(AcquisitionCommand.start_stream, "stream")
         async with asyncio.timeout(5):
             while processor._last_sequence < len(blocks) - 1:

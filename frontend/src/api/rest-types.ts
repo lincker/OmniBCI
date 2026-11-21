@@ -1853,6 +1853,7 @@ export interface components {
             /** Version */
             version: string;
         };
+        JsonValue: unknown;
         /** MarketContributionResponse */
         MarketContributionResponse: {
             /**
@@ -1983,6 +1984,8 @@ export interface components {
             engine_revision: string;
             /** Generation */
             generation: string | null;
+            /** Operation Id */
+            operation_id: string | null;
             /** Settings */
             settings: {
                 [key: string]: unknown;
@@ -2031,6 +2034,13 @@ export interface components {
             description: string | null;
             /** Sha256 */
             sha256: string | null;
+            /** Origin */
+            origin: ("local" | "market" | "development") | null;
+            /**
+             * Verified Repository
+             * @description Repository accepted at installation; not a current online trust check
+             */
+            verified_repository: string | null;
             /** Contributions */
             contributions: components["schemas"]["PackageContributionResponse"][];
             /** Enabled */
@@ -2544,11 +2554,7 @@ export interface components {
         };
         /**
          * StartTrialRequest
-         * @description Trigger one or more stimulation trials.
-         *
-         *     n_trials     — how many trials to run (paradigm-agnostic base parameter).
-         *     trial_params — per-trial target/event ids; len must equal n_trials when
-         *                    provided.  None → each trial uses the paradigm default.
+         * @description Start an explicit batch of per-trial JSON objects.
          */
         StartTrialRequest: {
             /**
@@ -2557,7 +2563,9 @@ export interface components {
              */
             n_trials: number;
             /** Trial Params */
-            trial_params?: number[] | null;
+            trial_params: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
         };
         /**
          * StimulationStatusResponse
@@ -4999,7 +5007,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": components["schemas"]["StartTrialRequest"];
             };

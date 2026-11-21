@@ -1,6 +1,6 @@
 """Resolve accepted module inputs at the Server composition boundary."""
 from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.application.configuration.models import ActivationSet, MODULE_KINDS
+from omnibci.application.configuration.models import MODULE_KINDS
 
 
 def accepted_runtime_settings(*, profiles, active_kinds=None) -> dict:
@@ -10,10 +10,7 @@ def accepted_runtime_settings(*, profiles, active_kinds=None) -> dict:
         modules = {module for module, supported in MODULE_KINDS.items() if supported & kinds}
         if "processing" in modules:
             modules.add("acquisition")
-        accepted = ActivationSet(
-            {module: profiles.repository.get_module(module) for module in modules},
-            profiles.repository.get_engine(),
-        )
+        accepted = profiles.selected_configuration(modules)
         if accepted.engine is None:
             raise PluginSchemaError("Engine settings are not selected; apply module configuration before starting")
         required = {

@@ -8,14 +8,17 @@ from omnibci.application.configuration.definitions import (
     MODULES, MODULE_SETTING_DEFAULTS, SERVER_SETTINGS, server_startup_settings,
     validate_server_settings,
 )
-from omnibci.application.configuration.errors import PluginProfileNotFoundError
-from omnibci.application.configuration.ports import ConfigurationRepository
+from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileValidationError, ProfileRevisionConflict
+from omnibci.application.configuration.ports import ConfigurationRepository, ProfileVersionCatalog
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.configuration.models import (
-    ActivationSet, ModuleActivation, EngineSettings, PluginProfile, PluginSelection, ProfileBinding,
+    ActivationSet, ModuleActivation, ModuleActivationRevision, EngineSettings, PluginProfile, ProfileBinding,
+    ProfileVersionProposal,
     MODULE_KINDS, plugin_kind_for_slot,
 )
+from omnibci.application.plugin_packages import PackageReference, PluginPackageConflictError, PluginPackageError
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
-from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
+from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration, PluginConfigurationCatalog
 from omnibci.application.processing_source import materialize_processing_binding
 from omnibci.domain.channel_mapping import ProcessingInput
 
@@ -39,13 +42,58 @@ def _validate_source_parameters(binding: ProfileBinding) -> None:
 
 class ConfigurationService:
     def __init__(self, repository: ConfigurationRepository, catalog: PluginConfigurationCatalog | None = None, *,
-                 active_server_settings: dict | None = None, change_guard=None):
+                 active_server_settings: dict | None = None, change_guard=None,
+                 profile_versions: ProfileVersionCatalog | None = None):
         self.repository = repository
         self.catalog = catalog
+        self._profile_versions = profile_versions
         self.change_guard = change_guard or nullcontext
         self._active_server = (server_startup_settings(active_server_settings)
                                if active_server_settings is not None else None)
         self._server_lock = RLock()
+
+    def list_plugin_configurations(self, kind: str) -> list[PluginConfiguration]:
+        return self.catalog.list(kind)
+
+    def get_plugin_configuration(self, kind: str, selection: PluginSelection) -> PluginConfiguration:
+        return self.catalog.get(kind, selection)
+
+    def selected_configuration(self, modules) -> ActivationSet:
+        """Read requested modules and shared Engine settings without touching other modules."""
+        modules = tuple(modules)
+        if set(modules) - set(MODULES):
+            raise PluginSchemaError("Unsupported configuration module")
+        return ActivationSet({module: self.repository.get_module(module) for module in modules},
+                             self.repository.get_engine())
+
+    def list_profiles(self, kind: str | None = None) -> list[PluginProfile]:
+        return self.repository.list_profiles(kind)
+
+    def get_profile(self, profile_id: str) -> PluginProfile:
+        return self.repository.get_profile(profile_id)
+
+    def get_module(self, module: str) -> ModuleActivation | None:
+        return self.repository.get_module(module)
+
+    def get_engine(self) -> EngineSettings | None:
+        return self.repository.get_engine()
+
+    def module_history(self, module: str) -> list[ModuleActivationRevision]:
+        return self.repository.list_module_history(module)
+
+    def module_history_entry(self, module: str, entry_id: str) -> ModuleActivationRevision | None:
+        return self.repository.get_module_history_entry(module, entry_id)
+
+    def package_references(self) -> tuple[PackageReference, ...]:
+        """Project saved and accepted identities without reading unrelated Engine settings."""
+        references = [PackageReference("profile", item.profile_id, item.selection)
+                      for item in self.repository.list_profiles()]
+        for module in MODULES:
+            accepted = self.repository.get_module(module)
+            if accepted is not None:
+                references.extend(PackageReference("accepted", item.slot, item.selection)
+                                  for item in accepted.bindings)
+        return tuple(references)
 
     def read_server(self) -> tuple[list[dict], str]:
         with self._server_lock:
@@ -106,6 +154,46 @@ class ConfigurationService:
                 expected_revision=expected_revision,
             )
 
+    def propose_profile(self, source_profile_id: str, target_version: str, *,
+                        name: str | None = None, parameters: dict | None = None) -> ProfileVersionProposal:
+        """Validate a copy against the target schema; preserve all old values by default."""
+        if self._profile_versions is None:
+            raise PluginPackageError("Version profile metadata is unavailable")
+        source = self.repository.get_profile(source_profile_id)
+        try:
+            selection = replace(source.selection, version=target_version)
+        except (ValueError, TypeError) as exc:
+            raise PluginProfileValidationError(f"Invalid target version: {exc}") from exc
+        if selection == source.selection:
+            raise PluginPackageError("Choose a different exact package version")
+        package = self._profile_versions.get_package(selection.package_id, target_version)
+        if package.error or not package.available:
+            raise PluginPackageError(package.error or "Target package is unavailable")
+        definition = self._profile_versions.configuration(source.kind, selection)
+        if not definition.available or definition.schema is None:
+            raise PluginSchemaError("Target contribution requires an available configuration schema")
+        values = validate_parameters(definition.schema, source.parameters if parameters is None else parameters)
+        # Reuse profile validation for names and portable JSON values without saving anything.
+        draft = PluginProfile(source.profile_id, source.name if name is None else name, source.kind, selection,
+                              values, definition.configuration_version,
+                              processing_input=source.processing_input)
+        return ProfileVersionProposal(source.profile_id, source.revision, draft.name, draft.kind,
+                                      selection, draft.parameters, draft.configuration_version, package.enabled,
+                                      draft.processing_input)
+
+    def create_version_profile(self, source_profile_id: str, target_version: str, *,
+                               expected_source_revision: int, name: str | None = None,
+                               parameters: dict | None = None) -> PluginProfile:
+        """Save a new profile after explicit review; accepted/running bindings stay pinned."""
+        with self.change_guard():
+            proposal = self.propose_profile(source_profile_id, target_version, name=name, parameters=parameters)
+            if proposal.source_revision != expected_source_revision:
+                raise ProfileRevisionConflict("Source profile changed; preview the version change again")
+            if not proposal.target_enabled:
+                raise PluginPackageConflictError("Enable the target package before creating its profile")
+            return self.create(proposal.kind, proposal.selection, proposal.name, proposal.parameters,
+                               processing_input=proposal.processing_input)
+
     def delete(self, profile_id: str, *, expected_revision: int):
         with self.change_guard():
             self.repository.delete_profile(profile_id, expected_revision=expected_revision)
@@ -148,7 +236,10 @@ class ConfigurationService:
             if ({"slot", "selection", "parameters"} <= set(item)
                     and not set(item) - {"slot", "selection", "parameters", "configuration_version", "processing_input"}):
                 kind = plugin_kind_for_slot(item["slot"])
-                selection = PluginSelection.from_dict(item["selection"])
+                try:
+                    selection = PluginSelection.from_dict(item["selection"])
+                except (ValueError, TypeError) as exc:
+                    raise PluginProfileValidationError(f"Invalid selection: {exc}") from exc
                 definition, parameters = self._parameters(
                     kind, selection, item["parameters"], item.get("configuration_version"),
                 )
@@ -158,7 +249,10 @@ class ConfigurationService:
                 if kind == "decoder":
                     if channel_input is None:
                         raise PluginSchemaError("processing.decoder requires explicit processing_input")
-                    channel_input = ProcessingInput.from_dict(channel_input)
+                    try:
+                        channel_input = ProcessingInput.from_dict(channel_input)
+                    except (ValueError, TypeError) as exc:
+                        raise PluginProfileValidationError(f"Invalid processing_input: {exc}") from exc
                 selected.append(ProfileBinding(
                     slot=item["slot"], kind=kind, profile_id=None, selection=selection, parameters=parameters,
                     configuration_version=definition.configuration_version, processing_input=channel_input,

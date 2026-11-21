@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import tomlkit
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -34,9 +35,9 @@ def client(tmp_path, monkeypatch):
     service = ConfigurationService(
         TomlConfigurationRepository(tmp_path / "configuration"), CatalogConfigurationAdapter(),
     )
-    engine = NeuroEngineService(lambda: pytest.fail("Applying stopped configuration must not start the engine"))
+    engine = NeuroEngineService(lambda snapshot: pytest.fail("Applying stopped configuration must not start the engine"))
     executor = RuntimeApplyCoordinator(engine, service, None,
-        SimpleNamespace(is_active=False, process_alive=False), None)
+        SimpleNamespace(is_active=False, process_alive=False), None, repository=service.repository)
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v1")
@@ -499,6 +500,85 @@ def test_missing_profile_and_unknown_fields_are_rejected(client):
     assert http.get(f"{PREFIX}/plugin-profiles/not-a-uuid").status_code == 422
     response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "acquisition", "bindings": [], "unexpected": True})
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("package_id", " acme.test"), ("contribution_id", ""), ("version", "1.0.0."),
+])
+def test_invalid_identity_returns_validation_error_without_saving(client, field, value):
+    http, service = client
+    selection = builtin_selection("acquisition", "file_reader").to_dict()
+    response = http.post(f"{PREFIX}/plugin-profiles", json={
+        "kind": "acquisition", "selection": {**selection, field: value},
+        "name": "Invalid selection", "parameters": {},
+    })
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert service.repository.list_profiles() == []
+
+
+def test_invalid_stored_identity_remains_an_http_validation_error(client):
+    http, service = client
+    profile = create(client)
+    path = service.repository.root / "plugin-profiles" / profile["profile_id"] / "current.toml"
+    document = tomlkit.parse(path.read_text())
+    document["selection"]["version"] = "1.0.0."
+    path.write_text(tomlkit.dumps(document))
+    for route in (f"{PREFIX}/plugin-profiles/{profile['profile_id']}", f"{PREFIX}/plugin-profiles"):
+        response = http.get(route)
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_configuration_queries_need_no_repository_or_catalog_access(client):
+    http, service = client
+    profile = create(client, kind="effector", alias="logger")
+    activation = service.repository.save_module(service.propose(
+        "actuation", [{"slot": "actuation.effector", "profile_id": profile["profile_id"]}],
+        settings=service.default_module_settings("actuation"),
+    ))
+    history = service.repository.record_module_history(activation, str(uuid4()))
+    engine = service.repository.save_engine(service.propose_engine({"debug": False}))
+    queries = SimpleNamespace(
+        list_plugin_configurations=service.catalog.list,
+        list_profiles=service.repository.list_profiles, get_profile=service.repository.get_profile,
+        get_module=service.repository.get_module, get_engine=service.repository.get_engine,
+        module_history=service.repository.list_module_history,
+        module_history_entry=service.repository.get_module_history_entry,
+        default_module_settings=service.default_module_settings,
+    )
+    http.app.state.container.configuration_service = queries
+
+    catalog = http.get(f"{PREFIX}/plugin-catalog/effector")
+    assert catalog.status_code == 200 and catalog.json()["data"]
+    assert http.get(f"{PREFIX}/plugin-profiles?kind=effector").json()["data"][0]["profile_id"] == profile["profile_id"]
+    assert http.get(f"{PREFIX}/plugin-profiles/{profile['profile_id']}").json()["data"]["parameters"] == profile["parameters"]
+    assert http.get(f"{PREFIX}/modules/actuation").json()["data"]["revision"] == activation.revision
+    assert http.get(f"{PREFIX}/modules").json()["data"]["engine"]["revision"] == engine.revision
+    assert http.get(f"{PREFIX}/engine").json()["data"]["revision"] == engine.revision
+    assert http.get(f"{PREFIX}/modules/actuation/history").json()["data"][0]["entry_id"] == history.entry_id
+    assert http.get(f"{PREFIX}/modules/actuation/history/{history.entry_id}").json()["data"]["revision"] == activation.revision
+    assert http.get(f"{PREFIX}/modules/actuation/history/{uuid4()}").status_code == 404
+
+
+def test_module_overview_keeps_partial_query_errors(client):
+    http, service = client
+    def get_module(module):
+        if module == "processing":
+            raise ValueError("Processing configuration unreadable")
+        return None
+    def get_engine():
+        raise OSError("Engine settings unreadable")
+    http.app.state.container.configuration_service = SimpleNamespace(
+        get_module=get_module, get_engine=get_engine,
+        default_module_settings=service.default_module_settings,
+    )
+    response = http.get(f"{PREFIX}/modules")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["errors"] == {"processing": "Processing configuration unreadable", "engine": "Engine settings unreadable"}
+    assert data["engine"] is None
+    assert data["modules"]["actuation"]["bindings"] == []
 
 
 def test_openapi_publishes_typed_profile_and_module_contracts(client):

@@ -1,5 +1,6 @@
 """A new file read cannot reuse queued samples or epochs from its previous read."""
 
+from pathlib import Path
 import asyncio
 from queue import Queue
 from threading import Event as ThreadEvent
@@ -9,7 +10,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from omnibci.application.events import ProcessingInputStart
+from omnibci.application.events import SignalPreparationReceipt, ProcessingInputStart
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
@@ -21,17 +22,15 @@ from tests.infrastructure.test_stream_drain import _Decoder, _processor
 @pytest.mark.parametrize("reconnect", [False, True])
 async def test_eof_boundary_separates_reads_without_waiting_for_processing(reconnect, monkeypatch):
     raw = np.array([[10, 11, 12, 13], [1, 0, 0, 0]])
-    source = FileReader(parameters={"data_file_path": "test.cnt", "file_reader_chunk_size": 2})
+    source = FileReader(parameters={'data_file_path': 'test.cnt', 'file_reader_chunk_size': 2}, resource_root=Path(__file__).parent)
 
     async def read_chunk(*, start, end):
         return raw[:, start:end] if start < raw.shape[1] else None
 
     async def connect():
-        source._is_connected = True
+        source.reader_adapter = SimpleNamespace(read_chunk=read_chunk, close=AsyncMock())
 
     monkeypatch.setattr(source, "connect", connect)
-    source.reader_adapter = SimpleNamespace(read_chunk=read_chunk, close=AsyncMock())
-    source._is_connected = True
     gate = ThreadEvent()
     gate.set()
     data = DataManager(Queue(), gate)
@@ -43,8 +42,11 @@ async def test_eof_boundary_separates_reads_without_waiting_for_processing(recon
                                      processing_active=gate)
     decoder = _Decoder(samples=10)
     processor = _processor(decoder=decoder, bus=bus, data=data)
-    processor._signal_receipt = acquisition._processing_receipt = {"input_id": "input-one"}
+    processor._signal_receipt = acquisition._processing_receipt = SignalPreparationReceipt(
+        "generation-1", "revision-1", "revision-1", "engine", "connection", "a" * 64, "b" * 64, "input-one",
+    )
     try:
+        await acquisition._on_connect()
         await acquisition._on_start_stream()
         await acquisition.fetch_task
         await processor._current_state.run()

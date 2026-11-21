@@ -28,7 +28,7 @@ export interface TrialCompletedMessage {
 export interface StimulationAckMessage {
   event: "StimulationAck";
   command: string;
-  target_index: number | null;
+  trial_params: Record<string, unknown> | null;
   status: string;
   message: string | null;
 }

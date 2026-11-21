@@ -1,8 +1,9 @@
 """Install immutable plugin versions without enabling or running them."""
 from contextlib import nullcontext
 from pathlib import Path
+from typing import Callable, Mapping
 
-from omnibci.application.plugin_packages import PluginPackageStore
+from omnibci.application.plugin_packages import MarketVerification, PluginPackageStore
 
 
 class PluginInstallationService:
@@ -14,9 +15,16 @@ class PluginInstallationService:
     def max_archive_bytes(self) -> int:
         return self.store.max_archive_bytes
 
-    def install(self, archive: Path):
+    def install(self, archive: Path, *, revalidate: Callable[[], MarketVerification] | None = None,
+                expected_sha256: str | None = None, expected_package_id: str | None = None,
+                expected_version: str | None = None, expected_domain: str | None = None,
+                expected_contributions: Mapping[str, str] | None = None):
         with self.admission_guard():
-            return self.store.install_archive(archive)
+            return self.store.install_archive(
+                archive, revalidate=revalidate, expected_sha256=expected_sha256, expected_package_id=expected_package_id,
+                expected_version=expected_version, expected_domain=expected_domain,
+                expected_contributions=expected_contributions,
+            )
 
     def list(self):
         return self.store.list_packages()

@@ -1,7 +1,8 @@
 """Pickle-safe EventBus payload contracts owned by the application layer."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from enum import Enum
+import re
 from typing import Any, Mapping
 
 from omnibci.domain.classification import Classification
@@ -15,6 +16,18 @@ class TrialOutcome:
     classification: Classification
     processing_revision: str | None = None
     acquisition_revision: str | None = None
+
+    def to_dict(self) -> dict:
+        """Project the common result fields without choosing a transport envelope."""
+        result = {"generation": self.generation, "trial_number": self.trial_number,
+                  "target_id": self.classification.target_id, "event_id": self.classification.event_id,
+                  "confidence": self.classification.confidence, "forced": self.classification.forced,
+                  "produced_at": self.classification.produced_at.isoformat()}
+        if self.processing_revision is not None:
+            result["processing_revision"] = self.processing_revision
+        if self.acquisition_revision is not None:
+            result["acquisition_revision"] = self.acquisition_revision
+        return result
 
 
 @dataclass(frozen=True)
@@ -61,12 +74,50 @@ class StreamBarrier:
 
 
 @dataclass(frozen=True)
+class SignalPreparationReceipt:
+    """One source connection and processing plan prepared for one input."""
+
+    generation: str
+    acquisition_revision: str
+    processing_revision: str
+    engine_revision: str
+    connection_id: str
+    source_fingerprint: str
+    plan_fingerprint: str
+    input_id: str
+
+    def __post_init__(self):
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"Invalid signal preparation {field.name}")
+        for name in ("source_fingerprint", "plan_fingerprint"):
+            if re.fullmatch(r"[0-9a-f]{64}", getattr(self, name)) is None:
+                raise ValueError(f"Invalid signal preparation {name}")
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_value(cls, value) -> "SignalPreparationReceipt":
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping) or set(value) != {field.name for field in fields(cls)}:
+            raise ValueError("Missing or invalid signal preparation receipt")
+        return cls(**value)
+
+
+@dataclass(frozen=True)
 class ProcessingInputStart:
     """First message of one prepared input attachment, before its samples."""
 
     command_id: str
-    receipt: dict
+    receipt: SignalPreparationReceipt
     last_sequence: int
+
+    def __post_init__(self):
+        if not isinstance(self.receipt, SignalPreparationReceipt):
+            raise ValueError("Input boundary requires a signal preparation receipt")
 
 
 @dataclass(frozen=True)

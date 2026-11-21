@@ -99,10 +99,15 @@ Built-in plugins live in `omnibci/infrastructure/plugins`. The plugin catalog
 reads each plugin's `manifest.toml` without importing its Python code. Concrete
 implementations are loaded on demand at the relevant execution boundary.
 
-To write a third-party Decoder, open **Extensions → Decoder developer guide**
+To write a third-party Decoder, open **Plugins → Decoder developer guide**
 in the app, or read [the authoring guide](docs/decoder-plugin-development.md).
 The [executable starter](examples/decoder_plugin/) includes a commented manifest,
 Python implementation and Profile parameter schema.
+
+Use `omnibci-plugin validate`, `package` and `develop` for source projects; see
+[Develop an OmniBCI plugin](docs/plugin-development.md). Ordinary discovery uses
+enabled managed packages and built-ins. Development uses isolated fixed snapshots
+and normal module hosts.
 
 Configure the user plugin directory with the `OMNIBCI_PLUGIN_DIR` environment
 variable or `PLUGINS.user_dir` in the user configuration directory's

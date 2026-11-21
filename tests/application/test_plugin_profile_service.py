@@ -1,16 +1,23 @@
 """Saving, selecting, and resolving configuration have distinct effects."""
 from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS
 from dataclasses import replace
+from threading import RLock
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
-from omnibci.application.configuration.models import ActivationSet, ModuleActivation, PluginSelection, ProfileBinding, EngineSettings
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ProfileBinding, EngineSettings
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_packages import PluginPackageConflictError, PluginPackageError
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from tests.infrastructure.test_package_store import package_archive
+from tests.plugin_configuration_helpers import builtin_selection
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
@@ -326,3 +333,121 @@ def test_server_restart_does_not_add_server_values_to_runtime(service):
     restarted = ConfigurationService(service.repository, service.catalog)
     assert restarted.propose_engine(previous.settings) == previous
     assert "NEUROENGINE.command_timeout_s" not in restarted.materialize(service.repository.get_activation_set())
+
+@pytest.fixture
+def version_services(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
+    store = ManagedPluginPackageStore()
+    lock = RLock()
+    profiles = ConfigurationService(
+        TomlConfigurationRepository(tmp_path / "config"), CatalogConfigurationAdapter(),
+        profile_versions=store, change_guard=lambda: lock,
+    )
+    for version in ("1.0.0", "2.0.0"):
+        store.install_archive(package_archive(tmp_path, version))
+    store.set_enabled("acme.device", "1.0.0", True)
+    return profiles, store
+
+
+def version_source_profile(profiles, store):
+    selection = store.get_package("acme.device", "1.0.0").contributions[0].selection
+    return profiles.create("effector", selection, "Output", {"gain": 2.0})
+
+
+def test_proposal_and_new_profile_do_not_mutate_accepted_or_source_profile(version_services):
+    profiles, store = version_services
+    original = version_source_profile(profiles, store)
+    snapshot = profiles.propose("actuation", [
+        {"slot": "actuation.effector", "profile_id": original.profile_id},
+    ], settings=profiles.default_module_settings("actuation"))
+    profiles.repository.save_module(snapshot, expected_revision=None)
+    proposal = profiles.propose_profile(original.profile_id, "2.0.0", name="Output v2")
+    assert proposal.parameters == {"gain": 2.0} and not proposal.target_enabled
+    assert len(profiles.repository.list_profiles()) == 1
+    with pytest.raises(PluginPackageConflictError, match="Enable"):
+        profiles.create_version_profile(original.profile_id, "2.0.0", expected_source_revision=1)
+    store.set_enabled("acme.device", "2.0.0", True)
+    new = profiles.create_version_profile(original.profile_id, "2.0.0", expected_source_revision=1, name="Output v2")
+    assert new.profile_id != original.profile_id and new.selection.version == "2.0.0"
+    assert new.parameters == original.parameters
+    assert profiles.repository.get_profile(original.profile_id) == original
+    assert profiles.repository.get_module("actuation") == snapshot
+    rollback = profiles.propose_profile(new.profile_id, "1.0.0")
+    assert rollback.selection.version == "1.0.0" and rollback.parameters == original.parameters
+
+
+
+def test_profile_copy_rejects_changed_source_revision(version_services):
+    profiles, store = version_services
+    original = version_source_profile(profiles, store)
+    profiles.update(original.profile_id, name="Changed", parameters={"gain": 3.0}, expected_revision=1)
+    with pytest.raises(ProfileRevisionConflict, match="preview"):
+        profiles.create_version_profile(original.profile_id, "2.0.0", expected_source_revision=1)
+    assert len(profiles.repository.list_profiles()) == 1
+
+
+
+def test_new_schema_rejects_old_removed_parameters_and_accepts_explicit_replacement(version_services, tmp_path):
+    profiles, store = version_services
+    original = version_source_profile(profiles, store)
+    store.install_archive(package_archive(tmp_path, "3.0.0", properties={"level": {"type": "integer", "default": 5}}, schema_version=2))
+    with pytest.raises(PluginSchemaError, match="gain"):
+        profiles.propose_profile(original.profile_id, "3.0.0")
+    proposal = profiles.propose_profile(original.profile_id, "3.0.0", parameters={"level": 8})
+    assert proposal.parameters == {"level": 8} and proposal.configuration_version == 2
+    assert profiles.repository.get_profile(original.profile_id).parameters == {"gain": 2.0}
+
+
+
+def test_added_target_defaults_are_visible_in_preview(version_services, tmp_path):
+    profiles, store = version_services
+    original = version_source_profile(profiles, store)
+    store.install_archive(package_archive(tmp_path, "3.0.0", properties={
+        "gain": {"type": "number", "default": 1.0}, "new_option": {"type": "boolean", "default": True},
+    }))
+    assert profiles.propose_profile(original.profile_id, "3.0.0").parameters == {"gain": 2.0, "new_option": True}
+
+
+
+@pytest.mark.parametrize("channel_input", [ProcessingInput(), ProcessingInput(outputs=(ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0")))])
+def test_decoder_version_copy_preserves_input(version_services, monkeypatch, channel_input):
+    profiles, store = version_services
+    definition = profiles.catalog.get("decoder", builtin_selection("decoder", "THUBCI_SSVEP_classic40CCA"))
+    source = profiles.create("decoder", definition.selection, "Decoder", {}, processing_input=channel_input)
+    target = replace(definition, selection=replace(definition.selection, version="99.0.0"))
+    monkeypatch.setattr(store, "get_package", lambda *_: SimpleNamespace(error=None, available=True, enabled=True))
+    monkeypatch.setattr(store, "configuration", lambda *_: target)
+    monkeypatch.setattr(profiles.catalog, "get", lambda *_: target)
+
+    proposal = profiles.propose_profile(source.profile_id, "99.0.0")
+    copied = profiles.create_version_profile(source.profile_id, "99.0.0", expected_source_revision=source.revision)
+    assert proposal.processing_input == channel_input
+    assert copied.processing_input == channel_input
+    assert copied.profile_id != source.profile_id
+    assert profiles.repository.get_profile(source.profile_id) == source
+
+
+@pytest.mark.parametrize("problem", ["package_error", "package_unavailable", "contribution_unavailable", "schema_missing"])
+def test_version_proposal_rejects_unavailable_target_without_saving(version_services, monkeypatch, problem):
+    profiles, store = version_services
+    source = version_source_profile(profiles, store)
+    if problem.startswith("package_"):
+        package = store.get_package("acme.device", "2.0.0")
+        invalid = replace(package, error="Invalid target" if problem == "package_error" else None, available=False)
+        monkeypatch.setattr(store, "get_package", lambda *_: invalid)
+    else:
+        selection = replace(source.selection, version="2.0.0")
+        definition = store.configuration(source.kind, selection)
+        invalid = (replace(definition, available=False) if problem == "contribution_unavailable"
+                   else replace(definition, schema=None))
+        monkeypatch.setattr(store, "configuration", lambda *_: invalid)
+    with pytest.raises((PluginPackageError, PluginSchemaError)):
+        profiles.propose_profile(source.profile_id, "2.0.0")
+    assert profiles.repository.list_profiles() == [source]
+
+
+def test_version_operations_require_explicit_metadata_without_catalog_fallback(service):
+    source = create_source(service)
+    with pytest.raises(PluginPackageError, match="metadata is unavailable"):
+        service.propose_profile(source.profile_id, "2.0.0")
+    assert service.repository.list_profiles() == [source]

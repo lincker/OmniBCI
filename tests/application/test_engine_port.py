@@ -130,6 +130,6 @@ class TestStimulationUsesPort:
         svc = StimulationAppService(port)
         svc.handle_start_stimulation(StartStimulationCommand(), settings_snapshot={})
         port.dispatched.clear()
-        svc.handle_start_trial(StartStimTrialCommand(n_trials=1, trial_params=[7]))
+        svc.handle_start_trial(StartStimTrialCommand(n_trials=1, trial_params=[{"event_id": 7}]))
         assert port.dispatched[0].type == EventType.StartStimTrial
-        assert port.dispatched[0].data == {"n_trials": 1, "trial_params": [7]}
+        assert port.dispatched[0].data == {"n_trials": 1, "trial_params": [{"event_id": 7}]}

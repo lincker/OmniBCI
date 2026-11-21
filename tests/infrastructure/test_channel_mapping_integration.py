@@ -67,7 +67,9 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
     for module in ("acquisition", "processing", "stimulation"):
         profiles.repository.save_module(profiles.propose(module, [item for item in selections if item["slot"].startswith(f"{module}.")], settings=section_settings(host, module)),
                                expected_revision=None)
+    from tests.plugin_configuration_helpers import prepare_runtime_plugins
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
+                                plugin_preparer=prepare_runtime_plugins,
                                 snapshot_provider=lambda: accepted_runtime_settings(profiles=profiles))
     await engine.startup()
     container = assemble(engine, settings=host, admission=engine.admission)
@@ -81,7 +83,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, signal_preparer=signal.prepare,
+                                          container.command_results, repository=profiles.repository, signal_preparer=signal.prepare,
                                           signal_detacher=signal.detach)
     runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
     async def start_worker(module):
@@ -126,7 +128,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         observed_plan = signal._plan.to_dict()
         assert observed_plan["source"]["sample_rate"] == metadata["descriptor"]["sample_rate"]
-        assert observed_plan["source"]["output_row_count"] == metadata["descriptor"]["output_row_count"]
+        assert signal._plan.source.output_row_count == metadata["descriptor"]["output_row_count"]
         await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
         assert profiles.repository.list_profiles("acquisition") == []
 
@@ -159,11 +161,11 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         assert "setup" not in plan
         assert [channel["name"] for channel in plan["output_channels"]] == ["O2", "Pz"]
         assert all(channel.get("reference") is None for channel in plan["output_channels"])
-        assert plan["source"]["connection_id"] == metadata["connection_id"]
+        assert original_receipt["connection_id"] == metadata["connection_id"]
         assert plan["source_indices"] == [8, 0]
         raw = np.arange(30, dtype=float).reshape(10, 3)
         raw[-1] = [0, 1, 255]
-        chunk = SignalChunk(timestamp=1.0, sequence_id=7, raw_data=raw)
+        chunk = SignalChunk(timestamp=1, sequence_id=7, raw_data=raw)
         mapped = ResolvedSignalPlan.from_dict(plan).apply(chunk)
         np.testing.assert_array_equal(mapped.data[0], raw[8])
         np.testing.assert_array_equal(mapped.triggers, chunk.triggers)
@@ -184,7 +186,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
         assert signal.read()["readiness"]["receipt"]["connection_id"] == reconnected["connection_id"]
         await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
-        assert plan["source"]["connection_id"] == metadata["connection_id"]
+        assert original_receipt["connection_id"] == metadata["connection_id"]
 
         # Restart reads each decoder's persisted input instead of a shared global setup.
         for decoder, outputs in (

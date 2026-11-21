@@ -2,28 +2,26 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2026-01-15 13:59
+from pathlib import Path
+from collections.abc import Mapping
 import numpy as np
 
-from omnibci.domain.signal import SignalChunk
-from omnibci.domain.ports.algorithm import EpochDetector
-from omnibci.sdk import PluginContext, PluginParameters
+from omnibci.domain.signal_info import SignalInfo
+from omnibci.domain.ports.algorithm import EpochDetector, EpochBoundary
 
 
 class DefaultEpochDetector(EpochDetector):
     plugin_type = 'DEFAULT_EPOCH_DETECTOR'
     def __init__(
-        self, *, parameters: PluginParameters | None = None,
-        context: PluginContext | None = None,
-    ):
+        self, *, parameters: Mapping[str, object], resource_root: Path,
+        input_signal: SignalInfo,
+    ) -> None:
         pass
 
-    def detect_start(self, chunk: SignalChunk) -> tuple[int, int]:
-        triggers = chunk.triggers.flatten()
-        nonzero = np.nonzero(triggers)[0]
-        if len(nonzero) > 0:
-            return int(nonzero[0]), int(triggers[nonzero[0]])
-        return -1, 0
-
-
-    def detect_end(self, chunk: SignalChunk) -> tuple[int, int]:
-        return -1, 0
+    def detect(self, raw_data: np.ndarray) -> tuple[EpochBoundary, ...]:
+        events = raw_data[-1]
+        positions = np.nonzero(events)[0]
+        if not positions.size:
+            return ()
+        return tuple(EpochBoundary(offset=int(index), kind="start", event_id=int(events[index]))
+                     for index in positions)

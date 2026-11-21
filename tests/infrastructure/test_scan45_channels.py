@@ -1,4 +1,5 @@
 """Scan45 frame width follows each saved profile, including its event channel."""
+from pathlib import Path
 import struct
 from unittest.mock import AsyncMock
 
@@ -6,21 +7,21 @@ import numpy as np
 import pytest
 
 from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45 import scan45
-from omnibci.sdk import PluginContext
 
 
 @pytest.mark.asyncio
 async def test_metadata_is_unsupported_text_while_output_description_uses_configuration():
-    reader = scan45.Scan45DataReader(parameters={"channel_count": 33, "sample_rate": 500})
+    reader = scan45.Scan45DataReader(parameters={'channel_count': 33, 'sample_rate': 500}, resource_root=Path(__file__).parent)
     reader._load_package = AsyncMock()
 
-    metadata = await reader.get_metadata()
-    assert metadata == "Device metadata retrieval is not implemented for Scan45."
-    descriptor = reader.describe_output(source_id=reader.plugin_type, connection_id="connection")
+    reader._is_connected = True
+    metadata = await reader.observe()
+    assert metadata.native_text == "Device metadata retrieval is not implemented for Scan45."
+    descriptor = metadata.signal_info
     assert descriptor.signal_channel_count == 32
     assert descriptor.output_row_count == 33
     assert descriptor.sample_rate == 500
-    assert descriptor.provenance == "user-declared"
+    assert metadata.provenance == "user-declared"
     reader._load_package.assert_not_awaited()
 
 
@@ -37,7 +38,7 @@ def packet(channels, events):
 
 @pytest.mark.parametrize("channels", [2, 9, 10, 33, 65])
 def test_decode_uses_configured_frame_width_and_final_event_row(channels):
-    reader = scan45.Scan45DataReader(parameters={"channel_count": channels})
+    reader = scan45.Scan45DataReader(parameters={'channel_count': channels}, resource_root=Path(__file__).parent)
     body, eeg = packet(channels, [0, 7, 7, 0, 9])
     header = scan45.Scan45Message.Header("DATA", 2, 2, len(body))
 
@@ -50,7 +51,7 @@ def test_decode_uses_configured_frame_width_and_final_event_row(channels):
 
 @pytest.mark.parametrize("channels", [2, 10, 33])
 def test_event_samples_are_preserved_across_packets(channels):
-    reader = scan45.Scan45DataReader(parameters={"channel_count": channels})
+    reader = scan45.Scan45DataReader(parameters={'channel_count': channels}, resource_root=Path(__file__).parent)
     first, _ = packet(channels, [7, 7])
     second, _ = packet(channels, [7, 8, 9, 0, 7, 8, 0, 8])
 
@@ -59,7 +60,7 @@ def test_event_samples_are_preserved_across_packets(channels):
 
 
 def test_event_run_preserves_all_nonzero_values():
-    reader = scan45.Scan45DataReader(parameters={"channel_count": 3})
+    reader = scan45.Scan45DataReader(parameters={'channel_count': 3}, resource_root=Path(__file__).parent)
     body, eeg = packet(3, [0, 7, 7, 8, 9, 0, 8])
 
     decoded = reader._unpack_int32_eeg(body)
@@ -68,9 +69,9 @@ def test_event_run_preserves_all_nonzero_values():
     np.testing.assert_array_equal(decoded[-1], [0, 7, 7, 8, 9, 0, 8])
 
 
-@pytest.mark.parametrize("kwargs", [{"parameters": {}}, {"parameters": {}, "context": PluginContext()}])
+@pytest.mark.parametrize("kwargs", [{"parameters": {}}])
 def test_explicit_default_retains_ten_channel_layout(kwargs):
-    reader = scan45.Scan45DataReader(**kwargs)
+    reader = scan45.Scan45DataReader(**kwargs, resource_root=Path(__file__).parent)
     body, eeg = packet(10, [0, 7])
     decoded = reader._unpack_int32_eeg(body)
 
@@ -82,12 +83,12 @@ def test_explicit_default_retains_ten_channel_layout(kwargs):
 @pytest.mark.parametrize("channels", [None, True, False, 0, 1, -1, 3.5, "33"])
 def test_invalid_channel_count_rejected_before_connecting(channels):
     with pytest.raises(ValueError, match="channel_count"):
-        scan45.Scan45DataReader(parameters={"channel_count": channels})
+        scan45.Scan45DataReader(parameters={'channel_count': channels}, resource_root=Path(__file__).parent)
 
 
 @pytest.mark.parametrize("body", [b"", bytes(3), bytes(8), bytes(15), bytes(17)])
 def test_malformed_frame_does_not_change_event_state(body):
-    reader = scan45.Scan45DataReader(parameters={"channel_count": 4})
+    reader = scan45.Scan45DataReader(parameters={'channel_count': 4}, resource_root=Path(__file__).parent)
     reader._previous_event = 7
     with pytest.raises(ValueError, match="complete samples of 4 channels"):
         reader._unpack_int32_eeg(body)
@@ -95,7 +96,7 @@ def test_malformed_frame_does_not_change_event_state(body):
 
 
 def test_packet_header_size_must_match_body():
-    reader = scan45.Scan45DataReader(parameters={"channel_count": 4})
+    reader = scan45.Scan45DataReader(parameters={'channel_count': 4}, resource_root=Path(__file__).parent)
     header = scan45.Scan45Message.Header("DATA", 2, 2, 32)
     with pytest.raises(ValueError, match="body length"):
         reader._parse_body_data(header, bytes(16))
@@ -103,7 +104,7 @@ def test_packet_header_size_must_match_body():
 
 @pytest.mark.parametrize("format_code,error", [(1, NotImplementedError), (3, ValueError)])
 def test_unsupported_data_format_fails_explicitly(format_code, error):
-    reader = scan45.Scan45DataReader(parameters={"channel_count": 4})
+    reader = scan45.Scan45DataReader(parameters={'channel_count': 4}, resource_root=Path(__file__).parent)
     header = scan45.Scan45Message.Header("DATA", 2, format_code, 16)
     with pytest.raises(error):
         reader._parse_body_data(header, bytes(16))

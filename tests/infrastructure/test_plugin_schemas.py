@@ -2,15 +2,17 @@
 import json
 
 import pytest
+from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
 from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.plugins.plugin_catalog import (
-    PluginCatalog, PluginManifestError, PluginRoot, vendor_plugins_dir,
+    PluginCatalog, PluginRoot, vendor_plugins_dir,
 )
-from omnibci.sdk import Effector, PluginContext
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
+from omnibci.sdk import Effector
 
 
 SCHEMA = {
@@ -22,11 +24,13 @@ SCHEMA = {
 
 def package(tmp_path, **configuration):
     manifest = {"manifest_version": 2, "package": {
-        "id": "example", "publisher": "test", "version": "1", "api_version": "2", "domain": "actuation",
+        "id": "example", "publisher": "test", "version": "1", "api_version": "1", "domain": "actuation",
     }, "contributions": [{
         "id": "output", "kind": "effector", "entrypoint": "output:Output",
         "configuration": configuration or {"schema": "default.schema.json", "schema_version": 1},
     }]}
+    for name, contents in output_payload_files(manifest).items():
+        (tmp_path / name).write_text(contents)
     (tmp_path / "manifest.toml").write_text(tomlkit.dumps(manifest), encoding="utf-8")
     (tmp_path / "default.schema.json").write_text(json.dumps(SCHEMA), encoding="utf-8")
     return PluginCatalog({"effector": lambda: [PluginRoot(tmp_path, "user", 0)]})
@@ -131,4 +135,4 @@ def test_invalid_parameters_fail_before_plugin_code_runs(tmp_path, monkeypatch):
     selected = package(tmp_path).resolve_selection("effector", PluginSelection("test.example", "output", "1"))
     monkeypatch.setattr(PluginLoader, "load_entrypoint", lambda *a: pytest.fail("imported"))
     with pytest.raises(PluginLoadError, match="gain"):
-        PluginLoader.instantiate(selected, Effector, parameters={"gain": True}, context=PluginContext())
+        PluginLoader.instantiate(selected, Effector, parameters={"gain": True})

@@ -37,6 +37,10 @@ class Engine:
         self.starts = []
         self.modules = {"acquisition": True, "processing": True}
 
+    def prepare_plugins(self, snapshot, modules):
+        # This lifecycle fake does not execute plugin code.
+        return deepcopy(snapshot)
+
     def is_module_running(self, module):
         return self.is_engine_ready and self.modules.get(module, False)
 
@@ -161,14 +165,14 @@ class Commands:
                 raise RuntimeError("output completion could not be confirmed")
             data = {**identity, "paused": True, "execution_complete": True, "outputs_settled": True}
         elif event_type is EventType.GetSourceCheckpoint:
-            data = {**identity, "supported": True, "checkpoint": {
-                "source_identity": {"resource_id": "recording", "revision": "content-version"},
-                "cursor": self.acquisition.cursor,
+            data = {**identity, "resume_mode": "checkpoint", "checkpoint": {
+                "resource_id": "recording", "resource_revision": "content-version",
+                "state": {"cursor": self.acquisition.cursor},
             }}
         elif event_type is EventType.RestoreSourceCheckpoint:
             assert payload["generation"] == self.engine.generation
             assert payload["expected_revision"] == revision
-            self.acquisition.cursor = payload["checkpoint"]["cursor"]
+            self.acquisition.cursor = payload["checkpoint"]["state"]["cursor"]
             self.restores.append((revision, self.acquisition.cursor))
             data = {**identity, "restored": True}
         elif event_type is EventType.PauseStimulation:
@@ -200,7 +204,7 @@ def harness(tmp_path, monkeypatch):
         engine.acquisition = acquisition
         commands = Commands(engine, acquisition, log)
         engine.actuation_process_alive = actuation
-        executor = RuntimeApplyCoordinator(engine, profiles, acquisition, Stimulation(), commands)
+        executor = RuntimeApplyCoordinator(engine, profiles, acquisition, Stimulation(), commands, repository=profiles.repository)
         runtime = RuntimeConfigurationService(profiles, engine, executor=executor)
         source = profiles.repository.get_profile(bindings[0]["profile_id"])
         profiles.update(source.profile_id, name=source.name,

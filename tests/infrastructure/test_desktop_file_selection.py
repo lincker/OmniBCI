@@ -1,4 +1,5 @@
 """An installed app can be configured before a recording file is selected."""
+from pathlib import Path
 import json
 from importlib import resources
 
@@ -11,7 +12,7 @@ from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 @pytest.mark.parametrize("parameters", [{}, {"data_file_path": ""}, {"data_file_path": "  "}])
 def test_reader_requires_an_explicit_path(parameters):
     with pytest.raises(ValueError, match="Select a recording file"):
-        FileReader(parameters=parameters)
+        FileReader(parameters=parameters, resource_root=Path(__file__).parent)
 
 
 def test_file_profile_can_be_saved_before_selecting_a_recording():

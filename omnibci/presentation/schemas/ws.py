@@ -9,7 +9,7 @@ messages without inspecting payload shape.
 from datetime import datetime
 from typing import Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
 
 class TrialCompletedMessage(BaseModel):
@@ -46,7 +46,7 @@ class StimulationAckMessage(BaseModel):
     """
     event: Literal["StimulationAck"] = "StimulationAck"
     command: str = Field(..., description="The acknowledged command, e.g. 'StartStimTrial'")
-    target_index: Optional[int] = Field(None, description="Target index for trial commands")
+    trial_params: dict[str, JsonValue] | None = Field(None, description="Parameters of the acknowledged trial")
     status: Literal["ok", "error"] = Field(..., description="Outcome on the stimulation side")
     message: Optional[str] = Field(None, description="Human-readable detail (e.g. error reason)")
 

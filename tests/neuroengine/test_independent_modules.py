@@ -61,11 +61,10 @@ async def test_source_only_read_does_not_accumulate_processing_data_and_confirms
     data = DataManager(Queue(), processing_active=active)
     counters = [0, 0, -1]
     source = SimpleNamespace(
-        is_connected=True, is_streaming=True,
+        trigger_mode="events", resume_mode="restart-only",
         read_chunk=AsyncMock(side_effect=[np.zeros((2, 4)), np.zeros((2, 3)), None]),
         stop_stream=AsyncMock(),
     )
-    source.stop_stream.side_effect = lambda: setattr(source, "is_streaming", False)
     events = []
     acquisition = AcquisitionRuntime(
         source, Queue(), data, SimpleNamespace(put_event=events.append),
@@ -73,6 +72,7 @@ async def test_source_only_read_does_not_accumulate_processing_data_and_confirms
         runtime_counters=counters, generation="run", acquisition_revision="source-v1",
         engine_revision="engine",
     )
+    acquisition._connected = acquisition._streaming = True
     await acquisition.fetch()
     assert data.empty()
     assert acquisition.stream_sample_count == 7
@@ -115,7 +115,7 @@ def test_processing_adopts_new_acquisition_context_without_restarting(monkeypatc
     snapshot = _snapshot(changed)
     snapshot["CONFIG.module_revisions"]["processing"] = "revision-one"
     snapshot["STIMULATION.renderer"] = "must-not-be-adopted"
-    loader = MagicMock(return_value=(object(), object(), []))
+    loader = MagicMock(return_value=(MagicMock(), object(), []))
     monkeypatch.setattr(signal_configuration, "load_signal_pipeline", loader)
     processor._prepare_signal(CommandRequest("prepare", {
         "plan": changed.to_dict(), "receipt": _receipt(changed), "settings_snapshot": snapshot,

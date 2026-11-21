@@ -1,5 +1,6 @@
 """Terminal transport failures invalidate CURRY state without hiding their cause."""
 
+from pathlib import Path
 import asyncio
 import errno
 from unittest.mock import AsyncMock, Mock
@@ -18,7 +19,7 @@ from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import (
 
 
 def connected_driver(*, streaming=True):
-    driver = Curry8DataReader(parameters={})
+    driver = Curry8DataReader(parameters={}, resource_root=Path(__file__).parent)
     driver.reader = asyncio.StreamReader()
     driver.writer = Mock(spec=asyncio.StreamWriter)
     driver.writer.drain = AsyncMock()
@@ -31,8 +32,8 @@ def connected_driver(*, streaming=True):
 
 
 def assert_detached(driver):
-    assert not driver.is_connected
-    assert not driver.is_streaming
+    assert not driver._is_connected
+    assert not driver._is_streaming
     assert driver.reader is None
     assert driver.writer is None
     assert driver._metadata is None
@@ -76,7 +77,7 @@ async def test_socket_read_failure_preserves_original_exception(error):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["start_stream", "stop_stream", "get_metadata"])
+@pytest.mark.parametrize("operation", ["start_stream", "stop_stream", "observe"])
 @pytest.mark.parametrize("failure_at", ["write", "drain"])
 async def test_send_failure_invalidates_lifecycle_and_metadata_commands(operation, failure_at):
     driver = connected_driver(streaming=operation == "stop_stream")
@@ -96,10 +97,10 @@ async def test_metadata_response_eof_discards_previous_device_details():
     driver = connected_driver(streaming=False)
     driver.reader.feed_eof()
     with pytest.raises(asyncio.IncompleteReadError):
-        await driver.get_metadata()
+        await driver.observe()
     assert_detached(driver)
     with pytest.raises(RuntimeError, match="metadata"):
-        driver.describe_output(source_id="curry", connection_id="old")
+        await driver.observe()
 
 
 @pytest.mark.asyncio
@@ -117,7 +118,7 @@ async def test_nonterminal_io_errors_do_not_invalidate_connection(error, operati
     with pytest.raises(type(error)) as caught:
         await action
     assert caught.value is error
-    assert driver.is_connected and driver.is_streaming
+    assert driver._is_connected and driver._is_streaming
     assert driver.reader is reader and driver.writer is writer
     assert driver._metadata is metadata
     assert driver._protocol_version == 803
@@ -131,7 +132,7 @@ async def test_protocol_data_error_does_not_mark_transport_disconnected():
     driver.reader.feed_data(Curry8Header(b"DATA", DataCode.EEG, BlockType.FLOAT32_ZIP).to_bytes())
     with pytest.raises(Curry8ProtocolError, match="Compressed"):
         await driver.read_chunk()
-    assert driver.is_connected and driver.is_streaming
+    assert driver._is_connected and driver._is_streaming
     assert driver._metadata is not None
     writer.transport.abort.assert_not_called()
 
@@ -166,7 +167,7 @@ async def test_old_transport_failure_does_not_clear_new_connection(operation):
         failure_type = BrokenPipeError
     with pytest.raises(failure_type):
         await task
-    assert driver.is_connected and driver.is_streaming
+    assert driver._is_connected and driver._is_streaming
     assert driver.reader is fresh.reader and driver.writer is fresh.writer
     assert driver._metadata is fresh._metadata and driver._protocol_version == 803
     assert driver._pending_header is pending
@@ -190,8 +191,8 @@ async def test_slow_close_clears_state_before_wait_and_preserves_new_connection(
     driver._is_connected = driver._is_streaming = True
     driver._metadata, driver._protocol_version = fresh._metadata, 803
     finish_close.set()
-    assert await task is True
-    assert driver.is_connected and driver.is_streaming
+    assert await task is None
+    assert driver._is_connected and driver._is_streaming
     assert driver.reader is fresh.reader and driver.writer is fresh.writer
     assert driver._metadata is fresh._metadata and driver._protocol_version == 803
 
@@ -202,7 +203,7 @@ async def test_disconnect_does_not_wait_forever_for_socket_close():
     driver.CLOSE_TIMEOUT = 0.01
     writer = driver.writer
     writer.wait_closed.side_effect = asyncio.Event().wait
-    assert await asyncio.wait_for(driver.disconnect(), timeout=0.5) is True
+    assert await asyncio.wait_for(driver.disconnect(), timeout=0.5) is None
     assert_detached(driver)
     writer.close.assert_called_once_with()
     writer.transport.abort.assert_called_once_with()
@@ -226,8 +227,8 @@ async def test_metadata_timeout_keeps_the_existing_transport_connected():
     driver.timeout = 0.01
     reader, writer = driver.reader, driver.writer
     with pytest.raises(Curry8ProtocolError, match="Timed out"):
-        await driver.get_metadata()
-    assert driver.is_connected
+        await driver.observe()
+    assert driver._is_connected
     assert driver.reader is reader and driver.writer is writer
     assert driver._protocol_version == 803
     writer.transport.abort.assert_not_called()
@@ -246,7 +247,7 @@ async def test_cancelled_close_keeps_state_cleared_and_preserves_cancellation():
         await task
     assert_detached(driver)
     writer.close.assert_called_once_with()
-    assert await driver.disconnect() is True
+    assert await driver.disconnect() is None
 
 
 @pytest.mark.asyncio
@@ -256,8 +257,8 @@ async def test_close_timeout_and_abort_failure_still_allow_idempotent_disconnect
     writer = driver.writer
     writer.wait_closed.side_effect = asyncio.Event().wait
     writer.transport.abort.side_effect = OSError("abort failed")
-    assert await asyncio.wait_for(driver.disconnect(), timeout=0.5) is True
+    assert await asyncio.wait_for(driver.disconnect(), timeout=0.5) is None
     assert_detached(driver)
-    assert await driver.disconnect() is True
+    assert await driver.disconnect() is None
     writer.close.assert_called_once_with()
     writer.transport.abort.assert_called_once_with()

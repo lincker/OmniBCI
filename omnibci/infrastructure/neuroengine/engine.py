@@ -9,6 +9,7 @@ from queue import Empty, Full
 from uuid import uuid4
 
 from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandRequest, CommandResult
+from omnibci.application.plugin_execution import bindings_fingerprint
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogListener
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
@@ -16,6 +17,7 @@ from omnibci.infrastructure.acquisition.preview_cache import PreviewCache
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.shared.events import Event, EventType
+from omnibci.infrastructure.async_lifecycle import await_owned
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.neuroengine.gateway import PeerGateway
@@ -80,7 +82,9 @@ class NeuroEngine:
         acquisition_logs: AcquisitionLogListener | None = None,
         worker_factory=None,
         processing_active=None,
+        record_execution=None,
     ) -> None:
+        self._record_execution = record_execution
         self.event_bus = event_bus
         self.data_manager = data_manager
         self.preview_cache = preview_cache
@@ -95,6 +99,7 @@ class NeuroEngine:
         self._module_locks = {module: asyncio.Lock() for module in ("acquisition", "processing")}
         self._output_locks = {module: asyncio.Lock() for module in ("stimulation", "actuation")}
         self._output_configurations = {}
+        self._output_identities = {}
         self.peer_gateway = peer_gateway
         # Queues constructed by the composition builder but not otherwise
         # exposed as command queues (EventBus input + DataManager buffer).
@@ -157,6 +162,27 @@ class NeuroEngine:
     # ------------------------------------------------------------------
     # Public lifecycle
     # ------------------------------------------------------------------
+
+    def subscribe(self, event_type, handler) -> None:
+        self.event_bus.register_event_listener(event_type, handler)
+
+    def dispatch(self, event: Event) -> None:
+        self.event_bus.put_event(event)
+
+    def request_stop(self) -> None:
+        self.should_stop = True
+
+    def is_peer_connected(self, peer_name: str) -> bool:
+        try:
+            return self.peer_gateway.peer(peer_name).is_connected
+        except KeyError:
+            return False
+
+    def is_current_peer_channel(self, peer_name: str, channel_id: str) -> bool:
+        try:
+            return self.peer_gateway.peer(peer_name).channel_id == channel_id
+        except KeyError:
+            return False
 
     def run(self) -> None:
         """Blocking entry point — call from a dedicated thread."""
@@ -368,8 +394,13 @@ class NeuroEngine:
                     } if self._module_revisions is not None else None),
                     expected_engine_revision=self._engine_revision,
                     expected_generation=self._generation,
+                    expected_execution=channel.expected_execution,
                 ) for channel in channels
             ), return_exceptions=True)
+            for result in results:
+                if (not isinstance(result, BaseException) and result.execution is not None
+                        and self._record_execution is not None):
+                    await await_owned(asyncio.create_task(asyncio.to_thread(self._record_execution, result.execution)))
             for result in results:
                 if isinstance(result, BaseException):
                     raise result
@@ -668,25 +699,36 @@ class NeuroEngine:
         from omnibci.infrastructure.neuroengine.gateway.peers import stimulation_peer_config, actuation_peer_config
 
         identity = None
+        self._output_identities.pop(module, None)
         if not snapshot.get(f"{module.upper()}.auto_spawn", True):
-            identity = PeerIdentity(module, revisions.get(module), self._engine_revision, self._generation)
+            identity = PeerIdentity(module, revisions.get(module), self._engine_revision, self._generation,
+                                    uuid4().hex, bindings_fingerprint(snapshot["PLUGINS.bindings"], module))
         if module == "stimulation":
             config = stimulation_peer_config(
                 host=snapshot.get("STIMULATION.server_ip", "127.0.0.1"),
                 port=int(snapshot.get("STIMULATION.server_port", 8765)), identity=identity,
+                record_execution=self._record_execution,
             )
         else:
             config = actuation_peer_config(
                 host=snapshot.get("ACTUATION.server_ip", "127.0.0.1"),
                 port=int(snapshot.get("ACTUATION.server_port", 8001)),
                 watchdog_timeout_s=float(snapshot.get("ACTUATION.watchdog_timeout_s", 1.0)),
-                identity=identity,
+                identity=identity, record_execution=self._record_execution,
             )
         if module == "actuation":
             self._set_actuation_active(False)
         await self.peer_gateway.replace_peer(module, config)
+        if identity is not None:
+            self._output_identities[module] = identity
         if module == "actuation":
             self._configure_actuation_listeners()
+
+    def node_operation_id(self, role: str) -> str | None:
+        identity = self._output_identities.get(role)
+        if identity is not None and self.peer_gateway.is_peer_ready(role):
+            return identity.operation_id
+        return None
 
     async def set_actuation_active(self, active: bool) -> None:
         async def apply():

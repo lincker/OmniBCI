@@ -32,10 +32,19 @@ from omnibci.infrastructure.signal_processing.epoch.epoch_processor import Epoch
 
 
 class WaitingDecoder(Decoder):
+    def setup(self):
+        pass
+
+    def begin_epoch(self):
+        pass
+
+    def teardown(self):
+        pass
+
     def should_decode(self, window):
         return False
 
-    def decode(self, window, latest_samples):
+    def decode(self, window, *, latest_raw_segment):
         return None
 
 
@@ -57,11 +66,16 @@ class AppendReference(EpochProcessor):
 
 
 def run(processor_class, chunks):
-    processor = processor_class(decoder=WaitingDecoder())
-    processor.initialize_epoch(chunks[0], start_idx=0, event_id=7)
-    for chunk in chunks[1:]:
-        processor.process_chunk(chunk)
-    return processor
+    decoder = WaitingDecoder()
+    try:
+        decoder.setup()
+        processor = processor_class(decoder=decoder)
+        processor.initialize_epoch(chunks[0], start_idx=0, event_id=7)
+        for chunk in chunks[1:]:
+            processor.process_chunk(chunk)
+        return processor
+    finally:
+        decoder.teardown()
 
 
 def measure(processor_class, chunks, repeats):
@@ -96,7 +110,7 @@ def benchmark(channels, total_samples, chunk_samples, repeats):
     raw = np.random.default_rng(12).normal(size=(channels + 1, total_samples))
     raw[-1] = 0
     chunks = [
-        SignalChunk(0.0, index, raw[:, start:start + chunk_samples].copy())
+        SignalChunk(0, index, raw[:, start:start + chunk_samples].copy())
         for index, start in enumerate(range(0, total_samples, chunk_samples))
     ]
     del raw

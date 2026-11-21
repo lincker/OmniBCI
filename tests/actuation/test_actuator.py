@@ -1,10 +1,16 @@
 """Actuator descriptor loading, lifecycle and error propagation."""
 from textwrap import dedent
+from pathlib import Path
+import json
 
 import pytest
 
 from omnibci.domain.ports.effector import Effector
 from omnibci.infrastructure.actuation.actuator import Actuator
+
+
+COMMAND_SCHEMA = json.loads((Path(__file__).parents[2] /
+    "omnibci/infrastructure/plugins/effectors/logger/command.schema.json").read_text())
 
 
 class _FakeEffector(Effector):
@@ -19,8 +25,11 @@ class _FakeEffector(Effector):
     def teardown(self):
         self.calls.append("teardown")
 
-    def play(self, command):
-        self.calls.append(("play", dict(command)))
+    def execute(self, command):
+        self.calls.append(("execute", dict(command)))
+
+    def quiesce(self):
+        self.calls.append("quiesce")
 
 
 class _ExplodingEffector(Effector):
@@ -32,14 +41,32 @@ class _ExplodingEffector(Effector):
     def teardown(self):
         pass
 
-    def play(self, command):
+    def execute(self, command):
         raise RuntimeError("device jam")
+
+    def quiesce(self):
+        pass
 
 
 def _actuator_with(effector) -> Actuator:
     a = Actuator(settings_snapshot={})
     a.effector = effector
+    a._command_schema = COMMAND_SCHEMA
     return a
+
+
+@pytest.mark.parametrize("operation", ["setup", "execute", "quiesce", "teardown"])
+def test_void_lifecycle_results_do_not_accept_false_as_success(monkeypatch, operation):
+    effector = _FakeEffector()
+    monkeypatch.setattr(effector, operation, lambda *args: False)
+    actuator = Actuator(settings_snapshot={})
+    actuator._command_schema = COMMAND_SCHEMA
+    monkeypatch.setattr(actuator, "_load_effector", lambda: effector)
+    if operation != "setup":
+        actuator.setup()
+    arguments = ({"target_id": 1},) if operation == "execute" else ()
+    with pytest.raises(TypeError, match=operation):
+        getattr(actuator, operation)(*arguments)
 
 
 class TestExecute:
@@ -47,13 +74,13 @@ class TestExecute:
         eff = _FakeEffector()
         a = _actuator_with(eff)
         a.execute({"target_id": 3, "event_id": 7, "confidence": 0.9})
-        assert ("play", {"target_id": 3, "event_id": 7, "confidence": 0.9}) in eff.calls
+        assert ("execute", {"target_id": 3, "event_id": 7, "confidence": 0.9}) in eff.calls
 
     def test_execute_before_setup_raises(self):
         with pytest.raises(RuntimeError):
             Actuator(settings_snapshot={}).execute({"target_id": 1})
 
-    def test_play_exception_propagates(self):
+    def test_execute_exception_propagates(self):
         a = _actuator_with(_ExplodingEffector())
         with pytest.raises(RuntimeError, match="device jam"):
             a.execute({"target_id": 1})
@@ -62,7 +89,7 @@ class TestExecute:
 class TestLifecycle:
     def test_user_effector_descriptor_drives_full_lifecycle(self, monkeypatch, tmp_path):
         plugin_root = tmp_path / "plugins"
-        package_dir = plugin_root / "effectors" / "user-device"
+        package_dir = tmp_path / "user-device"
         package_dir.mkdir(parents=True)
         (package_dir / "manifest.toml").write_text(
             dedent(
@@ -73,13 +100,15 @@ class TestLifecycle:
                 publisher = "alice"
                 version = "1.0.0"
                 domain = "actuation"
-                api_version = "2"
+                api_version = "1"
                 [[contributions]]
                 id = "default"
                 kind = "effector"
                 plugin_type = "user_device"
                 entrypoint = "driver:UserDevice"
                 display_name = "User Device"
+                [contributions.payload_schemas]
+                command = "command.schema.json"
                 [contributions.configuration]
                 schema = "schema.json"
                 schema_version = 1
@@ -87,6 +116,7 @@ class TestLifecycle:
             ),
             encoding="utf-8",
         )
+        (package_dir / "command.schema.json").write_text('{"type":"object","properties":{"target_id":{"type":"integer"}},"required":["target_id"],"additionalProperties":false}')
         (package_dir / "schema.json").write_text('{"type":"object","properties":{},"additionalProperties":false}')
         (package_dir / "driver.py").write_text(
             dedent(
@@ -96,14 +126,17 @@ class TestLifecycle:
                 class UserDevice(Effector):
                     plugin_type = "user_device"
 
-                    def __init__(self, *, parameters, context):
+                    def __init__(self, *, parameters, resource_root):
                         self.calls = []
 
                     def setup(self):
                         self.calls.append("setup")
 
-                    def play(self, command):
-                        self.calls.append(("play", dict(command)))
+                    def execute(self, command):
+                        self.calls.append(("execute", dict(command)))
+
+                    def quiesce(self):
+                        self.calls.append("quiesce")
 
                     def teardown(self):
                         self.calls.append("teardown")
@@ -112,18 +145,20 @@ class TestLifecycle:
             encoding="utf-8",
         )
         monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_root))
+        from tests.plugin_configuration_helpers import install_package_root, prepared_snapshot
+        install_package_root(package_dir)
         from omnibci.application.configuration.models import ProfileBinding
         from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
         descriptor = next(item for item in PluginCatalog().list_contributions("effector") if item.plugin_type == "user_device")
         binding = ProfileBinding("actuation.effector", "effector", None, descriptor.selection, {})
-        actuator = Actuator(settings_snapshot={"PLUGINS.bindings": [binding.to_dict()]})
+        actuator = Actuator(settings_snapshot=prepared_snapshot({"PLUGINS.bindings": [binding.to_dict()]}))
         actuator.setup()
         loaded = actuator.effector
         actuator.execute({"target_id": 7})
         actuator.teardown()
 
         assert loaded is not None
-        assert loaded.calls == ["setup", ("play", {"target_id": 7}), "teardown"]
+        assert loaded.calls == ["setup", ("execute", {"target_id": 7}), "teardown"]
         assert actuator.effector is None
 
     def test_setup_without_configured_effector_raises(self, monkeypatch):

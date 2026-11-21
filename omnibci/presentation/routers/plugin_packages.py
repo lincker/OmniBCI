@@ -12,8 +12,7 @@ from omnibci.application.plugin_packages import (
 )
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.services.plugin_installation_service import PluginInstallationService
-from omnibci.presentation.errors import ApiError
-from omnibci.presentation.routers.plugin_config import _configuration_errors
+from omnibci.presentation.errors import ApiError, configuration_errors
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.plugin_packages import PackageInstallationResponse, PackageVersionResponse
 
@@ -43,7 +42,7 @@ def package_errors():
 
 @router.get("", response_model=ApiResponse[list[PackageVersionResponse]])
 def list_packages(svc: PluginInstallationService = Depends(get_plugin_installation_service)):
-    with package_errors(), _configuration_errors():
+    with package_errors(), configuration_errors():
         return ApiResponse(data=[asdict(item) for item in svc.list()])
 
 

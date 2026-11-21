@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
 from omnibci.infrastructure.plugins.package_installer import (
@@ -27,7 +28,7 @@ def _manifest(**package_fields):
         "manifest_version": 2,
         "package": {
             "id": "device", "publisher": "acme", "version": "1.0.0",
-            "api_version": "2", "domain": "acquisition", **package_fields,
+            "api_version": "1", "domain": "acquisition", **package_fields,
         },
         "contributions": [{
             "id": "reader", "kind": "acquisition", "entrypoint": "driver:Driver",
@@ -36,11 +37,15 @@ def _manifest(**package_fields):
 
 
 def _archive(tmp_path, *, manifest=None, entries=None, name="plugin.zip", compression=zipfile.ZIP_STORED):
+    manifest = manifest or _manifest()
+    payload_files = output_payload_files(manifest)
     destination = tmp_path / name
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         with zipfile.ZipFile(destination, "w", compression=compression) as archive:
-            archive.writestr("manifest.toml", tomlkit.dumps(manifest or _manifest()))
+            archive.writestr("manifest.toml", tomlkit.dumps(manifest))
+            for path, content in payload_files.items():
+                archive.writestr(path, content)
             archive.writestr("driver.py", "raise AssertionError('Plugin code must not execute')\n")
             for path, content in entries or ():
                 archive.writestr(path, content)
@@ -58,6 +63,29 @@ def _installer(tmp_path, **kwargs):
 def _assert_no_package(root):
     assert not list(root.rglob("manifest.toml"))
     assert not list(root.glob("__install-*"))
+
+
+@pytest.mark.parametrize("path", ["omnibci.py", "omnibci/sdk.py", "OmniBCI/sdk.py"])
+def test_archive_cannot_vendor_the_host_namespace(tmp_path, path):
+    with pytest.raises(PackageInstallError, match="host namespace"):
+        _installer(tmp_path).install(_archive(tmp_path, entries=[(path, "# duplicate SDK")]))
+
+
+@pytest.mark.parametrize("first_development", [True, False])
+def test_development_and_release_admission_cannot_share_one_identity(tmp_path, first_development):
+    archive = _archive(tmp_path)
+    installer = _installer(tmp_path)
+    installed = installer.install(archive, development=first_development)
+    before = (installed.location / ".omnibci-install.json").read_bytes()
+    with pytest.raises(PackageInstallError, match="separate stores"):
+        installer.install(archive, development=not first_development)
+    assert (installed.location / ".omnibci-install.json").read_bytes() == before
+
+
+def test_development_admission_never_accepts_repository_proof(tmp_path):
+    with pytest.raises(PackageInstallError, match="repository admission"):
+        _installer(tmp_path).install(_archive(tmp_path), development=True,
+                                    revalidate=lambda: pytest.fail("Must not verify a development snapshot"))
 
 
 def test_valid_archive_is_static_catalog_readable_and_not_activated(tmp_path):

@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import logging
 from omnibci.application.runtime_admission import admitted
+from omnibci.application.command_contracts import CommandContract, command_contract
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from omnibci.application.events import (
@@ -31,20 +32,6 @@ from omnibci.application.ports.engine_port import EnginePort
 from omnibci.shared.events import Event, EventType
 
 logger = logging.getLogger(__name__)
-
-
-def command_scopes(event_type):
-    """Protect the affected module, independently of the command's transport."""
-    if event_type in {EventType.GetSourceMetadata, EventType.GetAcquisitionPreview}:
-        return ()
-    if event_type in {EventType.AttachProcessingInput, EventType.DetachProcessingInput}:
-        return ("processing",)
-    if event_type is not None:
-        for lower, module in ((100, "acquisition"), (200, "processing"),
-                              (300, "stimulation"), (400, "actuation")):
-            if lower <= int(event_type) < lower + 100:
-                return (module,)
-    return ("engine",)
 
 
 class CommandExecutor(Protocol):
@@ -106,6 +93,7 @@ class CommandDeliveryError(RuntimeError):
 class _PendingCommand:
     done: threading.Event
     command: str
+    contract: CommandContract
     peer: str | None = None
     result: CommandResult | None = None
     delivery_error: CommandDeliveryError | None = None
@@ -123,7 +111,7 @@ class CommandResultBroker:
         self._pending: dict[str, _PendingCommand] = {}
         self._lock = threading.Lock()
 
-    @admitted(scopes=lambda self, event_type, *args, **kwargs: command_scopes(event_type))
+    @admitted(scopes=lambda self, event_type, *args, **kwargs: command_contract(event_type).scopes)
     def request(
         self,
         event_type: EventType,
@@ -140,11 +128,15 @@ class CommandResultBroker:
         if wait_s <= 0:
             raise ValueError("command timeout must be greater than zero")
 
+        contract = command_contract(event_type)
+        if contract.parse_result is None:
+            raise ValueError("This command uses its own result event")
+        payload = contract.parse_payload(payload)
         command_id = str(uuid.uuid4())
         command_name = event_type.name
-        scopes = command_scopes(event_type)
+        scopes = contract.scopes
         peer = next((scope for scope in scopes if scope in {"stimulation", "actuation"}), None)
-        pending = _PendingCommand(done=threading.Event(), command=command_name, peer=peer)
+        pending = _PendingCommand(done=threading.Event(), command=command_name, contract=contract, peer=peer)
         with self._lock:
             self._pending[command_id] = pending
 
@@ -258,6 +250,15 @@ class CommandResultBroker:
                     error_code="COMMAND_RESULT_MISMATCH",
                     failure_kind=CommandFailureKind.EXECUTION_FAILED,
                 )
+            elif result.ok:
+                try:
+                    result = replace(result, data=pending.contract.parse_result(result.data))
+                except (TypeError, ValueError) as exc:
+                    result = CommandResult(
+                        command_id=result.command_id, command=pending.command, ok=False,
+                        message=f"Invalid command result: {exc}", error_code="INVALID_COMMAND_RESULT",
+                        failure_kind=CommandFailureKind.EXECUTION_FAILED,
+                    )
             pending.result = result
             pending.done.set()
 

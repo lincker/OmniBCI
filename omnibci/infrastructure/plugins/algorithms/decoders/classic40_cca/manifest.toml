@@ -6,12 +6,11 @@ manifest_version = 2
 domain = "processing"
 id = "classic40_cca"
 version = "0.1.0"
-api_version = "2"
+api_version = "1"
 publisher = "OmniBCI"
 
 [[contributions]]
 # Version 2 requires prepared input metadata and enforces channel_requirements.
-signal_input_contract = 2
 id = "default"
 kind = "decoder"
 plugin_type = "THUBCI_SSVEP_classic40CCA"

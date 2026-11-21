@@ -2,7 +2,7 @@
 Stimulation domain commands.
 """
 from dataclasses import dataclass
-from typing import Optional, Sequence, Any
+from omnibci.application.plugin_schema import validate_parameters
 
 
 @dataclass(frozen=True)
@@ -15,14 +15,18 @@ class StopStimulationCommand:
     """Stop the running stimulation."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class StartStimTrialCommand:
-    """Trigger one or more stimulation trials.
+    """A bounded batch of explicit, independent per-trial JSON objects."""
 
-    n_trials     — how many trials to run (paradigm-agnostic base parameter).
-    trial_params — per-trial paradigm-specific parameters; len must equal
-                   n_trials when provided.  None → each trial uses the
-                   paradigm's default (e.g. SSVEP no-cue free run).
-    """
+    trial_params: list[dict[str, object]]
     n_trials: int = 1
-    trial_params: Optional[Sequence[Any]] = None
+
+    def __post_init__(self) -> None:
+        if type(self.n_trials) is not int or not 1 <= self.n_trials <= 10000:
+            raise ValueError("n_trials must be an integer in 1..10000")
+        if (not isinstance(self.trial_params, list) or len(self.trial_params) != self.n_trials
+                or any(not isinstance(value, dict) for value in self.trial_params)):
+            raise ValueError("trial_params must contain n_trials JSON objects")
+        copied = validate_parameters(None, {"trial_params": self.trial_params})
+        object.__setattr__(self, "trial_params", copied["trial_params"])

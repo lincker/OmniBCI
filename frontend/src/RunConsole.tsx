@@ -187,6 +187,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     if (sequenceControl && !targetSequence) { setTrialError("sequence"); return; }
     let nTrials = hasTrialCount ? 1 : Number(controlValues.n_trials ?? 1);
     let perTrial: number | undefined;
+    const payloadKey = Object.values(controls).find((control) => control.field === "trial_params")?.payload_key;
     for (const [name, control] of Object.entries(controls)) {
       if (control.default_sequence !== undefined) continue;
       const raw = controlValues[name];
@@ -205,9 +206,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       setTrialError("count"); return;
     }
     setTrialError(null);
-    const params = targetSequence
-      ? Array.from({ length: total }, (_, index) => targetSequence[index % targetSequence.length])
-      : perTrial === undefined ? undefined : Array(nTrials).fill(perTrial);
+    const params = Array.from({ length: total }, (_, index) => {
+      const value = targetSequence ? targetSequence[index % targetSequence.length] : perTrial;
+      return payloadKey === undefined || value === undefined ? {} : { [payloadKey]: value };
+    });
     void trigger.run(total, params);
   };
 
@@ -420,7 +422,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       <p className="meta">{t("run.acknowledgementsScope", { limit: MAX_ACKS })}</p>
       {!feed.acks.length ? <p className="meta">{t("run.acknowledgementsHelp")}</p> : <ul className="acks">
         {feed.acks.map((ack, index) => <li key={index}><code>{ack.command}</code>
-          {ack.target_index != null && <> → {t("run.target", { index: ack.target_index })}</>} · {ack.status === "ok" || ack.status === "error" ? t(`run.ack.${ack.status}`) : ack.status}
+          {ack.trial_params && Object.entries(ack.trial_params).map(([key, value]) => {
+            const label = Object.values(controls).find((control) => control.payload_key === key)?.label ?? key;
+            return <span key={key}> → {label}: {typeof value === "string" ? value : JSON.stringify(value)}</span>;
+          })} · {ack.status === "ok" || ack.status === "error" ? t(`run.ack.${ack.status}`) : ack.status}
           {ack.message && <span className="meta"> {ack.message}</span>}</li>)}</ul>}
     </details>
   </div>;

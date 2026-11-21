@@ -7,8 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.execution_helpers import synthetic_execution_snapshot
+from omnibci.infrastructure.plugins.preparation import execution_receipt
+
 from omnibci.infrastructure.stimulation.application import Stimulation
-from omnibci.application.events import CommandRequest, CommandResult
+from omnibci.application.events import CommandRequest
 from omnibci.shared.events import Event, EventType
 
 
@@ -23,31 +26,18 @@ def test_stop_event_handler_accepts_event_bus_argument() -> None:
     assert app.should_stop is True
 
 
-def test_confirmed_stop_flushes_result_before_marking_process_stopped() -> None:
+def test_stop_records_request_without_premature_success() -> None:
     app = Stimulation.__new__(Stimulation)
     app.should_stop = False
+    app._stop_requests = []
     app.peer_channel = MagicMock()
-
-    async def send(event):
-        assert app.should_stop is False
-        assert event.type == EventType.CommandResult
-        assert event.data == CommandResult(
-            command_id="stop-1",
-            command="StopStimulation",
-            ok=True,
-            message="Stimulation stop accepted",
-            error_code=None,
-        )
-        return True
-
-    app.peer_channel.send = AsyncMock(side_effect=send)
-    asyncio.run(app._stop_stimulation_system(Event(
-        EventType.StopStimulation,
-        CommandRequest(command_id="stop-1"),
-    )))
-
-    app.peer_channel.send.assert_awaited_once()
+    app.peer_channel.send = AsyncMock()
+    request = CommandRequest(command_id="stop-1")
+    asyncio.run(app._stop_stimulation_system(Event(EventType.StopStimulation, request)))
     assert app.should_stop is True
+    assert app._paused is True
+    assert app._stop_requests == [request]
+    app.peer_channel.send.assert_not_awaited()
 
 
 def test_render_failure_still_closes_ipc_boundary() -> None:
@@ -59,7 +49,7 @@ def test_render_failure_still_closes_ipc_boundary() -> None:
             await asyncio.sleep(0)
             raise RuntimeError("renderer failed")
 
-        def stop(self) -> None:
+        def request_stop(self) -> None:
             self.stop_calls += 1
 
     app = Stimulation.__new__(Stimulation)
@@ -102,7 +92,7 @@ def test_pre_set_stop_event_does_not_start_renderer_or_ipc() -> None:
             self.start_calls += 1
             await asyncio.Future()  # pragma: no cover - must never start
 
-        def stop(self) -> None:
+        def request_stop(self) -> None:
             self.stop_calls += 1
 
     app = Stimulation.__new__(Stimulation)
@@ -140,7 +130,7 @@ def test_stop_race_waits_until_renderer_has_installed_stop_target() -> None:
             self.started = True
             await self.release.wait()
 
-        def stop(self) -> None:
+        def request_stop(self) -> None:
             self.stop_calls += 1
             if self.release is not None:
                 self.release.set()
@@ -179,12 +169,15 @@ def test_managed_start_reports_ready_after_renderer_and_link() -> None:
             self.release = asyncio.Event()
             await self.release.wait()
 
-        def stop(self) -> None:
+        def request_stop(self) -> None:
             self.stop_calls += 1
             if self.release is not None:
                 self.release.set()
 
     app = Stimulation.__new__(Stimulation)
+    app._runtime_snapshot = synthetic_execution_snapshot({
+        "CONFIG.module_revisions": {"stimulation": "a" * 64},
+        "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run-1"})
     app.should_stop = False
     app._stop_event = _StopAfterReady()
     app._startup_reporter = MagicMock()
@@ -199,7 +192,7 @@ def test_managed_start_reports_ready_after_renderer_and_link() -> None:
     asyncio.run(asyncio.wait_for(app.serve(), timeout=0.2))
 
     app.peer_channel.wait_until_connected.assert_awaited_once()
-    app._startup_reporter.ready.assert_called_once_with()
+    app._startup_reporter.ready.assert_called_once_with(execution=execution_receipt(app._runtime_snapshot, "stimulation", "prepare-1"))
     app._startup_reporter.failed.assert_not_called()
     assert app.stimulator.stop_calls == 1
     app.stop.assert_awaited_once()
@@ -215,7 +208,7 @@ def test_managed_link_timeout_reports_failed_and_closes_renderer() -> None:
             self.release = asyncio.Event()
             await self.release.wait()
 
-        def stop(self) -> None:
+        def request_stop(self) -> None:
             self.stop_calls += 1
             if self.release is not None:
                 self.release.set()
@@ -273,7 +266,7 @@ def test_render_stop_failure_still_closes_ipc_boundary() -> None:
         async def start_async(self) -> None:
             await asyncio.Future()
 
-        def stop(self) -> None:
+        def request_stop(self) -> None:
             raise RuntimeError("renderer stop failed")
 
     app = Stimulation.__new__(Stimulation)

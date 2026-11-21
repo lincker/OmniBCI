@@ -1,22 +1,23 @@
 """Scan45 events survive numeric input aliases and reach direct web results."""
-from tests.plugin_configuration_helpers import builtin_selection
+from pathlib import Path
+from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 
 import asyncio
 from queue import Queue
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
 
-from omnibci.application.events import CommandRequest, ProcessingInputStart, TrialOutcome
+from omnibci.application.events import CommandRequest, ProcessingInputStart, SignalPreparationReceipt, TrialOutcome
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.services.results_service import ResultsService
+from omnibci.application.source_metadata import source_descriptor, source_fingerprint
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
-from omnibci.infrastructure.outbound import event_to_wire
+from omnibci.presentation.websockets.results import event_to_wire
 from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import (
     Scan45DataReader, Scan45Message,
 )
@@ -31,8 +32,10 @@ from omnibci.shared.events import EventType
 async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session_commands(monkeypatch):
     sample_rate = 500
     generation, revision = "scan45-generation", "scan45-revision"
-    reader = Scan45DataReader(parameters={"channel_count": 10, "sample_rate": sample_rate})
-    source = reader.describe_output(source_id=reader.plugin_type, connection_id="scan45-connection")
+    reader = Scan45DataReader(parameters={'channel_count': 10, 'sample_rate': sample_rate}, resource_root=Path(__file__).parent)
+    reader._is_connected = True
+    observation = await reader.observe()
+    source = observation.signal_info
     assert [channel.name for channel in source.channels] == [f"CH{index}" for index in range(1, 10)]
     assert source.output_row_count == 10 and source.trigger_row_index == 9
     inputs = ProcessingInput(outputs=tuple(
@@ -60,10 +63,11 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
             ).to_dict(),
         ],
     }
+    snapshot = prepared_snapshot(snapshot)
     receipt = {
         "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "engine_revision": "engine",
-        "connection_id": source.connection_id,
-        "source_fingerprint": source.fingerprint, "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
+        "connection_id": "scan45-connection",
+        "source_fingerprint": source_fingerprint(source_descriptor(observation, source_id=reader.plugin_type, connection_id="scan45-connection")), "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
     bus = EventBus(Queue())
     data = DataManager(Queue())
@@ -75,7 +79,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         put_data(chunk)
 
     monkeypatch.setattr(data, "put_data", capture)
-    results = ResultsService(SimpleNamespace(generation=generation))
+    results = ResultsService(lambda: generation)
     prepared = asyncio.get_running_loop().create_future()
     received = asyncio.Event()
     outcomes, messages = [], []
@@ -104,7 +108,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         confirmation = await asyncio.wait_for(prepared, timeout=2)
         assert confirmation.ok, confirmation.message
         assert confirmation.data == receipt
-        processor._on_input_start(ProcessingInputStart("attach", receipt, -1))
+        processor._on_input_start(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(receipt), -1))
         assert processor.detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
         assert processor._decoder.plugin_type == "THUBCI_SSVEP_classic40CCA"
 
@@ -138,6 +142,9 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
             reader, Queue(), data, bus, source_id=reader.plugin_type,
             generation=generation, acquisition_revision=revision, engine_revision="engine",
         )
+        acquisition._connected = acquisition._streaming = True
+        acquisition.connection_id = "scan45-connection"
+        acquisition._observation = observation
         await acquisition.fetch()
         assert acquisition._fetch_failure is None
         assert [chunk.sequence_id for chunk in acquired] == [0, 1, 2]

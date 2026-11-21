@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from omnibci.application.configuration.models import EngineSettings
+from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
 
@@ -53,8 +54,8 @@ def test_foundation_settings_do_not_parse_idle_module_files():
         get_module=Mock(side_effect=ValueError("idle module is corrupt")),
         get_activation_set=Mock(side_effect=ValueError("idle module is corrupt")),
     )
-    profiles = SimpleNamespace(repository=repository, materialize=lambda selected: selected,
-                               validate_module=Mock())
+    profiles = ConfigurationService(repository)
+    profiles.materialize = lambda selected: selected
     selected = accepted_runtime_settings(profiles=profiles, active_kinds=set())
     assert selected.engine is not None
     repository.get_module.assert_not_called()

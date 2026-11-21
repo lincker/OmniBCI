@@ -7,8 +7,8 @@ NeuroEngineService rebuilds via the injected engine_factory on the first
 start after a stop and replays recorded bus subscriptions onto the fresh
 EventBus.
 
-The factory is a MagicMock — no real processes are spawned (P0-1：原来
-patch 的 NeuroEngineBuilder 符号已随工厂注入从 application 层移除).
+The factory is a MagicMock; no real processes are spawned. Factory injection
+removed the previously patched NeuroEngineBuilder symbol from application.
 """
 from unittest.mock import MagicMock
 
@@ -24,7 +24,7 @@ from omnibci.shared.events import EventType
 
 def _mock_engine():
     engine = MagicMock()
-    engine.should_stop = False
+    engine.shutdown_complete = True
     # run() must return promptly so the engine thread joins cleanly.
     engine.run = MagicMock()
     return engine
@@ -32,7 +32,7 @@ def _mock_engine():
 
 @pytest.fixture()
 def factory():
-    return MagicMock(side_effect=_mock_engine)
+    return MagicMock(side_effect=lambda snapshot: _mock_engine())
 
 
 @pytest.fixture()
@@ -79,7 +79,7 @@ class TestRestartRebuildsEngine:
         factory.return_value = rebuilt
         await svc.handle_start_engine(StartEngineCommand())
 
-        rebuilt.event_bus.register_event_listener.assert_called_once_with(
+        rebuilt.subscribe.assert_called_once_with(
             EventType.TrialCompleted, handler
         )
 

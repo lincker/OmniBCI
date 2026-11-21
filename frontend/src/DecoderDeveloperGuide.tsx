@@ -38,20 +38,21 @@ export function DecoderDeveloperGuide() {
         <dt>required_names</dt><dd>{t("guide.requiredNamesField")}</dd>
         <dt>default_names</dt><dd>{t("guide.defaultNamesField")}</dd>
       </dl>
-      <p>{t("guide.use")}<code>signal_input_contract = 2</code>{t("guide.contractValidation")}<code>context.input_signal</code>{t("guide.constructorEnd")}</p>
+      <p>{t("guide.use")}<code>[contributions.channel_requirements]</code>{t("guide.contractValidation")}<code>input_signal</code>{t("guide.constructorEnd")}</p>
       <details open><summary>{t("guide.manifestSummary")}</summary><pre><code>{manifest}</code></pre></details>
     </section>
 
     <section aria-labelledby="decoder-code-title"><h2 id="decoder-code-title">{t("guide.sdkTitle")}</h2>
-      <p>{t("guide.importFrom")}<code>omnibci.sdk</code>{t("guide.constructorReceives")}<code>parameters</code>{t("guide.and")}<code>context</code>{t("guide.constructorKeywords")}</p>
+      <p>{t("guide.importFrom")}<code>omnibci.sdk</code>{t("guide.constructorReceives")}<code>parameters</code>, <code>resource_root</code>{t("guide.and")}<code>input_signal</code>{t("guide.constructorKeywords")}</p>
       <ul>
+        <li><code>setup()</code>{t("guide.modelSetup")}<code>teardown()</code>{t("guide.modelTeardown")}</li>
         <li><code>should_decode(window)</code>{t("guide.readinessCheck")}</li>
-        <li><code>decode(window, latest_samples)</code>{t("guide.returns")}<code>Prediction(target_id=…)</code>{t("guide.or")}<code>None</code>{t("guide.predictionOutcome")}</li>
-        <li>{t("guide.arrayShape")}<code>context.input_signal.channels</code>{t("guide.mappedRows")}<code>context.acquired_signal.channels</code>{t("guide.originalAcquisition")}</li>
-        <li><code>window</code>{t("guide.orderedFilters")}<code>latest_samples</code>{t("guide.latestSamples")}</li>
-        <li>{t("guide.latestRequired")}<code>latest_samples</code>{t("guide.emptyFragment")}<code>(signal_channels, 0)</code>{t("guide.noFallback")}</li>
+        <li><code>decode(window, *, latest_raw_segment)</code>{t("guide.returns")}<code>Prediction(target_id=…)</code>{t("guide.or")}<code>None</code>{t("guide.predictionOutcome")}</li>
+        <li>{t("guide.arrayShape")}<code>input_signal.channels</code>{t("guide.mappedRows")}</li>
+        <li><code>window</code>{t("guide.orderedFilters")}<code>latest_raw_segment</code>{t("guide.latestSegment")}</li>
+        <li>{t("guide.latestRequired")}<code>latest_raw_segment</code>{t("guide.emptyFragment")}<code>(signal_channels, 0)</code>{t("guide.noFallback")}</li>
         <li>{t("guide.boundaryAndDrain")}</li>
-        <li>{t("guide.use")}<code>context.resource_root</code>{t("guide.packagedAssets")}<code>for_new_epoch()</code>{t("guide.epochState")}</li>
+        <li>{t("guide.use")}<code>resource_root</code>{t("guide.packagedAssets")}<code>begin_epoch()</code>{t("guide.epochState")}</li>
       </ul>
       <details><summary>{t("guide.decoderSummary")}</summary><pre><code>{decoder}</code></pre></details>
       <details><summary>{t("guide.schemaSummary")}</summary><pre><code>{schema}</code></pre></details>
@@ -60,7 +61,7 @@ export function DecoderDeveloperGuide() {
 
     <section aria-labelledby="decoder-install-title"><h2 id="decoder-install-title">{t("guide.installTitle")}</h2>
       <p>{t("guide.packageCommand")}</p>
-      <pre><code>python -m zipfile -c ../oz-polarity-demo.zip manifest.toml decoder.py default.schema.json README.md</code></pre>
+      <pre><code>{"omnibci-plugin validate .\nomnibci-plugin package . --output ../oz-polarity-demo.zip"}</code></pre>
       <ol>
         <li>{t("guide.keep")}<code>manifest.toml</code>{t("guide.packageRoot")}</li>
         <li>{t("guide.use")}<strong>{t("guide.installLocation")}</strong>{t("guide.enableInstalled")}</li>

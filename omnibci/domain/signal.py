@@ -18,7 +18,10 @@ after construction.
 """
 from dataclasses import dataclass
 
+import numpy as np
 from numpy import typing as npt
+
+from omnibci.domain.signal_info import integer
 
 
 @dataclass(frozen=True)
@@ -26,21 +29,27 @@ class SignalChunk:
     """One acquired chunk: shape (channels + 1, samples), last row = triggers.
 
     Attributes:
-        timestamp:   Producer-side acquisition timestamp (the built-in
-                     acquisition worker stamps ``time.time_ns()``).
+        timestamp:   Producer-side acquisition timestamp in integer Unix
+                     nanoseconds (the built-in worker stamps ``time.time_ns()``).
         sequence_id: Monotonic chunk counter within one acquisition run.
         raw_data:    Signal matrix including the trailing trigger row.
     """
-    timestamp: float
+    timestamp: int
     sequence_id: int
     raw_data: npt.NDArray
 
     def __post_init__(self) -> None:
+        integer(self.timestamp, "timestamp")
+        integer(self.sequence_id, "sequence_id")
+        if not isinstance(self.raw_data, np.ndarray):
+            raise TypeError("SignalChunk.raw_data must be a NumPy array")
         if self.raw_data.ndim != 2:
             raise ValueError(
                 f"SignalChunk.raw_data must be 2-D (channels+trigger x samples), "
                 f"got shape {self.raw_data.shape}"
             )
+        if self.raw_data.dtype.kind not in "iuf":
+            raise TypeError("SignalChunk.raw_data must have a real numeric dtype")
         if self.raw_data.shape[0] < 2:
             raise ValueError(
                 f"SignalChunk.raw_data needs at least 2 rows "

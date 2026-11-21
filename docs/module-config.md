@@ -1,14 +1,17 @@
 # Module configuration
 
 The server keeps four independent accepted configurations: Acquisition,
-Signal Processing, Stimulation, and Actuation. Each owns its settings, pinned
+Processing, Stimulation, and Actuation. Each owns its settings, pinned
 plugin bindings, content revision, file, lock, and application history.
-Named saved Profiles remain independent for each plugin.
+Named saved Profiles remain independent for each Contribution. These names follow
+the [plugin terminology and module names](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries);
+the current console also labels Processing as **Signal Processing**. A binding
+describes the selected Contribution and parameters, not a live Instance.
 
-## Configuration management package
+## Configuration module
 
-`application/configuration` owns configuration definitions, validation, models,
-the storage port, and one `ConfigurationService`. Server settings, Engine settings,
+The Python package `application/configuration` owns configuration definitions,
+validation, models, the storage port, and one `ConfigurationService`. Server settings, Engine settings,
 module configuration and named plugin Profiles use this same service. Profiles
 remain independent saved parameter sets; they are not a second configuration
 management subsystem.
@@ -298,10 +301,19 @@ Engine configuration hashes use the `engine` namespace independently of module
 revisions and module/Profile history. Engine generation identifies the running
 instance.
 
-SDK `PluginContext.module_revision` identifies the consuming module. A Trigger
-shipped in an acquisition-domain package therefore uses the Stimulation revision
-when loaded by Stimulation. Results carry Acquisition and Processing revisions;
-source preparation and preview identify the Acquisition revision.
+The host keeps module revisions private; plugin constructors receive only their
+own parameters/resources and, for Processing, mapped input metadata. A Trigger
+belongs to Stimulation regardless of its package classification. Results retain
+Acquisition and Processing revisions. Actuation intents retain the source trial
+and both revisions; acknowledgements also identify the actual output-host
+operation. Private execution history links that operation to prepared artifact
+and environment hashes. It proves acknowledged preparation, not physical delivery
+or activation of a subsequently cancelled candidate.
+
+`omnibci-plugin develop` reuses the same current-module configuration objects in
+an isolated store/configuration and fresh normal hosts. It cannot select saved
+ordinary Profiles or silently borrow ordinary installed companions. See the
+[developer workflow](plugin-development.md#develop-a-fixed-snapshot).
 
 ## API and storage
 

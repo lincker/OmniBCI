@@ -1,15 +1,16 @@
-"""Decoder input requirements are static, versioned, plugin-owned metadata."""
+"""Decoder input requirements are static, plugin-owned API v1 metadata."""
 import pytest
 import tomlkit
 
-from omnibci.application.configuration.models import PluginSelection
+from omnibci.application.plugin_identity import PluginSelection
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginManifestError, PluginRoot
+from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
+from omnibci.infrastructure.plugins.manifest import PluginManifestError
 
 
 def package(tmp_path, *, kind="decoder", **fields):
     document = {"manifest_version": 2, "package": {
-        "id": "example", "publisher": "test", "version": "1", "api_version": "2", "domain": {"decoder": "processing", "filter": "processing", "epoch_detector": "processing", "acquisition": "acquisition", "effector": "actuation"}[kind],
+        "id": "example", "publisher": "test", "version": "1", "api_version": "1", "domain": "processing",
     }, "contributions": [{"id": "default", "kind": kind, "entrypoint": "decoder:Decoder", **fields}]}
     (tmp_path / "manifest.toml").write_text(tomlkit.dumps(document), encoding="utf-8")
     return PluginCatalog({kind: lambda: [PluginRoot(tmp_path, "user", 0)]})
@@ -17,55 +18,50 @@ def package(tmp_path, *, kind="decoder", **fields):
 
 def test_catalog_reads_requirements_without_importing_plugin_code(tmp_path):
     (tmp_path / "decoder.py").write_text("raise RuntimeError('Do not execute')\n", encoding="utf-8")
-    catalog = package(tmp_path, signal_input_contract=2, channel_requirements={
+    catalog = package(tmp_path, channel_requirements={
         "signal_type": "eeg", "min_count": 2, "required_names": ["Oz"], "default_names": ["O2", "Oz"],
     })
     selected = PluginSelection("test.example", "default", "1")
     descriptor = catalog.resolve_selection("decoder", selected)
     adapted = CatalogConfigurationAdapter(catalog).get("decoder", selected)
-    assert descriptor.signal_input_contract == 2
     assert adapted.channel_requirements == descriptor.channel_requirements
     assert adapted.channel_requirements.default_names == ("O2", "Oz")
 
 
 @pytest.mark.parametrize("fields", [
+    {},
     {"signal_input_contract": 1, "channel_requirements": {}},
-    {"channel_requirements": {}},
-    {"signal_input_contract": 2},
+    {"signal_input_contract": 2, "channel_requirements": {}},
     {"signal_input_contract": 3, "channel_requirements": {}},
     {"signal_input_contract": True, "channel_requirements": {}},
     {"signal_input_contract": "2", "channel_requirements": {}},
-    {"signal_input_contract": 2, "channel_requirements": []},
-    {"signal_input_contract": 2, "channel_requirements": {"unknown": 1}},
-    {"signal_input_contract": 2, "channel_requirements": {"min_count": True}},
-    {"signal_input_contract": 2, "channel_requirements": {"min_count": 2, "default_names": ["Oz"]}},
-    {"signal_input_contract": 2, "channel_requirements": {"required_names": ["Oz", "Oz"]}},
+    {"channel_requirements": []},
+    {"channel_requirements": {"unknown": 1}},
+    {"channel_requirements": {"min_count": True}},
+    {"channel_requirements": {"min_count": 2, "default_names": ["Oz"]}},
+    {"channel_requirements": {"required_names": ["Oz", "Oz"]}},
 ])
-def test_invalid_requirement_or_contract_combinations_reject_package(tmp_path, fields):
+def test_invalid_or_retired_declarations_reject_package(tmp_path, fields):
     catalog = package(tmp_path, **fields)
     with pytest.raises(PluginManifestError, match="channel_requirements|signal_input_contract"):
         catalog.resolve_selection("decoder", PluginSelection("test.example", "default", "1"))
 
 
 @pytest.mark.parametrize("kind", ["acquisition", "filter", "epoch_detector", "effector"])
-@pytest.mark.parametrize("contract", [1, 2])
-def test_requirements_are_decoder_only(tmp_path, kind, contract):
-    catalog = package(tmp_path, kind=kind, signal_input_contract=contract, channel_requirements={})
-    with pytest.raises(PluginManifestError, match="channel_requirements|signal_input_contract"):
+def test_requirements_are_decoder_only(tmp_path, kind):
+    catalog = package(tmp_path, kind=kind, channel_requirements={})
+    with pytest.raises(PluginManifestError, match="channel_requirements"):
         catalog.resolve_selection(kind, PluginSelection("test.example", "default", "1"))
 
 
-@pytest.mark.parametrize("kind", ["decoder", "filter", "epoch_detector"])
-def test_prepared_contract_one_exposes_signal_metadata_without_requirements(tmp_path, kind):
-    descriptor = package(tmp_path, kind=kind, signal_input_contract=1).resolve_selection(kind, PluginSelection("test.example", "default", "1"))
-    assert descriptor.signal_input_contract == 1
+@pytest.mark.parametrize("kind", ["filter", "epoch_detector"])
+def test_filter_and_detector_need_no_signal_contract_selector(tmp_path, kind):
+    descriptor = package(tmp_path, kind=kind).resolve_selection(kind, PluginSelection("test.example", "default", "1"))
     assert descriptor.channel_requirements is None
 
 
-@pytest.mark.parametrize("kind", ["decoder", "filter", "epoch_detector"])
-def test_processing_manifest_without_signal_contract_is_rejected_during_discovery(tmp_path, kind):
-    catalog = package(tmp_path, kind=kind)
-
-    assert catalog.list_contributions(kind) == ()
-    with pytest.raises(PluginManifestError, match="signal_input_contract"):
-        catalog.resolve_selection(kind, PluginSelection("test.example", "default", "1"))
+def test_decoder_without_requirements_is_rejected_during_discovery(tmp_path):
+    catalog = package(tmp_path)
+    assert catalog.list_contributions("decoder") == ()
+    with pytest.raises(PluginManifestError, match="channel_requirements"):
+        catalog.resolve_selection("decoder", PluginSelection("test.example", "default", "1"))

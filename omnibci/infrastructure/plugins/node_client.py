@@ -14,6 +14,9 @@ from omnibci.application.node_configuration import (
     materialize_node_configuration,
 )
 from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
+from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +121,7 @@ def run_configured_node(role: str, application_factory, *, server_url: str) -> N
     """
     waiting_message = None
     api_token = os.environ.get("OMNIBCI_API_TOKEN")
+    store = ManagedPluginPackageStore()
     while True:
         try:
             configuration = fetch_node_configuration(server_url, role, api_token)
@@ -129,13 +133,26 @@ def run_configured_node(role: str, application_factory, *, server_url: str) -> N
             time.sleep(_RETRY_DELAY_S)
             continue
 
-        snapshot = materialize_node_configuration(configuration, CatalogConfigurationAdapter())
+        owner = PluginStoreOwner(store.plugin_dir, role=role)
+        try:
+            snapshot = materialize_node_configuration(configuration, CatalogConfigurationAdapter(store.catalog))
+            snapshot = PluginArtifactPreparer(store).prepare_snapshot(snapshot, (role,))
+        except BaseException:
+            # Static preparation has not executed any plugin code.
+            owner.close()
+            raise
         logger.info(
             "Starting %s for modules %s, Engine %s, generation %s",
             role, configuration.module_revisions, configuration.engine_revision, configuration.generation,
         )
-        application = application_factory(settings_snapshot=snapshot)
-        if application.run() is not True:
+        try:
+            application = application_factory(settings_snapshot=snapshot)
+            reconnect = application.run()
+        except BaseException:
+            owner.abandon()
+            raise
+        owner.close()
+        if reconnect is not True:
             return
         logger.info("%s disconnected and stopped cleanly; refreshing configuration", role)
         waiting_message = None
