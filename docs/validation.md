@@ -12,9 +12,10 @@ frontend tests and builds, generated REST types, and architecture imports.
 
 The headless jobs build and install a wheel, then run
 [check_installed_wheel.py](../.github/scripts/check_installed_wheel.py) in isolated
-Python. It verifies API v1 manifests, schemas, settings defaults, the 18 canonical
+Python. It verifies API v1 manifests, schemas, settings defaults, the 19 canonical
 SDK exports, the author CLI entry point, deterministic starter packaging and all
-281 stimulus frames without importing the editable checkout. Build release wheels from a
+281 Classic40 stimulus frames and 11 Command10 label textures without importing
+the editable checkout. Build release wheels from a
 clean checkout to avoid retaining deleted files in an old `build/lib` directory.
 
 [contract.yml](../.github/workflows/contract.yml) regenerates OpenAPI and compares

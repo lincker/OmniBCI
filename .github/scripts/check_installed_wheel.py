@@ -5,11 +5,14 @@ from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from unittest.mock import MagicMock
 
 import omnibci
 from omnibci import sdk
 
 from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.plugin_identity import PluginSelection
+from omnibci.infrastructure.plugins.loader import PluginLoader
 from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot, vendor_plugins_dir
 from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.frame_pack import FramePack
 
@@ -34,8 +37,8 @@ def main():
             assert contribution.configuration_schema is not None
             validate_parameters(contribution.configuration_schema, {})
         contributions.extend(selected)
-    assert len(contributions) == 11, len(contributions)
-    assert len(sdk.__all__) == 18
+    assert len(contributions) == 12, len(contributions)
+    assert len(sdk.__all__) == 19
     assert all(getattr(sdk, name).__module__.startswith("omnibci.domain.") for name in sdk.__all__)
     assert not any(hasattr(sdk, name) for name in ("PluginContext", "PluginParameters", "Renderer"))
     entrypoint, = [item for item in metadata.distribution("omnibci").entry_points
@@ -65,7 +68,23 @@ def main():
         assert pack.idle_frame.shape == (990, 1920, 1)
         assert sum(1 for _ in pack.iter_stimulation_frames()) == 240
         assert sum(1 for _ in pack.iter_cue_frames()) == 40
-    print(f"Installed wheel verified: {len(contributions)} API v1 contributions, 18 SDK exports, author CLI and 281 stimulus frames")
+    command10 = catalog.resolve_selection(
+        "paradigm", PluginSelection("OmniBCI.command10SSVEP", "default", "0.1.0"),
+    )
+    paradigm = PluginLoader.instantiate(command10, sdk.Paradigm, parameters={})
+    renderer, trigger = MagicMock(spec=sdk.RenderSurface), MagicMock(spec=sdk.TriggerOutput)
+    renderer.upload_texture.side_effect = lambda pixels: sdk.TextureHandle()
+    try:
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        assert renderer.upload_texture.call_count == 11
+        paradigm.present_trial({"cue_target_id": 0})
+        assert paradigm.render_frame(sdk.FrameTiming(refresh_index=0, target_time=0, refresh_period=1 / 60))
+        trigger.send.assert_called_once_with(11)
+    finally:
+        paradigm.teardown()
+    assert renderer.release_texture.call_count == 11
+    print(f"Installed wheel verified: {len(contributions)} API v1 contributions, 19 SDK exports, "
+          "author CLI, 281 Classic40 frames and 11 Command10 textures")
 
 
 if __name__ == "__main__":

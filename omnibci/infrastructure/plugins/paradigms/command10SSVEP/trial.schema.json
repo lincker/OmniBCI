@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "cue_target_id": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Target to cue, or 0 for free choice without a cue. Free choice emits event 11."
+    }
+  },
+  "required": ["cue_target_id"]
+}
