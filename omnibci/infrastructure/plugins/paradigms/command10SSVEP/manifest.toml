@@ -1,0 +1,52 @@
+# OmniBCI Plugin Manifest — schema version 2
+manifest_version = 2
+
+[package]
+domain = "stimulation"
+id = "command10SSVEP"
+version = "0.1.0"
+api_version = "1"
+publisher = "OmniBCI"
+
+[[contributions]]
+id = "default"
+kind = "paradigm"
+plugin_type = "STIMULATION_COMMAND10_SSVEP"
+entrypoint = "paradigm:Command10SSVEP"
+display_name = "10-command SSVEP"
+description = "Four direction targets with A/B/C and X/Y/Z command targets at fixed 60 Hz."
+
+[contributions.params]
+targets = 10
+layout = "Centered directions, A/B/C left, X/Y/Z right"
+resolution = "1920 × 1080"
+refresh_rate_hz = 60
+stim_time_s = 4
+frequency_hz = "8.0 – 15.2"
+frequency_step_hz = 0.8
+phase_step = "0.5 π"
+
+[contributions.controls.n_trials]
+label = "Trial count"
+type = "int"
+default = 1
+min = 1
+field = "n_trials"
+
+[contributions.controls.target_cue]
+label = "Target cue (0 = free choice)"
+type = "int"
+default = 1
+default_sequence = "1-10"
+min = 0
+max = 10
+field = "trial_params"
+payload_key = "cue_target_id"
+
+[contributions.configuration]
+schema = "default.schema.json"
+schema_version = 1
+
+[contributions.payload_schemas]
+trial = "trial.schema.json"
+result = "result.schema.json"

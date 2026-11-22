@@ -157,6 +157,14 @@ pip-selfcheck.json
 !/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/resource/
 /omnibci/infrastructure/plugins/paradigms/classic40SSVEP/resource/*
 !/omnibci/infrastructure/plugins/paradigms/classic40SSVEP/resource/classic40_ssvep.ofp
+# Track the standalone Command10 paradigm and its packaged label textures.
+!/omnibci/infrastructure/plugins/paradigms/command10SSVEP/
+/omnibci/infrastructure/plugins/paradigms/command10SSVEP/*
+!/omnibci/infrastructure/plugins/paradigms/command10SSVEP/*.py
+!/omnibci/infrastructure/plugins/paradigms/command10SSVEP/*.schema.json
+!/omnibci/infrastructure/plugins/paradigms/command10SSVEP/manifest.toml
+!/omnibci/infrastructure/plugins/paradigms/command10SSVEP/README.md
+!/omnibci/infrastructure/plugins/paradigms/command10SSVEP/resource/
 
 # user config profiles — machine-specific, never committed
 /omnibci/conf/profiles/
@@ -165,6 +173,7 @@ pip-selfcheck.json
 /omnibci/infrastructure/stimulation/creator/stim/*
 *.png
 *.jpg
+!/omnibci/infrastructure/plugins/paradigms/command10SSVEP/resource/*.png
 /.idea/
 ### JetBrains template
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider

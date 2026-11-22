@@ -293,7 +293,7 @@ def test_catalog_exposes_read_only_decoder_channel_requirements(client):
     response = http.get(f"{PREFIX}/plugin-catalog/decoder")
     assert response.status_code == 200
     decoders = response.json()["data"]
-    assert len(decoders) == 2
+    assert len(decoders) == 3
     for decoder in decoders:
         requirements = decoder["channel_requirements"]
         assert requirements["description"]
