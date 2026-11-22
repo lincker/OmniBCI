@@ -7,6 +7,7 @@ import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock
 
+import numpy as np
 import omnibci
 from omnibci import sdk
 
@@ -37,7 +38,7 @@ def main():
             assert contribution.configuration_schema is not None
             validate_parameters(contribution.configuration_schema, {})
         contributions.extend(selected)
-    assert len(contributions) == 12, len(contributions)
+    assert len(contributions) == 13, len(contributions)
     assert len(sdk.__all__) == 19
     assert all(getattr(sdk, name).__module__.startswith("omnibci.domain.") for name in sdk.__all__)
     assert not any(hasattr(sdk, name) for name in ("PluginContext", "PluginParameters", "Renderer"))
@@ -83,8 +84,27 @@ def main():
     finally:
         paradigm.teardown()
     assert renderer.release_texture.call_count == 11
+    command10_decoder = catalog.resolve_selection(
+        "decoder", PluginSelection("OmniBCI.command10_fbcca", "default", "0.1.0"),
+    )
+    assert (command10.location / "targets.py").read_bytes() == (command10_decoder.location / "targets.py").read_bytes()
+    signal = sdk.SignalInfo(sample_rate=250, channels=(
+        sdk.ChannelDescriptor(0, "Oz", channel_id="oz", signal_type="eeg", unit="uV"),
+    ))
+    decoder = PluginLoader.instantiate(command10_decoder, sdk.Decoder, parameters={}, input_signal=signal)
+    try:
+        decoder.setup()
+        time = np.arange(1000) / signal.sample_rate
+        for target_id in range(1, 11):
+            frequency = 8 + .8 * (target_id - 1)
+            phase = ((target_id - 1) % 4) * np.pi / 2
+            data = sum(np.sin(h * (2 * np.pi * frequency * time + phase)) / h for h in range(1, 6))[None, :]
+            decoder.begin_epoch()
+            assert decoder.decode(data, latest_raw_segment=data[:, -10:]).target_id == target_id
+    finally:
+        decoder.teardown()
     print(f"Installed wheel verified: {len(contributions)} API v1 contributions, 19 SDK exports, "
-          "author CLI, 281 Classic40 frames and 11 Command10 textures")
+          "author CLI, 281 Classic40 frames, 11 Command10 textures and 10 FBCCA target predictions")
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ def test_all_builtins_own_valid_defaults_for_their_required_parameters():
             assert set(plugin.configuration_schema.get("required", [])) <= set(values)
             assert set(values) <= set(plugin.configuration_schema["properties"])
             count += 1
-    assert count == 12
+    assert count == 13
 
 
 @pytest.mark.parametrize("alias", ["file_reader", "neuroscan_curry8_reader"])

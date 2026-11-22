@@ -1,0 +1,47 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_duration": {
+      "type": "number",
+      "title": "Decode window (seconds)",
+      "description": "Fixed analysis window. Offset plus duration must fit inside the four-second stimulus.",
+      "default": 3.0,
+      "minimum": 1,
+      "maximum": 4,
+      "x-scope": "portable",
+      "x-apply": "trial"
+    },
+    "offset_time": {
+      "type": "number",
+      "title": "Trigger offset (seconds)",
+      "description": "Post-trigger samples to skip before the analysis window; this is not a phase calibration.",
+      "default": 0.14,
+      "minimum": 0,
+      "maximum": 3,
+      "x-scope": "portable",
+      "x-apply": "trial"
+    },
+    "min_score": {
+      "type": "number",
+      "title": "Minimum FBCCA similarity",
+      "description": "Reject lower normalized weighted squared correlations. This score is not a calibrated probability.",
+      "default": 0.3,
+      "minimum": 0,
+      "maximum": 1,
+      "x-scope": "portable",
+      "x-apply": "trial"
+    },
+    "min_margin": {
+      "type": "number",
+      "title": "Minimum winner margin",
+      "description": "Required absolute difference between the two highest similarities. Exact ties always abstain.",
+      "default": 0.05,
+      "minimum": 0,
+      "maximum": 1,
+      "x-scope": "portable",
+      "x-apply": "trial"
+    }
+  },
+  "required": ["window_duration", "offset_time", "min_score", "min_margin"]
+}
