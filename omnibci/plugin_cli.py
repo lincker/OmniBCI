@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 import signal
 
-from omnibci.infrastructure.plugins.package_installer import PackageInstallError
-from omnibci.infrastructure.plugins.project_tools import package_project, validate_project
-from omnibci.application.plugin_packages import PluginPackageError
+from omnibci.infrastructure.plugin_management.installer import PackageInstallError
+from omnibci.infrastructure.plugin_management.project_tools import package_project, validate_project
+from omnibci.application.plugin_management.packages import PluginPackageError
 
 
 def main(argv=None):

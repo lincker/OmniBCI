@@ -11,8 +11,8 @@ from tests.plugin_configuration_helpers import builtin_selection
 import pytest
 
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.loader import PluginLoader
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 
 
 @pytest.mark.parametrize(
@@ -23,17 +23,17 @@ def test_neuroscan_driver_is_discoverable_and_loadable(
     monkeypatch, tmp_path, driver, class_name,
 ):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
-    plugin_type = f"neuroscan_{driver}_reader"
+    selection = builtin_selection("acquisition", f"neuroscan_{driver}_reader")
 
-    plugins = {plugin.plugin_type: plugin for plugin in PluginCatalog().list_contributions("acquisition")}
-    descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", plugin_type))
+    plugins = {plugin.selection: plugin for plugin in PluginCatalog().list_contributions("acquisition")}
+    descriptor = PluginCatalog().resolve_selection("acquisition", selection)
     instance = PluginLoader.instantiate(descriptor, SignalSource, parameters={})
 
-    assert plugins[plugin_type].source == "builtin"
+    assert plugins[selection].source == "builtin"
     assert descriptor.location.parts[-2:] == ("neuroscan", driver)
     assert str(descriptor.entrypoint) == f"{driver}:{class_name}"
     assert type(instance).__name__ == class_name
-    assert instance.plugin_type == plugin_type
+    assert descriptor.selection == selection
     assert instance.reader is None and instance.writer is None
 
 

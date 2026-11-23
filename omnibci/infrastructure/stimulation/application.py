@@ -15,7 +15,7 @@ from omnibci.application.command_contracts import command_contract, stimulation_
 from omnibci.application.events import CommandFailureKind, CommandRequest, CommandResult
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.async_lifecycle import await_owned
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.outbound import make_stimulation_ack
 from omnibci.infrastructure.ipc.peer_channel import PeerChannel

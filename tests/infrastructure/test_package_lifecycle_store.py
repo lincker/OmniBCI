@@ -4,11 +4,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from omnibci.application.plugin_packages import PluginPackageConflictError, PluginPackageError, PluginPackageStorageError
+from omnibci.application.plugin_management.packages import PluginPackageConflictError, PluginPackageError, PluginPackageStorageError
 from omnibci.domain.ports.effector import Effector
-from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.plugin_catalog import AmbiguousPluginError, PluginCatalog, PluginNotFoundError
+from omnibci.infrastructure.plugin_management.loader import PluginLoader
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import AmbiguousPluginError, PluginCatalog, PluginNotFoundError
 from tests.infrastructure.test_package_store import package_archive
 
 
@@ -99,7 +99,7 @@ def test_failed_atomic_state_write_preserves_previous_enablement(store, tmp_path
     previous = store.registry.path.read_bytes()
     def fail(*_):
         raise OSError("disk write failed")
-    monkeypatch.setattr("omnibci.infrastructure.plugins.installed_registry.os.replace", fail)
+    monkeypatch.setattr("omnibci.infrastructure.storage.os.replace", fail)
     with pytest.raises(PluginPackageStorageError, match="disk write"):
         store.set_enabled("acme.device", "2.0.0", True)
     assert store.registry.path.read_bytes() == previous
@@ -136,3 +136,28 @@ def test_symlink_state_is_rejected(store, tmp_path):
     store.registry.state_dir.symlink_to(target, target_is_directory=True)
     with pytest.raises(PluginPackageStorageError, match="symlink"):
         store.registry.read()
+
+
+def test_enable_and_list_avoid_redundant_registry_reads(store, tmp_path, monkeypatch):
+    from omnibci.infrastructure.plugin_management.registry import InstalledPackageRegistry
+
+    for version in ("1.0.0", "2.0.0", "3.0.0"):
+        store.install_archive(package_archive(tmp_path, version))
+
+    reads = 0
+    original_read = InstalledPackageRegistry.read
+
+    def counting_read(self):
+        nonlocal reads
+        reads += 1
+        return original_read(self)
+
+    monkeypatch.setattr(InstalledPackageRegistry, "read", counting_read)
+
+    store.set_enabled("acme.device", "1.0.0", True)
+    assert reads <= 2
+
+    reads = 0
+    packages = store.list_packages()
+    assert len(packages) == 3
+    assert reads == 1

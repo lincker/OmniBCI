@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.decoder_input import DecoderChannelRequirements
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
@@ -16,9 +16,9 @@ from omnibci.domain.ports.algorithm import Decoder
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.signal_processing.signal_configuration import mapped_input
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8.curry8 import Curry8DataReader, Curry8Metadata
-from omnibci.infrastructure.plugins.loader import PluginLoadError
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
 
 
 def configured(monkeypatch, requirements, outputs=("O1",), *, signal_type="eeg"):
@@ -35,7 +35,7 @@ def configured(monkeypatch, requirements, outputs=("O1",), *, signal_type="eeg")
     plan = compile_processing_plan(source, inputs)
     descriptor = SimpleNamespace(channel_requirements=requirements,
                                  api_version="1", configuration_version=1)
-    monkeypatch.setattr("omnibci.infrastructure.plugins.runtime_configuration.resolve_configured_plugin",
+    monkeypatch.setattr("omnibci.infrastructure.plugin_management.runtime.resolve_configured_plugin",
                         lambda snapshot, slot, kind: (descriptor, {}))
     return snapshot, mapped_input(plan)
 

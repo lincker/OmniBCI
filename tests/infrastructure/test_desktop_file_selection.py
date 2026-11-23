@@ -5,7 +5,7 @@ from importlib import resources
 
 import pytest
 
-from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters, validate_schema
+from omnibci.application.plugin_management.schema import PluginSchemaError, validate_parameters, validate_schema
 from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
 
 

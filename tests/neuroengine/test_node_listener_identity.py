@@ -3,7 +3,7 @@
 import asyncio
 
 from tests.execution_helpers import output_bindings
-from omnibci.application.plugin_execution import bindings_fingerprint
+from omnibci.application.plugin_management.execution import bindings_fingerprint
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

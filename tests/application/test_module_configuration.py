@@ -10,13 +10,13 @@ from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULT
 from omnibci.application.configuration.models import ModuleActivation, ProfileBinding
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.domain.channel_mapping import ProcessingInput
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.application.configuration.accepted import accepted_runtime_settings
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
@@ -29,7 +29,8 @@ def profiles(tmp_path, monkeypatch):
 
 
 def definition(profiles, kind, alias):
-    return next(item for item in profiles.catalog.list(kind) if item.plugin_type == alias)
+    from tests.plugin_configuration_helpers import builtin_selection
+    return profiles.catalog.get(kind, builtin_selection(kind, alias))
 
 
 def source_request(profiles):
@@ -61,7 +62,9 @@ def test_acquisition_can_be_selected_and_started_without_other_modules(profiles)
     accept_plan(profiles, runtime, plan)
     snapshot = accepted_runtime_settings(profiles=profiles)
     assert [item["slot"] for item in snapshot["PLUGINS.bindings"]] == ["acquisition.source"]
-    assert snapshot["ACQUISITION.signal_source"] == "neuroscan_scan45_reader"
+    from omnibci.application.processing_source import source_id_for
+    assert source_id_for(snapshot) == "OmniBCI.neuroscan_scan45_reader/default@0.1.0"
+    assert "ACQUISITION.signal_source" not in snapshot
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,7 @@ import tomlkit
 from omnibci.application.configuration.definitions import (
     MODULES, SERVER_STARTUP_DEFAULTS, server_startup_settings, validate_server_settings,
 )
-from omnibci.application.plugin_identity import PLUGIN_KINDS
+from omnibci.application.plugin_management.identity import PLUGIN_KINDS
 from omnibci.application.configuration.models import (
     ActivationSet, ModuleActivation, ModuleActivationRevision,
     PluginProfile, ProfileRevision,
@@ -33,7 +33,7 @@ from omnibci.application.configuration.errors import (
     PluginProfileValidationError, ProfileRevisionConflict,
 )
 from omnibci.infrastructure.config_paths import config_root
-from omnibci.infrastructure.repositories.configuration_storage import atomic_write, file_lock
+from omnibci.infrastructure.storage import atomic_write, file_lock
 
 
 class TomlConfigurationRepository:

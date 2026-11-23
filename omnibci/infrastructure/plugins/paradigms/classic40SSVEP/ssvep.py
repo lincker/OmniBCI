@@ -17,8 +17,7 @@ import string
 import threading
 from enum import Enum, auto
 
-from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.sdk import FrameTiming, Rect, RenderSurface, TextureHandle, TriggerOutput
+from omnibci.sdk import FrameTiming, Paradigm, Rect, RenderSurface, TextureHandle, TriggerOutput
 from .feedback_display import FeedbackDisplay
 from .frame_pack import FramePack
 
@@ -76,7 +75,6 @@ class _State(Enum):
 # ---------------------------------------------------------------------------
 
 class Classic40SSVEP_2(Paradigm):
-    plugin_type = 'STIMULATION_THUBCI_SSVEP_classic40'
 
     def __init__(
         self, *, parameters: Mapping[str, object], resource_root: Path,

@@ -12,8 +12,8 @@ from omnibci.application.services.node_configuration_service import NodeConfigur
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.bootstrap import _RuntimeSettings
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.application.configuration.accepted import accepted_runtime_settings
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.plugin_configuration_helpers import accept_profiles
 
@@ -65,9 +65,11 @@ def test_startup_selection_uses_queries_without_repository_access(profiles):
 
 
 def test_idle_status_reads_configuration_queries(profiles):
+    from omnibci.application.processing_source import source_id_for
+
     engine = SimpleNamespace(applied_snapshot=None, is_engine_ready=False)
     view = _RuntimeSettings(engine, queries(profiles))
-    assert view.get("ACQUISITION.signal_source") == "file_reader"
+    assert source_id_for(view) == "OmniBCI.file_reader/default@0.1.0"
 
 
 def test_planner_uses_queries_for_revision_and_plugin_apply_hints(profiles):
@@ -139,7 +141,7 @@ def test_signal_setup_uses_queries_for_selected_profiles(profiles):
     acquisition = SimpleNamespace(cached_descriptor_for=lambda binding: None)
     service = SignalSetupService(queries(profiles), engine, acquisition, None)
     state = service.read()
-    assert state["selected_source_id"] == "file_reader"
+    assert state["selected_source_id"] == "OmniBCI.file_reader/default@0.1.0"
     assert not state["readiness"]["ready"]
 
 

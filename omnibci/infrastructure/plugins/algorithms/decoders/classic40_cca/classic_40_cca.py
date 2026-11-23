@@ -22,12 +22,10 @@ import numpy as np
 from numpy import typing as npt
 from sklearn.cross_decomposition import CCA as skCCA
 
-from omnibci.domain.signal_info import SignalInfo
-from omnibci.domain.ports.algorithm import Decoder, Prediction
+from omnibci.sdk import Decoder, Prediction, SignalInfo
 
 
 class Classic40CCA(Decoder):
-    plugin_type = 'THUBCI_SSVEP_classic40CCA'
     class Template:
         # Harmonic count
         MULTIPLY_TIME = 5

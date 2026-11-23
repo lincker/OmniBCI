@@ -13,7 +13,7 @@ from omnibci.application.configuration.errors import (
     ConfigValidationError, PluginProfileValidationError,
 )
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
-from omnibci.infrastructure.repositories import configuration_storage as storage
+from omnibci.infrastructure import storage
 
 
 @pytest.fixture

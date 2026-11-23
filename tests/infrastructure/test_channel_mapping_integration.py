@@ -22,11 +22,11 @@ from omnibci.bootstrap import assemble, register_engine_listeners, _acquisition_
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, ResolvedSignalPlan
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.shared.events import EventType
 from tests.plugin_configuration_helpers import builtin_selection
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
+from omnibci.application.configuration.accepted import accepted_runtime_settings
 
 
 @pytest.mark.integration

@@ -11,8 +11,8 @@ from copy import deepcopy
 from typing import Mapping, Optional
 
 from omnibci.domain.ports.effector import Effector
-from omnibci.application.plugin_schema import validate_parameters
-from omnibci.infrastructure.plugins.loader import PluginLoader
+from omnibci.application.plugin_management.schema import validate_parameters
+from omnibci.infrastructure.plugin_management.loader import PluginLoader
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +32,13 @@ class Actuator:
     # ── Manifest-resolved plugin loading ──────────────────────────────────
 
     def _load_effector(self) -> Optional[Effector]:
-        from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
-        descriptor, parameters = resolve_configured_plugin(
-            self._settings_snapshot, "actuation.effector", "effector",
+        from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin_bundle
+        loaded = load_configured_plugin_bundle(
+            self._settings_snapshot, "actuation.effector", "effector", Effector,
+            loader=self._plugin_loader,
         )
-        self._command_schema = deepcopy(descriptor.payload_schemas["command"])
-        return self._plugin_loader.instantiate(descriptor, Effector, parameters=parameters)
+        self._command_schema = dict(loaded.payload_schemas["command"])
+        return loaded.instance
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 

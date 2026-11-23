@@ -17,7 +17,7 @@ from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, comp
 
 def descriptor(source, provenance="protocol-defined"):
     return source_descriptor(SourceObservation(native_text="native", signal_info=source,
-        native_event="final-row", provenance=provenance), source_id="file_reader", connection_id="connection-one")
+        native_event="final-row", provenance=provenance), source_id="test.source/reader@1.0.0", connection_id="connection-one")
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def source():
 @pytest.fixture
 def snapshot():
     return {
-        "ACQUISITION.signal_source": "file_reader", "ACQUISITION.sample_rate": 250,
+        "ACQUISITION.sample_rate": 250,
         "ACQUISITION.channel_count": 4, "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "b" * 64},
         "CONFIG.generation": "generation-one", "PLUGINS.bindings": [
             {"slot": "acquisition.source", "kind": "acquisition", "profile_id": "source-profile",
@@ -159,7 +159,7 @@ def test_unconfigured_snapshots_do_not_prepare():
 
 
 def test_binding_projection_does_not_create_processing_configuration():
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
     from omnibci.application.configuration.models import ProfileBinding
     binding = ProfileBinding("processing.decoder", "decoder", None,
                              PluginSelection("test.decoder", "default", "1"), {})
@@ -186,3 +186,11 @@ def test_plan_uses_observed_source_values_for_unspecified_expectations(snapshot,
     binding_for(snapshot, "acquisition.source")["parameters"].pop("sample_rate")
     validate_source_expectations(snapshot, metadata)
     validate_plan_binding(snapshot, plan)
+
+
+def test_source_binding_distinguishes_two_versions_of_same_acquisition_package(snapshot, source):
+    v1_metadata = descriptor(source)
+    validate_source_binding(snapshot, v1_metadata)
+    binding_for(snapshot, "acquisition.source")["selection"]["version"] = "2.0.0"
+    with pytest.raises(ValueError, match="different acquisition source"):
+        validate_source_binding(snapshot, v1_metadata)

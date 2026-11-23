@@ -11,12 +11,10 @@ import numpy as np
 from numpy import typing as npt
 from scipy.signal import cheby1, filtfilt
 
-from omnibci.domain.signal_info import SignalInfo
-from omnibci.domain.ports.algorithm import Decoder, Prediction
+from omnibci.sdk import Decoder, Prediction, SignalInfo
 
 
 class Classic40FBCCA(Decoder):
-    plugin_type = 'THUBCI_SSVEP_classic40FBCCA'
     # class Template:
     #     MULTIPLY_TIME = 5
     #     def __init__(self, sample_rate, sample_count) -> None:

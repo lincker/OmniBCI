@@ -4,10 +4,10 @@ This guide describes the implemented Plugin API v1. Use the [developer workflow]
 
 A **Package** is the installation unit. A **Contribution** declares one selectable capability. An **Instance** is an object created by its owning module host. Plugin Management owns package files and enablement; Configuration owns parameter bindings; module hosts own execution and cleanup. Metadata discovery never imports plugin Python.
 
-## Manifest version 2
+## Manifest version 1
 
 ```toml
-manifest_version = 2
+manifest_version = 1
 
 [package]
 id = "device-kit"
@@ -39,12 +39,12 @@ schema_version = 1
 
 The manifest belongs at the package/ZIP root. This declaration illustrates a two-contribution package; its referenced Python implementations and schema files must also exist.
 
-- `manifest_version = 2` selects the document format. `api_version = "1"` selects the only supported plugin contract. Package release and configuration-schema versions have separate meanings.
+- `manifest_version = 1` selects the document format. `api_version = "1"` selects the only supported plugin contract. Package release and configuration-schema versions have separate meanings.
 - `id`, `publisher`, `version`, `api_version` and `domain` are required. The case-sensitive package identity is `publisher.id`. Package/contribution IDs and publishers start with an ASCII letter or digit and otherwise use ASCII letters, digits, underscores and hyphens.
 - Each Contribution requires a package-unique `id`, a supported `kind` and a package-relative `module:Class` entrypoint. Kinds are `acquisition`, `decoder`, `epoch_detector`, `filter`, `paradigm`, `trigger` and `effector`.
 - Package `domain` is classification: `acquisition`, `processing`, `stimulation` or `actuation`. It does not restrict Contribution kinds or select their execution host. Different release versions may have different classifications.
-- `plugin_type` is optional metadata, defaulting to the contribution ID. Configuration selects an exact package ID, contribution ID and version. No alias fallback or implicit latest version exists.
-- Optional `display_name`, `description`, `params` and `controls` belong to a Contribution. `params` is display metadata; it does not replace a parameter schema or supply executable constructor arguments.
+- Configuration and runtime status identify every plugin strictly by exact `PluginSelection(package_id, contribution_id, version)` (canonical string `package_id/contribution_id@version`). No legacy `plugin_type` alias, alias fallback, or implicit latest version exists.
+- Optional `display_name`, `description` and `controls` belong to a Contribution.
 - `configuration` references a package-relative object schema and positive `schema_version`. Discovery can inspect a Contribution without it; normal configurable bindings require it. Use an empty closed object schema when there are no parameters.
 - A Decoder requires `channel_requirements`, even if the table is empty. Other kinds cannot declare it. There is no separate `signal_input_contract` selector. See the [Decoder guide](decoder-plugin-development.md#manifest-and-channel-requirements).
 - A Paradigm requires exactly `payload_schemas.trial` and `payload_schemas.result`; an Effector requires exactly `payload_schemas.command`. These reference separate runtime object schemas. Other kinds cannot declare `payload_schemas`.
@@ -54,7 +54,7 @@ Unknown fields and invalid role declarations invalidate the whole manifest. Sche
 
 ## Parameters and runtime payloads
 
-Schemas use the [supported closed JSON Schema subset](../omnibci/application/plugin_schema.py). The root is an object and every object declares `additionalProperties: false`. Describe fields with `title` and `description`; JSON has no comments. External references and unrecognized keywords are rejected.
+Schemas use the [supported closed JSON Schema subset](../omnibci/application/plugin_management/schema.py). The root is an object and every object declares `additionalProperties: false`. Describe fields with `title` and `description`; JSON has no comments. External references and unrecognized keywords are rejected.
 
 Constructor parameters receive schema defaults and an independent validated copy. Trial, result and command payloads are validated without inserting defaults. Declare all fields the plugin accepts; a missing or invalid payload must not silently choose another operation. Generic transport correlation stays outside these plugin payloads.
 
@@ -98,4 +98,4 @@ Installation checks portable paths, bounded extraction, schemas, entrypoint file
 
 Optional `package.engines.omnibci` supports comma-separated numeric version comparisons (`>=`, `>`, `<=`, `<`, `==`), for example `">=1,<2"`. This is not npm's range language. `package.host_version`, when present, requires an exact host version.
 
-`[package.requires]` maps host-exposed Python distribution names to exact installed versions. These are checks, not installation instructions or dependencies on other plugin packages. There is no automatic pip, environment selector or inter-plugin dependency resolver. Use the selected host environment for author tests and deployment.
+`[package.requires]` maps host-exposed scientific and rendering Python distributions (`numpy`, `scipy`, `mne`, `scikit-learn`, `pyopengl`, `glfw`, `moderngl`, `pillow`) to either an exact installed version or comma-separated numeric version comparisons (`>=`, `>`, `<=`, `<`, `==`). These are checks, not installation instructions or dependencies on other plugin packages. There is no automatic pip, environment selector or inter-plugin dependency resolver. Use the selected host environment for author tests and deployment.

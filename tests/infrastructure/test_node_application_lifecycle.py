@@ -184,7 +184,7 @@ def test_lost_link_stops_commands_before_delayed_transport_cleanup(monkeypatch, 
 @pytest.mark.parametrize("failure", ["quiesce", "teardown"])
 def test_real_effector_failed_cleanup_cannot_restart_from_supervisor(monkeypatch, failure):
     from omnibci.infrastructure.actuation.actuator import Actuator
-    from omnibci.infrastructure.plugins import node_client
+    from omnibci.infrastructure import node_client
 
     app, peer, config, lifecycle, queue = make_app(monkeypatch, "actuation")
     effector = Mock(setup=Mock(return_value=None), execute=Mock(return_value=None),

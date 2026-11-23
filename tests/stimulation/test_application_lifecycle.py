@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tests.execution_helpers import synthetic_execution_snapshot
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 
 from omnibci.infrastructure.stimulation.application import Stimulation
 from omnibci.application.events import CommandRequest

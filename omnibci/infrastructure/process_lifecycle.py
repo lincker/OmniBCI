@@ -19,7 +19,7 @@ import math
 import time
 from typing import Any
 
-from omnibci.application.plugin_execution import PluginExecutionReceipt
+from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 
 logger = logging.getLogger(__name__)
 

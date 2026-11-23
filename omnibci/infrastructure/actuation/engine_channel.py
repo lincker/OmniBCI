@@ -11,7 +11,7 @@ neuroengine/gateway/peers.py:
 
 from omnibci.shared.events import EventType
 from omnibci.infrastructure.ipc.peer_transport import ConnectTransport
-from omnibci.application.plugin_execution import PluginExecutionReceipt
+from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 from omnibci.infrastructure.ipc.routing import PeerConfig, RouteSpec
 
 ENGINE = "engine"

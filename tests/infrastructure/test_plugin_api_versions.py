@@ -3,15 +3,15 @@ from textwrap import dedent
 
 import pytest
 
-from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
+from omnibci.infrastructure.plugin_management.loader import PluginLoader, PluginLoadError
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot
 from omnibci.sdk import Effector
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 
 
 def descriptor(tmp_path, body="self.parameters = parameters; self.resource_root = resource_root"):
     (tmp_path / "manifest.toml").write_text(dedent('''
-        manifest_version = 2
+        manifest_version = 1
         [package]
         domain = "actuation"
         id = "example"

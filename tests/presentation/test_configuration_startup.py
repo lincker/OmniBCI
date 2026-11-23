@@ -161,9 +161,11 @@ def test_initial_module_configuration_can_be_applied_without_restarting_server(
             ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR", {}),
             ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40", {}),
         )
-        for slot, kind, plugin_type, parameters in selections:
+        from tests.plugin_configuration_helpers import builtin_selection
+        for slot, kind, alias, parameters in selections:
+            expected_selection = builtin_selection(kind, alias).to_dict()
             definition = next(item for item in _data(client, f"/config/plugin-catalog/{kind}")
-                              if item["plugin_type"] == plugin_type)
+                              if item["selection"] == expected_selection)
             response = client.post("/api/v1/config/plugin-profiles", json={
                 "kind": kind, "selection": definition["selection"],
                 "name": f"Repaired {kind}", "parameters": parameters,
@@ -384,9 +386,11 @@ def test_inactive_output_plugins_can_retain_portable_selections(startup_environm
             definition = original_get(kind, selection)
             return replace(definition, available=False) if kind in {"paradigm", "trigger", "effector"} else definition
         monkeypatch.setattr(service.catalog, "get", get)
+        from tests.plugin_configuration_helpers import builtin_selection
         for kind, slot, alias in (("trigger", "stimulation.trigger", "neuroscan_scan45_trigger"),
                                   ("effector", "actuation.effector", "logger")):
-            definition = next(item for item in _data(client, f"/config/plugin-catalog/{kind}") if item["plugin_type"] == alias)
+            expected_selection = builtin_selection(kind, alias).to_dict()
+            definition = next(item for item in _data(client, f"/config/plugin-catalog/{kind}") if item["selection"] == expected_selection)
             response = client.post("/api/v1/config/plugin-profiles", json={
                 "kind": kind, "selection": definition["selection"], "name": f"Portable {kind}", "parameters": {}})
             assert response.status_code == 201, response.text

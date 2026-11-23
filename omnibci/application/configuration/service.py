@@ -10,15 +10,15 @@ from omnibci.application.configuration.definitions import (
 )
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileValidationError, ProfileRevisionConflict
 from omnibci.application.configuration.ports import ConfigurationRepository, ProfileVersionCatalog
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import (
     ActivationSet, ModuleActivation, ModuleActivationRevision, EngineSettings, PluginProfile, ProfileBinding,
     ProfileVersionProposal,
     MODULE_KINDS, plugin_kind_for_slot,
 )
-from omnibci.application.plugin_packages import PackageReference, PluginPackageConflictError, PluginPackageError
-from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
-from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration, PluginConfigurationCatalog
+from omnibci.application.plugin_management.packages import PackageReference, PluginPackageConflictError, PluginPackageError
+from omnibci.application.plugin_management.schema import PluginSchemaError, validate_parameters
+from omnibci.application.plugin_management.catalog import PluginConfiguration, PluginConfigurationCatalog
 from omnibci.application.processing_source import materialize_processing_binding
 from omnibci.domain.channel_mapping import ProcessingInput
 
@@ -310,14 +310,6 @@ class ConfigurationService:
         for binding in activation_set.bindings():
             bindings.append(materialize_processing_binding(binding))
             if binding.kind == "acquisition":
-                # The display alias is optional for an idle source. Its module
-                # validates the pinned plugin when it is applied or started.
-                try:
-                    definition = self.catalog.get(binding.kind, binding.selection)
-                except PluginSchemaError:
-                    pass
-                else:
-                    result["ACQUISITION.signal_source"] = definition.plugin_type
                 result.update({f"ACQUISITION.{key}": value for key, value in binding.parameters.items()})
         result["CONFIG.module_revisions"] = {
             module: activation_set.modules[module].revision if activation_set.modules[module] else None

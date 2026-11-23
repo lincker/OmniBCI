@@ -2,7 +2,7 @@
 Stimulation domain commands.
 """
 from dataclasses import dataclass
-from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.plugin_management.schema import validate_parameters
 
 
 @dataclass(frozen=True)

@@ -58,12 +58,12 @@ const resources: Record<Language, Record<TranslationKey, string>> = { zh, en };
 const STORAGE_KEY = "omnibci.language";
 
 const PLUGIN_NAME_KEYS: Record<string, TranslationKey> = {
-  file_reader: "plugin.fileReader",
-  neuroscan_scan45_reader: "plugin.neuroscanScan45",
-  THUBCI_SSVEP_classic40CCA: "plugin.classic40Cca",
-  THUBCI_SSVEP_classic40FBCCA: "plugin.classic40Fbcca",
-  STIMULATION_THUBCI_SSVEP_classic40: "plugin.classic40Ssvep",
-  logger: "plugin.logEffector",
+  "OmniBCI.file_reader/default": "plugin.fileReader",
+  "OmniBCI.neuroscan_scan45_reader/default": "plugin.neuroscanScan45",
+  "OmniBCI.classic40_cca/default": "plugin.classic40Cca",
+  "OmniBCI.classic40_fbcca/default": "plugin.classic40Fbcca",
+  "OmniBCI.classic40SSVEP/default": "plugin.classic40Ssvep",
+  "omnibci.logger/default": "plugin.logEffector",
 };
 
 const CONTROL_LABEL_KEYS: Record<string, TranslationKey> = {
@@ -139,11 +139,12 @@ export function useI18n(): I18nContextValue {
 }
 
 export function translatePluginName(
-  pluginType: string,
+  pluginId: string,
   fallback: string,
   t: Translate,
 ): string {
-  const key = Object.prototype.hasOwnProperty.call(PLUGIN_NAME_KEYS, pluginType) ? PLUGIN_NAME_KEYS[pluginType] : undefined;
+  const baseId = pluginId.split("@", 1)[0];
+  const key = Object.prototype.hasOwnProperty.call(PLUGIN_NAME_KEYS, baseId) ? PLUGIN_NAME_KEYS[baseId] : undefined;
   return key ? t(key) : fallback;
 }
 

@@ -135,16 +135,12 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "plugin catalog 保持只读，不得依赖执行边界或插件实现"
+name = "Plugin catalog must stay read-only and never depend on execution or plugin implementations"
 type = "forbidden"
-source_modules = ["omnibci.infrastructure.plugins.plugin_catalog"]
+source_modules = ["omnibci.infrastructure.plugin_management.catalog"]
 forbidden_modules = [
-    "omnibci.infrastructure.plugins.loader",
-    "omnibci.infrastructure.plugins.registry",
-    "omnibci.infrastructure.plugins.acquisition",
-    "omnibci.infrastructure.plugins.algorithms",
-    "omnibci.infrastructure.plugins.effectors",
-    "omnibci.infrastructure.plugins.paradigms",
+    "omnibci.infrastructure.plugin_management.loader",
+    "omnibci.infrastructure.plugins",
 ]
 
 [[tool.importlinter.contracts]]
@@ -154,15 +150,33 @@ source_modules = ["omnibci.application.configuration"]
 forbidden_modules = ["omnibci.application.services", "omnibci.application.runtime_admission"]
 
 [[tool.importlinter.contracts]]
+name = "Plugin management application layer must not depend on runtime services"
+type = "forbidden"
+source_modules = ["omnibci.application.plugin_management"]
+forbidden_modules = ["omnibci.application.services", "omnibci.application.runtime_admission"]
+
+[[tool.importlinter.contracts]]
 name = "Static plugin manifests must not depend on discovery or execution"
 type = "forbidden"
-source_modules = ["omnibci.infrastructure.plugins.manifest"]
+source_modules = ["omnibci.infrastructure.plugin_management.manifest"]
 forbidden_modules = [
-    "omnibci.infrastructure.plugins.plugin_catalog",
-    "omnibci.infrastructure.plugins.loader",
-    "omnibci.infrastructure.plugins.runtime_configuration",
-    "omnibci.infrastructure.plugins.package_installer",
+    "omnibci.infrastructure.plugin_management.catalog",
+    "omnibci.infrastructure.plugin_management.loader",
+    "omnibci.infrastructure.plugin_management.runtime",
+    "omnibci.infrastructure.plugin_management.installer",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Plugin management must not import built-in plugin implementations"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.plugin_management"]
+forbidden_modules = ["omnibci.infrastructure.plugins"]
+
+[[tool.importlinter.contracts]]
+name = "Built-in plugin implementations must not import plugin management"
+type = "forbidden"
+source_modules = ["omnibci.infrastructure.plugins"]
+forbidden_modules = ["omnibci.infrastructure.plugin_management"]
 
 [[tool.importlinter.contracts]]
 name = "Shared IPC and output hosts must not depend on engine assembly"

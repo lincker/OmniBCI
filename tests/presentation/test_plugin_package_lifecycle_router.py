@@ -7,15 +7,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from omnibci.application.services.plugin_package_service import PluginPackageService
+from omnibci.application.plugin_management.package_service import PluginPackageService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.presentation.errors import register_exception_handlers
-from omnibci.presentation.routers.plugin_package_lifecycle import router
-from omnibci.presentation.routers.plugin_packages import router as installation_router
+from omnibci.presentation.routers.plugin_packages import router
 from tests.infrastructure.test_package_store import package_archive
 from tests.plugin_configuration_helpers import builtin_selection
 
@@ -31,10 +30,8 @@ def client(tmp_path, monkeypatch):
         svc.install(package_archive(tmp_path, version))
     app = FastAPI()
     register_exception_handlers(app)
-    app.include_router(installation_router)
     app.include_router(router)
     app.state.container = SimpleNamespace(configuration_service=profiles)
-    app.state.plugin_installation_service = svc
     app.state.plugin_package_service = svc
     with TestClient(app) as http:
         yield http, svc, profiles

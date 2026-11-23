@@ -4,11 +4,11 @@ import zipfile
 import pytest
 import tomlkit
 
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.installed_registry import InstalledPackageRegistry
-from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginNotFoundError
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.registry import InstalledPackageRegistry
+from omnibci.infrastructure.plugin_management.installer import PluginPackageInstaller
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginNotFoundError
 from tests.infrastructure.test_package_store import package_archive
 from tests.infrastructure.test_plugin_contributions import _write_package
 

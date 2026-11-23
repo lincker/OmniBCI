@@ -19,7 +19,6 @@ class Curry8Trigger(TriggerEmitter):
     A successful send means Out32 returned; it does not verify hardware output.
     """
 
-    plugin_type = "neuroscan_curry8_trigger"
 
     def __init__(
         self, *, parameters: Mapping[str, object], resource_root: Path,

@@ -20,7 +20,7 @@ from omnibci.application.events import (
     ProcessingInputStart, SignalPreparationReceipt, StreamBarrier, StreamDrainReceipt, TrialOutcome,
 )
 from omnibci.application.processing_source import requires_signal_preparation, validate_plan_binding
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from omnibci.shared.events import Event, EventType
 from .processing_state import AwaitingEpochState, AssemblingEpochState
 from .epoch.epoch_processor import EpochProcessor

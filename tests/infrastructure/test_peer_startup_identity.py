@@ -1,6 +1,6 @@
 """Managed peer readiness belongs to its pinned configuration and generation."""
 from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from dataclasses import replace
 
 from importlib import import_module
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError, ChildProcessState, StartupReport,
 )

@@ -9,7 +9,7 @@ from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
@@ -22,7 +22,8 @@ def flow(tmp_path, monkeypatch):
     executor = RuntimeApplyCoordinator(engine, profiles, None,
                                       SimpleNamespace(is_active=False, process_alive=False), None, repository=profiles.repository)
     runtime = RuntimeConfigurationService(profiles, engine, executor=executor)
-    definition = next(item for item in profiles.catalog.list("acquisition") if item.plugin_type == "file_reader")
+    from tests.plugin_configuration_helpers import builtin_selection
+    definition = profiles.catalog.get("acquisition", builtin_selection("acquisition", "file_reader"))
     bindings = [{"slot": "acquisition.source", "selection": definition.selection.to_dict(),
                  "parameters": {"file_reader_chunk_size": 100}}]
     return SimpleNamespace(profiles=profiles, runtime=runtime, bindings=bindings)

@@ -12,7 +12,7 @@ from omnibci.application.configuration.errors import (
     PluginProfileStorageError, ProfileRevisionConflict,
 )
 from omnibci.application.configuration.models import EngineSettings
-from omnibci.infrastructure.repositories.configuration_storage import file_lock
+from omnibci.infrastructure.storage import file_lock
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
@@ -186,7 +186,7 @@ def test_engine_write_uses_shared_lock_and_merges_latest_server_document(tmp_pat
 
 
 def test_failed_engine_write_preserves_file_and_stale_rollback_is_rejected(tmp_path, monkeypatch):
-    from omnibci.infrastructure.repositories import configuration_storage as storage
+    from omnibci.infrastructure import storage
     repository = TomlConfigurationRepository(tmp_path)
     previous = repository.save_engine(EngineSettings({"debug": False}))
     path = tmp_path / "settings.toml"

@@ -23,7 +23,7 @@ from typing import Callable, Optional
 from omnibci.shared.events import Event
 from omnibci.infrastructure.ipc.network import NetworkServer, NetworkClient
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
-from omnibci.application.plugin_execution import PluginExecutionReceipt
+from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 
 logger = logging.getLogger(__name__)
 

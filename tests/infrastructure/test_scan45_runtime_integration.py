@@ -21,7 +21,7 @@ from omnibci.presentation.websockets.results import event_to_wire
 from omnibci.infrastructure.plugins.acquisition.neuroscan.scan45.scan45 import (
     Scan45DataReader, Scan45Message,
 )
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor, SignalProcessorCommand
 from omnibci.presentation.schemas.ws import TrialCompletedMessage
 from omnibci.shared.events import EventType
@@ -49,7 +49,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     catalog = PluginCatalog()
     snapshot = {
         "CONFIG.generation": generation, "CONFIG.module_revisions": {"acquisition": revision, "processing": revision, "stimulation": revision, "actuation": revision}, "CONFIG.engine_revision": "engine",
-        "ACQUISITION.signal_source": reader.plugin_type,
+        "ACQUISITION.signal_source": "neuroscan_scan45_reader",
         "ACQUISITION.sample_rate": sample_rate, "ACQUISITION.channel_count": 10,
         "PLUGINS.bindings": [
             ProfileBinding(
@@ -67,7 +67,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
     receipt = {
         "generation": generation, "acquisition_revision": revision, "processing_revision": revision, "engine_revision": "engine",
         "connection_id": "scan45-connection",
-        "source_fingerprint": source_fingerprint(source_descriptor(observation, source_id=reader.plugin_type, connection_id="scan45-connection")), "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
+        "source_fingerprint": source_fingerprint(source_descriptor(observation, source_id="neuroscan_scan45_reader", connection_id="scan45-connection")), "plan_fingerprint": plan.fingerprint, "input_id": "test-input",
     }
     bus = EventBus(Queue())
     data = DataManager(Queue())
@@ -109,8 +109,8 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         assert confirmation.ok, confirmation.message
         assert confirmation.data == receipt
         processor._on_input_start(ProcessingInputStart("attach", SignalPreparationReceipt.from_value(receipt), -1))
-        assert processor.detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
-        assert processor._decoder.plugin_type == "THUBCI_SSVEP_classic40CCA"
+        assert type(processor.detector).__name__ == "DefaultEpochDetector"
+        assert type(processor._decoder).__name__ == "Classic40CCA"
 
         times = np.arange(700) / sample_rate
         # Positive ADC counts avoid conflating this lifecycle regression with
@@ -139,7 +139,7 @@ async def test_scan45_ch1_to_ch9_numeric_mapping_publishes_trial_without_session
         monkeypatch.setattr(reader, "read_chunk", AsyncMock(side_effect=[*parsed_chunks, None]))
         monkeypatch.setattr(reader, "stop_stream", AsyncMock())
         acquisition = AcquisitionRuntime(
-            reader, Queue(), data, bus, source_id=reader.plugin_type,
+            reader, Queue(), data, bus, source_id="neuroscan_scan45_reader",
             generation=generation, acquisition_revision=revision, engine_revision="engine",
         )
         acquisition._connected = acquisition._streaming = True

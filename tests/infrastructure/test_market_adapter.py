@@ -10,18 +10,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from omnibci.application.plugin_market import PluginMarketError
-from omnibci.application.plugin_packages import PluginPackageStorageError
+from omnibci.application.plugin_management.market import PluginMarketError
+from omnibci.application.plugin_management.packages import PluginPackageStorageError
 from omnibci.application.configuration.errors import ProfileRevisionConflict
-from omnibci.application.services.plugin_market_service import PluginMarketService
-from omnibci.application.services.plugin_installation_service import PluginInstallationService
+from omnibci.application.plugin_management.market_service import PluginMarketService
+from omnibci.application.plugin_management.package_service import PluginPackageService
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.market_adapter import MarketRepositoryAdapter, configured_market_service
-from omnibci.infrastructure.plugins.market_repository import StaticMarketRepository
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.market import MarketRepositoryAdapter, configured_market_service
+from omnibci.infrastructure.plugin_management.market import StaticMarketRepository
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.infrastructure.test_market_repository import _NOW, _URL, _DOWNLOAD, _Opener, _index, _signed
 from tests.infrastructure.test_package_store import package_archive
@@ -37,7 +37,7 @@ def configured(tmp_path, monkeypatch):
         "OMNIBCI_MARKET_TRUSTED_KEYS": json.dumps({"test-key": base64.b64encode(key.public_key().public_bytes_raw()).decode()}),
         "OMNIBCI_MARKET_CACHE_DIR": str(tmp_path / "cache"),
     }
-    svc = configured_market_service(PluginInstallationService(store), environ=environment)
+    svc = configured_market_service(PluginPackageService(store), environ=environment)
     repo = svc.repository.repository
     repo.clock = lambda: _NOW
     archive = package_archive(tmp_path).read_bytes()
@@ -50,7 +50,7 @@ def configured(tmp_path, monkeypatch):
 
 def test_no_configuration_disables_market_without_a_default_endpoint(configured):
     _, store, _, _, _ = configured
-    assert configured_market_service(PluginInstallationService(store), environ={}) is None
+    assert configured_market_service(PluginPackageService(store), environ={}) is None
 
 
 @pytest.mark.parametrize("change", [
@@ -68,20 +68,20 @@ def test_no_configuration_disables_market_without_a_default_endpoint(configured)
 def test_operator_configuration_fails_closed_without_leaking_values(configured, change):
     _, store, environment, _, _ = configured
     with pytest.raises(PluginMarketError) as error:
-        configured_market_service(PluginInstallationService(store), environ={**environment, **change})
+        configured_market_service(PluginPackageService(store), environ={**environment, **change})
     assert "secret-looking-value" not in str(error.value)
 
 
 def test_partial_operator_configuration_does_not_silently_enable_a_repository(configured):
     _, store, _, _, _ = configured
     with pytest.raises(PluginMarketError, match="together"):
-        configured_market_service(PluginInstallationService(store), environ={"OMNIBCI_MARKET_URL": _URL})
+        configured_market_service(PluginPackageService(store), environ={"OMNIBCI_MARKET_URL": _URL})
 
 
 def test_repository_download_limit_respects_the_shared_installation_owner(configured, monkeypatch):
     original, store, environment, _, _ = configured
     monkeypatch.setattr(store, "max_archive_bytes", 1)
-    service = configured_market_service(PluginInstallationService(store), environ=environment)
+    service = configured_market_service(PluginPackageService(store), environ=environment)
     repository = service.repository.repository
     repository._opener = original.repository.repository._opener
     repository.clock = lambda: _NOW
@@ -190,7 +190,7 @@ def test_real_signed_http_to_disabled_install_enable_profile_and_runtime_plan(tm
         repo = StaticMarketRepository(f"http://127.0.0.1:{server.server_port}/index.json", {"test-key": key.public_key()},
                                       tmp_path / "cache", expected_repository_id="example.plugins",
                                       allow_http=True, clock=lambda: _NOW)
-        market = PluginMarketService(MarketRepositoryAdapter(repo), PluginInstallationService(store))
+        market = PluginMarketService(MarketRepositoryAdapter(repo), PluginPackageService(store))
         assert len(market.list()) == 1
         installed = market.install("acme.device", "1.0.0").package
         assert not installed.enabled

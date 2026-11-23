@@ -27,7 +27,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from omnibci.infrastructure.stimulation.application import Stimulation
-from omnibci.infrastructure.plugins.node_client import node_server_argument, run_configured_node
+from omnibci.infrastructure.node_client import node_server_argument, run_configured_node
 
 logging.basicConfig(
     level=logging.INFO,

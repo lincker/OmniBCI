@@ -9,6 +9,8 @@ from fastapi import Request
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.configuration.service import ConfigurationService
+from omnibci.application.plugin_management.market_service import PluginMarketService
+from omnibci.application.plugin_management.package_service import PluginPackageService
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.results_service import ResultsService
 from omnibci.presentation.errors import ApiError
@@ -36,4 +38,18 @@ def get_configuration_service(request: Request) -> ConfigurationService:
     service = getattr(container, "configuration_service", None)
     if service is None:
         raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Configuration is unavailable")
+    return service
+
+
+def get_plugin_package_service(request: Request) -> PluginPackageService:
+    service = getattr(request.app.state, "plugin_package_service", None)
+    if service is None:
+        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Plugin package management is unavailable")
+    return service
+
+
+def get_plugin_market_service(request: Request) -> PluginMarketService:
+    service = getattr(request.app.state, "plugin_market_service", None)
+    if service is None:
+        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Plugin market is not configured")
     return service

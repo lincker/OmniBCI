@@ -13,7 +13,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from tests.execution_helpers import synthetic_execution_snapshot
 
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig

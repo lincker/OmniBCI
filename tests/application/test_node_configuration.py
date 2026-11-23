@@ -6,11 +6,11 @@ import pytest
 from omnibci.application.node_configuration import (
     NodeConfiguration, materialize_node_configuration, project_node_configuration,
 )
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.processing_source import processing_input as selected_processing_input
-from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
+from omnibci.application.plugin_management.schema import PluginSchemaError
+from omnibci.application.plugin_management.catalog import PluginConfiguration
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 from omnibci.domain.channel_mapping import ProcessingInput, ChannelBinding
 
@@ -56,7 +56,7 @@ class LocalCatalog:
         self.calls = []
         self.definitions = {
             kind: PluginConfiguration(
-                selection=binding(kind).selection, kind=kind, domain=SLOTS[kind].split(".")[0], plugin_type=f"local_{kind}",
+                selection=binding(kind).selection, kind=kind, domain=SLOTS[kind].split(".")[0],
                 label=kind, description=None, available=True, configuration_version=1,
                 schema={"type": "object", "properties": {}, "additionalProperties": False},
             ) for kind in kinds
@@ -75,19 +75,25 @@ class LocalCatalog:
         return self.definitions[kind]
 
 
-@pytest.mark.parametrize(("role", "kinds", "alias"), [
-    ("stimulation", {"paradigm", "trigger"}, "STIMULATION.paradigm"),
-    ("actuation", {"effector"}, "ACTUATION.effector"),
-    ("engine", {"acquisition", "decoder", "epoch_detector"}, "ACQUISITION.signal_source"),
+@pytest.mark.parametrize(("role", "kinds"), [
+    ("stimulation", {"paradigm", "trigger"}),
+    ("actuation", {"effector"}),
+    ("engine", {"acquisition", "decoder", "epoch_detector"}),
 ])
-def test_node_needs_only_owned_plugins(runtime, role, kinds, alias):
+def test_node_needs_only_owned_plugins(runtime, role, kinds):
     catalog = LocalCatalog(kinds)
     dto = project_node_configuration(runtime, role)
     result = materialize_node_configuration(NodeConfiguration.from_dict(dto.to_dict()), catalog)
 
     assert {kind for kind, _ in catalog.calls} == kinds
     assert {item["kind"] for item in result["PLUGINS.bindings"]} == kinds
-    assert result[alias].startswith("local_")
+    assert "ACQUISITION.signal_source" not in result
+    assert "STIMULATION.paradigm" not in result
+    assert "ACTUATION.effector" not in result
+    assert "ALGORITHM.decoder" not in result
+    assert "ALGORITHM.epoch_detector" not in result
+    assert "ALGORITHM.filters" not in result
+    assert "ACQUISITION.trigger" not in result
     assert result["CONFIG.engine_revision"] == runtime["CONFIG.engine_revision"]
     assert result["CONFIG.generation"] == runtime["CONFIG.generation"]
     assert result["CONFIG.node_role"] == role
@@ -179,7 +185,7 @@ def test_decoder_input_overrides_legacy_setup_using_pinned_source(runtime, proce
     result = materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
     assert selected_processing_input(result) == processing_input
     assert "SIGNAL.setup" not in result
-    assert result["ACQUISITION.signal_source"] == "local_acquisition"
+    assert "ACQUISITION.signal_source" not in result
     assert dto.bindings[1].processing_input == processing_input
     assert "SIGNAL.setup" not in project_node_configuration(runtime, "stimulation").settings
 

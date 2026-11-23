@@ -8,7 +8,7 @@ from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
@@ -24,7 +24,8 @@ def runtime(tmp_path, monkeypatch):
 
 
 def draft(runtime, slot, kind, alias, **extra):
-    definition = next(item for item in runtime.profiles.catalog.list(kind) if item.plugin_type == alias)
+    from tests.plugin_configuration_helpers import builtin_selection
+    definition = runtime.profiles.catalog.get(kind, builtin_selection(kind, alias))
     return {"slot": slot, "selection": definition.selection.to_dict(), "parameters": {},
             "configuration_version": definition.configuration_version,
             **({"processing_input": {"schema_version": 2, "outputs": []}} if kind == "decoder" else {}), **extra}

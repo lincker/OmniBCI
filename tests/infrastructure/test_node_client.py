@@ -7,9 +7,9 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from omnibci.application.node_configuration import NodeConfiguration
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.infrastructure.plugins import node_client
+from omnibci.infrastructure import node_client
 
 
 def configuration(*, generation="run-1"):
@@ -221,7 +221,7 @@ def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monk
 
 @pytest.mark.parametrize('failure', [None, 'prepare', 'run'])
 def test_node_reserves_resources_before_construction_and_retains_failed_cleanup(monkeypatch, tmp_path, failure):
-    from omnibci.application.plugin_packages import PluginPackageConflictError
+    from omnibci.application.plugin_management.packages import PluginPackageConflictError
     from tests.infrastructure.test_plugin_store_ownership import claim
     root = tmp_path / 'plugins'
     monkeypatch.setattr(node_client, 'fetch_node_configuration', lambda *args: configuration())
@@ -265,7 +265,7 @@ def test_node_reserves_resources_before_construction_and_retains_failed_cleanup(
 
 
 def test_supervisor_keeps_its_store_when_a_clean_restart_changes_the_environment(monkeypatch, tmp_path):
-    from omnibci.application.plugin_packages import PluginPackageConflictError
+    from omnibci.application.plugin_management.packages import PluginPackageConflictError
     from tests.infrastructure.test_plugin_store_ownership import claim
     root = tmp_path / 'plugins'
     monkeypatch.setattr(node_client, 'fetch_node_configuration', lambda *args: configuration())

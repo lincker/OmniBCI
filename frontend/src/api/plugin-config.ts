@@ -24,6 +24,10 @@ export function selectionKey(selection: PluginSelection) {
   return JSON.stringify([selection.package_id, selection.contribution_id, selection.version]);
 }
 
+export function selectionId(selection: PluginSelection) {
+  return `${selection.package_id}/${selection.contribution_id}@${selection.version}`;
+}
+
 async function request<T>(path: string, method = "GET", data?: unknown): Promise<T> {
   const { response, body } = await requestJson(`/api/v1/config${path}`, {
     method, headers: { Accept: "application/json", "Content-Type": "application/json" },

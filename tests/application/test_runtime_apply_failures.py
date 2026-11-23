@@ -13,14 +13,14 @@ from omnibci.application.configuration.definitions import merge_module_settings
 from omnibci.application.configuration.models import ActivationSet, ModuleActivation
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from tests.plugin_configuration_helpers import accept_profiles
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.queries.acquisition_queries import AcquisitionStatusResult
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.services.command_result_service import CommandTimeoutError
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.shared.events import EventType
 

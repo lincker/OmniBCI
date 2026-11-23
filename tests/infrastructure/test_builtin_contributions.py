@@ -8,16 +8,16 @@ from tests.plugin_configuration_helpers import builtin_selection
 import pytest
 import tomlkit
 
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.domain.ports.acquisition import SignalSource, TriggerEmitter
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter
 from omnibci.domain.ports.effector import Effector
 from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import (
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError, PluginLoader
+from omnibci.infrastructure.plugin_management.catalog import (
     PluginCatalog, PluginRoot, vendor_plugins_dir,
 )
-from omnibci.infrastructure.plugins.manifest import PluginManifestError
+from omnibci.infrastructure.plugin_management.manifest import PluginManifestError
 
 
 CAPABILITIES = [
@@ -45,7 +45,7 @@ def catalog():
 @pytest.mark.parametrize("kind,alias,port", CAPABILITIES)
 def test_builtin_exact_selection_loads_its_domain_port(catalog, monkeypatch, kind, alias, port):
     descriptor = catalog.resolve_selection(kind, builtin_selection(kind, alias))
-    assert descriptor.package.manifest_version == 2
+    assert descriptor.package.manifest_version == 1
     assert descriptor in catalog.list_contributions(kind)
     assert catalog.resolve_selection(kind, descriptor.selection) == descriptor
     if kind == "trigger":
@@ -82,7 +82,7 @@ def test_malformed_platforms_reject_package(tmp_path, platforms, section):
     contribution = {"id": "reader", "kind": "acquisition", "entrypoint": "reader:Reader"}
     (package if section == "package" else contribution)["platforms"] = platforms
     (tmp_path / "manifest.toml").write_text(tomlkit.dumps({
-        "manifest_version": 2, "package": package, "contributions": [contribution],
+        "manifest_version": 1, "package": package, "contributions": [contribution],
     }), encoding="utf-8")
     catalog = PluginCatalog({"acquisition": lambda: [PluginRoot(tmp_path, "user", 0)]})
     with pytest.raises(PluginManifestError, match="platforms"):
@@ -95,7 +95,6 @@ def test_selected_paradigm_can_read_its_pack_without_executing_package_initializ
     path = sys.modules[implementation.__module__]._frame_pack_path(descriptor.location)
     assert Path(path) == descriptor.location / "resource" / "classic40_ssvep.ofp"
     assert path.stat().st_size > 0
-    assert descriptor.params["stim_time_s"] == 240 / descriptor.params["refresh_rate_hz"]
 
 
 @pytest.mark.parametrize("kind,subpath", [

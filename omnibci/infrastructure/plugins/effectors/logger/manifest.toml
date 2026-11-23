@@ -1,6 +1,6 @@
-# OmniBCI Plugin Manifest — schema version 2
+# OmniBCI Plugin Manifest — schema version 1
 
-manifest_version = 2
+manifest_version = 1
 
 [package]
 domain = "actuation"
@@ -12,7 +12,6 @@ publisher = "omnibci"
 [[contributions]]
 id = "default"
 kind = "effector"
-plugin_type = "logger"
 entrypoint = "effector:LogEffector"
 display_name = "Log Effector"
 description = "Hardware-free effector that logs each actuation command — end-to-end smoke testing without a device."

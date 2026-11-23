@@ -10,12 +10,12 @@ import pytest
 
 from omnibci.application.configuration.models import ModuleActivation, EngineSettings
 from omnibci.application.configuration.errors import ProfileRevisionConflict
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.processing_source import processing_input
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput, compile_processing_plan

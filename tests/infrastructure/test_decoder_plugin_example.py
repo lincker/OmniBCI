@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
-from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError, PluginLoader
+from omnibci.infrastructure.plugin_management.installer import PluginPackageInstaller
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot
 from omnibci.sdk import Decoder
 
 

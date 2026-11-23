@@ -13,7 +13,7 @@ from uuid import uuid4
 from omnibci.application.acquisition_preview import PreviewSelection
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.runtime_admission import admitted
-from omnibci.application.processing_source import acquisition_binding_key
+from omnibci.application.processing_source import acquisition_binding_key, binding_selection_id, source_id_for
 from omnibci.application.source_expectations import compare_source_expectations
 
 from omnibci.shared.events import EventType, Event
@@ -249,8 +249,11 @@ class AcquisitionAppService:
     def _device_metadata(self):
         """Show source dimensions only after the connected plugin reports them."""
         if self._raw_metadata is None:
-            source = self._settings.get("ACQUISITION.signal_source") if self._settings is not None else None
-            return str(source) if source is not None else None, None, None
+            binding = self._metadata_binding() if self._metadata_binding is not None else None
+            source = binding_selection_id(binding)
+            if source is None and self._settings is not None:
+                source = source_id_for(self._settings)
+            return source, None, None
         source = self._raw_metadata["source_id"]
         if self._descriptor is None or self._raw_metadata["descriptor"]["provenance"] == "user-declared":
             return source, None, None

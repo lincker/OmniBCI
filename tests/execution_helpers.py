@@ -3,8 +3,8 @@ from copy import deepcopy
 from pathlib import Path
 
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.plugin_execution import fingerprint
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.application.plugin_management.execution import fingerprint
 
 
 def output_bindings():

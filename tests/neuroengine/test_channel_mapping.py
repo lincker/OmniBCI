@@ -21,7 +21,7 @@ from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.signal_processing import pipeline_configuration, signal_configuration
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 
 
 
@@ -43,7 +43,7 @@ def _observation(plan):
 
 
 def _snapshot(plan):
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
     return {
         "CONFIG.module_revisions": {"acquisition": plan.acquisition_revision, "processing": plan.acquisition_revision, "stimulation": plan.acquisition_revision, "actuation": plan.acquisition_revision}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation-one",
         "ACQUISITION.sample_rate": plan.source.sample_rate,
@@ -495,7 +495,7 @@ def test_bundled_pipeline_constructs_with_prepared_sample_rate():
     snapshot = prepared_snapshot({**_snapshot(plan), "PLUGINS.bindings": _bindings()})
     decoder, detector, filters = signal_configuration.load_signal_pipeline(snapshot, plan)
     assert decoder.SAMPLE_COUNT == 250
-    assert detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
+    assert type(detector).__name__ == "DefaultEpochDetector"
     assert filters == []
 
 

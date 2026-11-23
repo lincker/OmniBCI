@@ -101,7 +101,7 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
             profiles.repository.save_module(profiles.propose(module, [
                 binding for binding in bindings if binding["slot"].startswith(f"{module}.")
             ], settings=profiles.default_module_settings(module)), expected_revision=None)
-        assert container.acquisition_service._device_metadata() == ("neuroscan_scan45_reader", None, None)
+        assert container.acquisition_service._device_metadata() == ("OmniBCI.neuroscan_scan45_reader/default@0.1.0", None, None)
         with patch("omnibci.application.services.engine_service.Thread"):
             await container.engine_service.handle_start_engine(StartEngineCommand())
         snapshot = builder.call_args.kwargs["settings_snapshot"]

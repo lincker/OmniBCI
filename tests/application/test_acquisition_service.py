@@ -180,11 +180,16 @@ class TestAcquisitionStatus:
 
     def test_configured_dimensions_are_not_reported_as_source_metadata(self):
         service = AcquisitionAppService(MagicMock(), settings={
-            "ACQUISITION.signal_source": "test", "ACQUISITION.channel_count": 9,
+            "PLUGINS.bindings": [{
+                "slot": "acquisition.source", "kind": "acquisition",
+                "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1.0.0"},
+                "parameters": {},
+            }],
+            "ACQUISITION.channel_count": 9,
             "ACQUISITION.sample_rate": 1000,
         })
         status = service.handle_get_status(GetAcquisitionStatusQuery())
-        assert status.source == "test"
+        assert status.source == "test.source/default@1.0.0"
         assert status.channel_count is None
         assert status.sample_rate is None
         assert status.metadata_available is False
@@ -198,7 +203,7 @@ def _metadata_response(metadata):
 
 def _metadata_service():
     from omnibci.application.events import CommandResult
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
     from omnibci.application.configuration.models import ProfileBinding
     from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
     metadata = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "C3", unit="uV", channel_id="channel-0"),)), native_event="final-row", provenance="device-reported"), source_id="test", connection_id="connection")

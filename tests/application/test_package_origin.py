@@ -10,8 +10,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from omnibci.application.plugin_market import PluginMarketError
-from omnibci.application.plugin_packages import PluginPackageError
+from omnibci.application.plugin_management.market import PluginMarketError
+from omnibci.application.plugin_management.packages import PluginPackageError
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.plugin_packages import router
 from tests.application.test_market_installation_boundary import artifacts, services
@@ -159,7 +159,7 @@ def test_failed_evidence_replacement_keeps_existing_installation_intact(artifact
     store.set_enabled('acme.device', '1.0.0', True)
     path = receipt_path(store)
     original = path.read_bytes()
-    import omnibci.infrastructure.plugins.package_installer as installer_module
+    import omnibci.infrastructure.plugin_management.installer as installer_module
     replace = installer_module.os.replace
     def failing(source, destination):
         if Path(destination) == path:
@@ -198,7 +198,7 @@ def test_http_upload_cannot_assert_market_origin(artifacts):
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router)
-    app.state.plugin_installation_service = installation
+    app.state.plugin_package_service = installation
     with TestClient(app) as client:
         response = client.post('/plugin-packages/install?origin=market', content=archive.read_bytes(),
                                headers={'Content-Type': 'application/zip', 'X-Plugin-Origin': 'market'})

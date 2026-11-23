@@ -8,11 +8,11 @@ import pytest
 
 from omnibci.application.configuration.models import ModuleActivation, PluginProfile, ProfileBinding
 from omnibci.application.configuration.service import ConfigurationService
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.plugin_packages import PackageReference, PluginPackageConflictError, PluginPackageError
-from omnibci.application.services.plugin_package_service import PluginPackageService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.application.plugin_management.packages import PackageReference, PluginPackageConflictError, PluginPackageError
+from omnibci.application.plugin_management.package_service import PluginPackageService
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.infrastructure.test_package_store import package_archive
 

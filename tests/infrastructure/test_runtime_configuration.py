@@ -6,10 +6,10 @@ from unittest.mock import Mock
 import pytest
 
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.infrastructure.plugins.loader import PluginLoadError
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.plugins.preparation import configured_bindings
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.preparation import configured_bindings
+from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
 from omnibci.sdk import SignalSource
 
 

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from omnibci.application.plugin_packages import PluginPackageConflictError
+from omnibci.application.plugin_management.packages import PluginPackageConflictError
 from omnibci.bootstrap import build_container
 from omnibci.presentation.main import create_app
 

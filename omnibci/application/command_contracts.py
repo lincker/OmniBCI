@@ -8,7 +8,7 @@ from omnibci.application.acquisition_preview import PreviewSelection, limits
 from omnibci.application.commands.actuation_commands import validate_actuation_command
 from omnibci.application.commands.stimulation_commands import StartStimTrialCommand
 from omnibci.application.events import CommandRequest, SignalPreparationReceipt, StreamDrainReceipt
-from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.plugin_management.schema import validate_parameters
 from omnibci.application.source_checkpoint import checkpoint_from_receipt
 from omnibci.application.source_metadata import metadata_receipt
 from omnibci.domain.channel_mapping import ResolvedSignalPlan

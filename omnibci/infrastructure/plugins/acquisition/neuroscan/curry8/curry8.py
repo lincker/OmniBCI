@@ -19,7 +19,7 @@ from enum import IntEnum
 
 import numpy as np
 
-from omnibci.domain.ports.acquisition import SignalSource, SourceObservation
+from omnibci.sdk import SignalSource, SourceObservation
 from omnibci.infrastructure.acquisition.metadata import signal_info
 
 logger = logging.getLogger(__name__)
@@ -162,7 +162,6 @@ class Curry8Metadata:
 class Curry8DataReader(SignalSource):
     """Receive uncompressed CURRY 8 data with low-byte stimulus codes in the final row."""
 
-    plugin_type = "neuroscan_curry8_reader"
     trigger_mode = "level"
     resume_mode = "live-current"
 

@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 from uuid import UUID
 
-from omnibci.application import plugin_identity
+from omnibci.application.plugin_management import identity as plugin_identity
 from omnibci.application.configuration.definitions import (
     MODULES, validate_engine_settings, validate_module_settings,
 )

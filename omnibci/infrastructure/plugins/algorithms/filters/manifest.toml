@@ -1,6 +1,6 @@
-# OmniBCI Plugin Manifest — schema version 2
+# OmniBCI Plugin Manifest — schema version 1
 
-manifest_version = 2
+manifest_version = 1
 
 [package]
 domain = "processing"
@@ -12,7 +12,6 @@ api_version = "1"
 [[contributions]]
 id = "default"
 kind = "filter"
-plugin_type = "BASELINE_CORRECTION"
 entrypoint = "baseline_correction:BaselineCorrection"
 display_name = "Baseline Correction"
 

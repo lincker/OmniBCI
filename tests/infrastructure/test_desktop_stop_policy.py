@@ -7,7 +7,7 @@ from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.process_lifecycle import ChildProcessState, StartupReport
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from omnibci.application.services.engine_service import NeuroEngineService
 from tests.infrastructure.test_child_runtime_snapshot import _snapshot
 

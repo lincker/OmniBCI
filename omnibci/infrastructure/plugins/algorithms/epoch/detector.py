@@ -6,12 +6,10 @@ from pathlib import Path
 from collections.abc import Mapping
 import numpy as np
 
-from omnibci.domain.signal_info import SignalInfo
-from omnibci.domain.ports.algorithm import EpochDetector, EpochBoundary
+from omnibci.sdk import EpochBoundary, EpochDetector, SignalInfo
 
 
 class DefaultEpochDetector(EpochDetector):
-    plugin_type = 'DEFAULT_EPOCH_DETECTOR'
     def __init__(
         self, *, parameters: Mapping[str, object], resource_root: Path,
         input_signal: SignalInfo,

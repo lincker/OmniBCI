@@ -10,15 +10,15 @@ from textwrap import dedent
 import pytest
 from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 
 from omnibci.domain.ports.effector import Effector
-from omnibci.infrastructure.plugins.descriptors import PluginEntrypoint
-from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import (
+from omnibci.infrastructure.plugin_management.descriptors import PluginEntrypoint
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError, PluginLoader
+from omnibci.infrastructure.plugin_management.catalog import (
     AmbiguousPluginError, MissingEntrypointError, PluginRoot, PluginCatalog,
 )
-from omnibci.infrastructure.plugins.manifest import PluginManifestError
+from omnibci.infrastructure.plugin_management.manifest import PluginManifestError
 
 
 def _write_effector_manifest(
@@ -26,20 +26,19 @@ def _write_effector_manifest(
     directory: str,
     *,
     plugin_id: str,
-    plugin_type: str,
     publisher: str = "acme",
     entrypoint: str | None = "driver:TestEffector",
 ) -> Path:
     package_dir = root / directory
     package_dir.mkdir(parents=True)
-    contribution = {"id": "default", "kind": "effector", "plugin_type": plugin_type,
+    contribution = {"id": "default", "kind": "effector",
                     "display_name": "Test Effector"}
     for name, contents in output_payload_files({"contributions": [contribution]}).items():
         (package_dir / name).write_text(contents)
     if entrypoint:
         contribution["entrypoint"] = entrypoint
     (package_dir / "manifest.toml").write_text(tomlkit.dumps({
-        "manifest_version": 2,
+        "manifest_version": 1,
         "package": {"id": plugin_id, "publisher": publisher, "version": "1.0.0",
                     "domain": "actuation", "api_version": "1"},
         "contributions": [contribution],
@@ -72,7 +71,7 @@ def test_builtin_logger_descriptor_is_directly_loadable(monkeypatch, tmp_path):
     instance = PluginLoader.instantiate(descriptor, Effector, parameters={})
 
     assert type(instance).__name__ == "LogEffector"
-    assert instance.plugin_type == "logger"
+    assert descriptor.selection == PluginSelection("omnibci.logger", "default", "0.1.0")
 
 
 @pytest.mark.parametrize("directory", ["external", "vendor/series/external"])
@@ -84,7 +83,6 @@ def test_discovery_does_not_execute_plugin_and_source_comes_from_root(
         root,
         directory,
         plugin_id="external",
-        plugin_type="external",
     )
     marker = tmp_path / "executed"
     (package_dir / "driver.py").write_text(
@@ -104,10 +102,10 @@ def test_discovery_orders_mixed_depth_packages_and_skips_dunder_groups(tmp_path)
     directories = ["flat", "vendor/reader", "vendor/series/deep"]
     for index, directory in enumerate(reversed(directories)):
         _write_effector_manifest(
-            root, directory, plugin_id=str(index), plugin_type=str(index)
+            root, directory, plugin_id=str(index),
         )
     _write_effector_manifest(
-        root, "vendor/__cache__/hidden", plugin_id="hidden", plugin_type="hidden"
+        root, "vendor/__cache__/hidden", plugin_id="hidden",
     )
 
     descriptors = _catalog_for(PluginRoot(root, "builtin", 100)).scan("effector")
@@ -125,10 +123,10 @@ def test_discovery_orders_mixed_depth_packages_and_skips_dunder_groups(tmp_path)
 def test_discovery_stops_at_package_boundary(tmp_path, caplog, manifest_kind):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
-        root, "vendor/package", plugin_id="parent", plugin_type="parent"
+        root, "vendor/package", plugin_id="parent",
     )
     _write_effector_manifest(
-        package_dir, "examples/child", plugin_id="child", plugin_type="child"
+        package_dir, "examples/child", plugin_id="child",
     )
     manifest = package_dir / "manifest.toml"
     if manifest_kind == "malformed":
@@ -149,7 +147,7 @@ def test_discovery_stops_at_package_boundary(tmp_path, caplog, manifest_kind):
     descriptors = _catalog_for(PluginRoot(root, "user", 0)).scan("effector")
 
     if manifest_kind == "valid":
-        assert [item.plugin_type for item in descriptors] == ["parent"]
+        assert [item.name for item in descriptors] == ["parent"]
     else:
         assert descriptors == ()
         assert "Skipping invalid plugin" in caplog.text
@@ -159,11 +157,11 @@ def test_discovery_stops_at_package_boundary(tmp_path, caplog, manifest_kind):
 def test_discovery_does_not_follow_symlinked_groups_or_cycles(tmp_path, caplog):
     root = tmp_path / "effectors"
     _write_effector_manifest(
-        root, "working", plugin_id="working", plugin_type="working"
+        root, "working", plugin_id="working",
     )
     outside = tmp_path / "outside"
     _write_effector_manifest(
-        outside, "driver", plugin_id="outside", plugin_type="outside"
+        outside, "driver", plugin_id="outside",
     )
     group = root / "group"
     group.mkdir()
@@ -175,7 +173,7 @@ def test_discovery_does_not_follow_symlinked_groups_or_cycles(tmp_path, caplog):
 
     descriptors = _catalog_for(PluginRoot(root, "user", 0)).scan("effector")
 
-    assert [item.plugin_type for item in descriptors] == ["working"]
+    assert [item.name for item in descriptors] == ["working"]
     assert "Skipping symlink" in caplog.text
 
 
@@ -184,7 +182,7 @@ def test_unreadable_group_does_not_hide_other_plugins(tmp_path, monkeypatch, cap
     blocked = root / "blocked"
     blocked.mkdir(parents=True)
     _write_effector_manifest(
-        root, "vendor/working", plugin_id="working", plugin_type="working"
+        root, "vendor/working", plugin_id="working",
     )
     original_iterdir = Path.iterdir
 
@@ -197,7 +195,7 @@ def test_unreadable_group_does_not_hide_other_plugins(tmp_path, monkeypatch, cap
 
     descriptors = _catalog_for(PluginRoot(root, "user", 0)).scan("effector")
 
-    assert [item.plugin_type for item in descriptors] == ["working"]
+    assert [item.name for item in descriptors] == ["working"]
     assert str(blocked) in caplog.text
     assert "Access denied" in caplog.text
 
@@ -205,13 +203,13 @@ def test_unreadable_group_does_not_hide_other_plugins(tmp_path, monkeypatch, cap
 @pytest.mark.parametrize("invalid", ["controls", "entrypoint"])
 def test_malformed_nested_manifest_is_isolated(tmp_path, invalid):
     root = tmp_path / "effectors"
-    package_dir = _write_effector_manifest(root, "bad", plugin_id="bad", plugin_type="bad")
+    package_dir = _write_effector_manifest(root, "bad", plugin_id="bad")
     document = tomlkit.loads((package_dir / "manifest.toml").read_text())
     document["contributions"][0][invalid] = {"knob": 1} if invalid == "controls" else "../outside:Class"
     (package_dir / "manifest.toml").write_text(tomlkit.dumps(document))
-    _write_effector_manifest(root, "good", plugin_id="good", plugin_type="good")
+    _write_effector_manifest(root, "good", plugin_id="good")
     catalog = _catalog_for(PluginRoot(root, "user", 0))
-    assert [item.plugin_type for item in catalog.scan("effector")] == ["good"]
+    assert [item.name for item in catalog.scan("effector")] == ["good"]
     with pytest.raises(PluginManifestError, match=invalid):
         catalog.resolve_selection("effector", PluginSelection("acme.bad", "default", "1.0.0"))
 
@@ -222,7 +220,7 @@ def test_selected_entrypoint_supports_relative_imports_without_sys_path_pollutio
 ):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
-        root, directory, plugin_id="relative", plugin_type="relative"
+        root, directory, plugin_id="relative",
     )
     (package_dir.parent / "__init__.py").write_text(
         "raise AssertionError('Grouping directory must not be imported')\n",
@@ -283,17 +281,16 @@ def test_selected_entrypoint_supports_relative_imports_without_sys_path_pollutio
 def test_selected_entrypoint_executes_validated_source_path(tmp_path):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
-        root, "exact-source", plugin_id="exact-source", plugin_type="exact_source"
+        root, "exact-source", plugin_id="exact-source",
     )
     (package_dir / "driver.py").write_text(
         dedent(
             """
-            from omnibci.domain.ports.effector import Effector
+            from omnibci.sdk import Effector
 
             class TestEffector(Effector):
-                def __init__(self, *, parameters, resource_root): pass
-                plugin_type = "exact_source"
                 origin = "validated-python-source"
+                def __init__(self, *, parameters, resource_root): pass
                 def setup(self): pass
                 def execute(self, command): pass
                 def quiesce(self): pass
@@ -323,7 +320,6 @@ def test_nested_entrypoint_supports_parent_relative_import(tmp_path):
         root,
         "nested",
         plugin_id="nested",
-        plugin_type="nested",
         entrypoint="drivers.robot:NestedEffector",
     )
     (package_dir / "protocol.py").write_text("ORIGIN = 'parent'\n", encoding="utf-8")
@@ -332,11 +328,10 @@ def test_nested_entrypoint_supports_parent_relative_import(tmp_path):
     (drivers / "robot.py").write_text(
         dedent(
             """
-            from omnibci.domain.ports.effector import Effector
+            from omnibci.sdk import Effector
             from ..protocol import ORIGIN
 
             class NestedEffector(Effector):
-                plugin_type = "nested"
                 def __init__(self, *, parameters, resource_root): self.origin = ORIGIN
                 def setup(self): pass
                 def execute(self, command): pass
@@ -358,7 +353,7 @@ def test_nested_entrypoint_supports_parent_relative_import(tmp_path):
 def test_loader_rejects_ambiguous_module_and_package(tmp_path):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
-        root, "ambiguous", plugin_id="ambiguous", plugin_type="ambiguous"
+        root, "ambiguous", plugin_id="ambiguous",
     )
     (package_dir / "driver.py").write_text("class TestEffector: pass\n", encoding="utf-8")
     (package_dir / "driver").mkdir()
@@ -374,7 +369,7 @@ def test_loader_rejects_ambiguous_module_and_package(tmp_path):
 def test_loader_rejects_symlink_anywhere_in_plugin_tree(tmp_path):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
-        root, "symlinked", plugin_id="symlinked", plugin_type="symlinked"
+        root, "symlinked", plugin_id="symlinked",
     )
     outside = tmp_path / "outside.py"
     outside.write_text("VALUE = 1\n", encoding="utf-8")
@@ -397,18 +392,16 @@ def test_removed_registration_api_is_rejected(tmp_path):
         root,
         "decorated",
         plugin_id="decorated",
-        plugin_type="decorated_override",
     )
     (package_dir / "driver.py").write_text(
         dedent(
             """
-            from omnibci.domain.ports.effector import Effector
+            from omnibci.sdk import Effector
             from omnibci.infrastructure.plugins.registry import register_plugin
 
             @register_plugin(Effector)
             class TestEffector(Effector):
                 def __init__(self, *, parameters, resource_root): pass
-                plugin_type = "decorated_override"
                 def setup(self): pass
                 def execute(self, command): pass
                 def quiesce(self): pass
@@ -429,7 +422,7 @@ def test_removed_registration_api_is_rejected(tmp_path):
 def test_system_exit_cleans_synthetic_modules(tmp_path):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
-        root, "exit", plugin_id="exit", plugin_type="exit"
+        root, "exit", plugin_id="exit",
     )
     (package_dir / "driver.py").write_text("raise SystemExit(7)\n", encoding="utf-8")
     descriptor = _catalog_for(PluginRoot(root, "user", 0)).resolve_selection(
@@ -448,16 +441,14 @@ def test_system_exit_cleans_synthetic_modules(tmp_path):
 def test_constructor_failure_retains_successfully_loaded_code(tmp_path):
     root = tmp_path / "effectors"
     package_dir = _write_effector_manifest(
-        root, "constructor", plugin_id="constructor", plugin_type="constructor"
+        root, "constructor", plugin_id="constructor",
     )
     (package_dir / "driver.py").write_text(
         dedent(
             """
-            from omnibci.domain.ports.effector import Effector
+            from omnibci.sdk import Effector
 
             class TestEffector(Effector):
-                def __init__(self, *, parameters, resource_root): pass
-                plugin_type = "constructor"
                 def __init__(self, *, parameters, resource_root): raise RuntimeError("constructor failed")
                 def setup(self): pass
                 def execute(self, command): pass

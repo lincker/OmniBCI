@@ -22,16 +22,19 @@ from omnibci.shared.events import Event, EventType
 def signal_service(tmp_path):
     metadata = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=500, channels=(
         ChannelDescriptor(0, "O1", unit="uV", channel_id="channel-0"), ChannelDescriptor(1, "M1", unit="uV", channel_id="channel-1"),
-    )), native_event="final-row", provenance="protocol-defined"), source_id="source", connection_id="connection")
+    )), native_event="final-row", provenance="protocol-defined"), source_id="test.source/default@1", connection_id="connection")
     setup = ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)).to_dict()
     snapshot = { "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "p" * 64},
                 "CONFIG.engine_revision": "s" * 64,
                 "CONFIG.generation": "generation", "ACQUISITION.sample_rate": 500,
-                "ACQUISITION.signal_source": "source", "PLUGINS.bindings": [
+                "PLUGINS.bindings": [
                     {"slot": "processing.decoder", "processing_input": setup,
                      "selection": {"package_id": "test.decoder", "contribution_id": "default", "version": "1"}},
                     {"slot": "processing.epoch_detector", "selection": {
-                        "package_id": "test.detector", "contribution_id": "default", "version": "1"}}]}
+                        "package_id": "test.detector", "contribution_id": "default", "version": "1"}},
+                    {"slot": "acquisition.source", "kind": "acquisition",
+                     "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1"},
+                     "parameters": {"sample_rate": 500}}]}
     engine = SimpleNamespace(admission=RuntimeAdmission(), is_engine_ready=True, applied_snapshot=snapshot,
                              is_module_running=lambda module: module in ("acquisition", "processing"))
     profiles = SimpleNamespace(selected_configuration=lambda modules: ActivationSet({}, None),
@@ -168,7 +171,7 @@ def test_processing_input_cannot_redeclare_acquisition_metadata(signal_service, 
 
 def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service):
     from uuid import uuid4
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
     from omnibci.application.configuration.models import PluginProfile, ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
     service, _, _, _ = signal_service
@@ -180,9 +183,14 @@ def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service
     accepted = ActivationSet({"processing": ModuleActivation("processing", {}, (binding,))}, None)
     service.profiles.selected_configuration = lambda modules: accepted
     service.profiles.get_profile = lambda profile_id: profile
-    service.profiles.materialize = lambda activation: {        "PLUGINS.bindings": [binding.to_dict()], "ACQUISITION.signal_source": "source"}
-    service.engine.applied_snapshot["PLUGINS.bindings"] = [binding.to_dict()]
-    service.engine.applied_snapshot["PLUGINS.bindings"][0]["processing_input"] = ProcessingInput(outputs=(ChannelBinding('M1', 'channel-1'),)).to_dict()
+    source_binding = {
+        "slot": "acquisition.source", "kind": "acquisition",
+        "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1"},
+        "parameters": {},
+    }
+    service.profiles.materialize = lambda activation: {"PLUGINS.bindings": [source_binding, binding.to_dict()]}
+    service.engine.applied_snapshot["PLUGINS.bindings"] = [source_binding, binding.to_dict()]
+    service.engine.applied_snapshot["PLUGINS.bindings"][1]["processing_input"] = ProcessingInput(outputs=(ChannelBinding('M1', 'channel-1'),)).to_dict()
     profile = replace(profile, processing_input=ProcessingInput(outputs=(ChannelBinding('M1', 'channel-1'),)))
     result = service.read()
     assert result["selected_decoder_profile_id"] == profile.profile_id
@@ -195,7 +203,7 @@ def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service
 def modern_binding(service, metadata, *, profile_id="source-a", outputs=("O1",)):
     from omnibci.domain.channel_mapping import ProcessingInput
     source = {"slot": "acquisition.source", "profile_id": profile_id,
-              "profile_revision": 1, "selection": {"plugin_id": "test.source"},
+              "profile_revision": 1, "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1"},
               "parameters": {"sample_rate": 500, "channel_count": 3}}
     snapshot = {**service.engine.applied_snapshot,
                 "PLUGINS.bindings": [source, {"slot": "processing.decoder",
@@ -402,7 +410,7 @@ def test_invalid_decoder_input_does_not_hide_connected_source(signal_service, va
     service.profiles.materialize = lambda _: deepcopy(service.engine.applied_snapshot)
 
     context = service.read()
-    assert context["selected_source_id"] == "source"
+    assert context["selected_source_id"] == "test.source/default@1"
     assert context["acquisition_descriptor"] == deepcopy(metadata)
     assert context["processing_input"] is None
     assert context["accepted_input"] is None
@@ -424,9 +432,7 @@ def test_reported_source_expectations_gate_prepare_without_hiding_actual_info(si
     service, metadata, _, calls = signal_service
     source = {**metadata, 'provenance': "device-reported"}
     service.acquisition.cached_descriptor = deepcopy(source)
-    service.engine.applied_snapshot["PLUGINS.bindings"].append({
-        "slot": "acquisition.source", "parameters": parameters,
-    })
+    service.engine.applied_snapshot["PLUGINS.bindings"][-1]["parameters"] = parameters
     assert service.read()["acquisition_descriptor"] == deepcopy(source)
     with pytest.raises(ConfigProfileValidationError, match=error):
         service.prepare()
@@ -439,9 +445,7 @@ def test_prepare_uses_observed_metadata_when_expectations_are_optional(signal_se
     service, metadata, _, calls = signal_service
     source = {**metadata, 'provenance': provenance}
     service.acquisition.cached_descriptor = deepcopy(source)
-    service.engine.applied_snapshot["PLUGINS.bindings"].append({
-        "slot": "acquisition.source", "parameters": parameters,
-    })
+    service.engine.applied_snapshot["PLUGINS.bindings"][-1]["parameters"] = parameters
     service.prepare()
     assert calls[0][1]["plan"]["source"] == descriptor_layout(source).to_dict()
     assert service.read()["readiness"]["ready"]

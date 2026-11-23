@@ -11,7 +11,7 @@ from enum import IntEnum
 
 import numpy as np
 
-from omnibci.domain.ports.acquisition import SignalSource, SourceObservation, TriggerEmitter
+from omnibci.sdk import SignalSource, SourceObservation, TriggerEmitter
 from omnibci.infrastructure.acquisition.metadata import signal_info
 
 
@@ -115,7 +115,6 @@ scan45_message_manager = Scan45Message()
 
 
 class Scan45DataReader(SignalSource):
-    plugin_type = 'neuroscan_scan45_reader'
     trigger_mode = 'level'
     resume_mode = 'live-current'
     def __init__(
@@ -266,7 +265,6 @@ class Scan45DataReader(SignalSource):
 
 
 class Scan45Trigger(TriggerEmitter):
-    plugin_type = 'neuroscan_scan45_trigger'
 
     def __init__(
         self, *, parameters: Mapping[str, object], resource_root: Path,

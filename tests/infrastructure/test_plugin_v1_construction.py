@@ -9,11 +9,11 @@ import pytest
 
 from omnibci import sdk
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.plugin_management.schema import validate_parameters
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
-from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+from omnibci.infrastructure.plugin_management.loader import PluginLoader, PluginLoadError
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
 from tests.infrastructure.test_builtin_contributions import CAPABILITIES
 from tests.plugin_configuration_helpers import builtin_selection, prepared_snapshot
 

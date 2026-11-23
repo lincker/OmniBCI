@@ -2095,8 +2095,6 @@ export interface components {
              * @enum {string}
              */
             kind: "acquisition" | "decoder" | "epoch_detector" | "filter" | "paradigm" | "trigger" | "effector";
-            /** Plugin Type */
-            plugin_type: string;
             /** Label */
             label: string;
             /** Description */

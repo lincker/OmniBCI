@@ -13,7 +13,7 @@ import time
 
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.async_lifecycle import await_owned
-from omnibci.application.plugin_execution import PluginExecutionReceipt
+from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 from omnibci.infrastructure.ipc.contracts import (
     InvalidEventBody,

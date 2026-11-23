@@ -23,7 +23,8 @@ const selection = (id) => ({ package_id: `example.${id}`, contribution_id: "main
 const source = { slot: "acquisition.source", kind: "acquisition", selection: selection("source"), parameters: {} };
 const decoder = { slot: "processing.decoder", kind: "decoder", selection: selection("decoder"), parameters: {} };
 const detector = { slot: "processing.epoch_detector", kind: "epoch_detector", selection: selection("detector"), parameters: {} };
-const paradigm = { kind: "paradigm", selection: selection("visual"), plugin_type: "visual", label: "Visual trials", available: true, controls: {} };
+const paradigm = { kind: "paradigm", selection: selection("visual"), label: "Visual trials", available: true, controls: {} };
+const paradigmId = `${paradigm.selection.package_id}/${paradigm.selection.contribution_id}@${paradigm.selection.version}`;
 const sourceOnly = { revision: "source-only", bindings: [source] };
 const complete = { revision: "complete", bindings: [source, decoder, detector,
   { slot: "processing.filter.first", kind: "filter", selection: selection("filter"), parameters: {} },
@@ -376,7 +377,7 @@ test("retrying invalid trial controls keeps trial submission blocked and stop co
   const invalidParadigm = { ...paradigm, controls: { invalid: { field: "unsupported", type: "int" } } };
   await withScenario({ activation: () => ++requests <= 4 ? Promise.resolve(complete) : pending.promise,
     acceptedRevision: complete.revision, running: true, sourceStatus: { connected: true, streaming: true },
-    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type },
+    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigmId },
     catalog: async () => [invalidParadigm] }, async ({ harness, calls }) => {
     await harness.settle();
     assert.match(alerts(harness.tree), /Unsupported trial control/);
@@ -476,7 +477,7 @@ for (const [label, actionName, streaming] of [["Disconnect", "disconnect", false
       processing: [decoder, detector], stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: {} }] });
     await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, current, running: true,
       sourceStatus: { connected: true, streaming },
-      stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type } },
+      stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigmId } },
     async ({ harness, calls }) => {
       await harness.settle();
       const action = button(harness.tree, label);
@@ -492,7 +493,7 @@ test("Trigger trial uses the active paradigm without applying pending plugin edi
   const current = currentConfiguration({ stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection,
     parameters: { frequency: 12 } }] });
   await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, current, running: true,
-    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type } },
+    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigmId } },
   async ({ harness, calls }) => {
     await harness.settle();
     assert.equal(button(harness.tree, "Trigger trial").props.disabled, false);
@@ -544,7 +545,7 @@ for (const module of ["processing", "actuation"]) test(`Stop ${module} leaves th
     actuation: [{ slot: "actuation.effector", selection: selection("effector"), parameters: {} }] });
   await withScenario({ activation: async () => complete, acceptedRevision: complete.revision, current, running: true,
     processingRunning: true, actuationRunning: true, sourceStatus: { connected: true, streaming: true },
-    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type } }, async ({ harness, calls }) => {
+    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigmId } }, async ({ harness, calls }) => {
     await harness.settle();
     await button(harness.tree, `Stop ${module}`).props.onClick(); await harness.settle();
     assert.deepEqual(calls, [["moduleStop", module]]);
@@ -555,7 +556,7 @@ test("unrelated module revisions preserve edited trial controls", async () => {
   let accepted = complete;
   const controls = { trials: { field: "n_trials", type: "int", default: 1 }, cue: { field: "trial_params", payload_key: "event_id", type: "int", default_sequence: "1-3", min: 1, max: 10 } };
   await withScenario({ activation: async () => accepted, acceptedRevision: complete.revision, running: true,
-    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type },
+    stimulationStatus: { active: true, process_alive: true, engine_connected: true, paradigm: paradigmId },
     catalog: async () => [{ ...paradigm, controls }] }, async ({ harness, serverStatus }) => {
     await harness.settle();
     const input = () => elements(harness.tree).find((item) => item.type === "input" && item.props["aria-describedby"] === "trial-sequence-help");

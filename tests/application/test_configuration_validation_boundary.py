@@ -8,7 +8,7 @@ import pytest
 from omnibci.application.configuration.errors import PluginProfileValidationError
 from omnibci.application.configuration.models import PluginProfile
 from omnibci.application.configuration.service import ConfigurationService
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.domain.channel_mapping import ProcessingInput
 
 

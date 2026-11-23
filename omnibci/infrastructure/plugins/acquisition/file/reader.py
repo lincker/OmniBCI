@@ -9,11 +9,10 @@ from copy import deepcopy
 from pathlib import Path
 
 from omnibci.infrastructure.config_paths import resolve_config_path
-from omnibci.domain.ports.acquisition import SignalSource, SourceObservation, SourceCheckpoint
+from omnibci.sdk import SignalSource, SourceCheckpoint, SourceObservation
 
 
 class FileReader(SignalSource):
-    plugin_type = 'file_reader'
     trigger_mode = 'events'
     resume_mode = 'checkpoint'
 

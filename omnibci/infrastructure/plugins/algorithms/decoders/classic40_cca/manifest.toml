@@ -1,6 +1,6 @@
-# OmniBCI Plugin Manifest — schema version 2
+# OmniBCI Plugin Manifest — schema version 1
 
-manifest_version = 2
+manifest_version = 1
 
 [package]
 domain = "processing"
@@ -13,7 +13,6 @@ publisher = "OmniBCI"
 # Version 2 requires prepared input metadata and enforces channel_requirements.
 id = "default"
 kind = "decoder"
-plugin_type = "THUBCI_SSVEP_classic40CCA"
 entrypoint = "classic_40_cca:Classic40CCA"
 display_name = "Classic 40 CCA"
 description = "40-target SSVEP canonical correlation decoder."

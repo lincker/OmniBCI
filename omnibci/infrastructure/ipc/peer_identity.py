@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import re
 
-from omnibci.application.plugin_execution import PluginExecutionReceipt
+from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 
 
 @dataclass(frozen=True)

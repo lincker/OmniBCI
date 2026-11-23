@@ -1,9 +1,9 @@
 """Static v1 declarations select role ownership without package-domain dispatch."""
 import pytest
 
-from omnibci.infrastructure.plugins.manifest import parse_manifest, PluginManifestError
-from omnibci.infrastructure.plugins.package_installer import PackageInstallError
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
+from omnibci.infrastructure.plugin_management.manifest import parse_manifest, PluginManifestError
+from omnibci.infrastructure.plugin_management.installer import PackageInstallError
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot
 from tests.infrastructure.test_package_installer import _archive, _installer, _manifest
 from tests.infrastructure.test_plugin_contributions import _selection
 

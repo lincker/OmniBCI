@@ -2,8 +2,8 @@
 from tests.plugin_configuration_helpers import builtin_selection
 from tests.execution_helpers import synthetic_execution_snapshot
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 
 import asyncio
 import multiprocessing as mp
@@ -232,7 +232,7 @@ def prepared_input_decoder(tmp_path, monkeypatch):
     marker = tmp_path / "constructed"
     package.mkdir(parents=True)
     (package / "manifest.toml").write_text(dedent('''
-        manifest_version = 2
+        manifest_version = 1
         [package]
         id = "readiness"
         publisher = "test"
@@ -242,7 +242,6 @@ domain = "processing"
         [[contributions]]
         id = "default"
         kind = "decoder"
-        plugin_type = "readiness_decoder"
         entrypoint = "decoder:ReadinessDecoder"
         channel_requirements = {min_count = 1}
         [contributions.configuration]
@@ -278,16 +277,15 @@ domain = "processing"
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_dir))
     from tests.plugin_configuration_helpers import install_package_root
     install_package_root(package)
-    return "readiness_decoder", marker
+    return "test.readiness", marker
 
 
 def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
     from omnibci.application.configuration.models import ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
-    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+    from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
     from tests.plugin_configuration_helpers import prepared_snapshot
-    snapshot = {"CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "a" * 64, "stimulation": "a" * 64, "actuation": "a" * 64}, "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "g", "CONFIG.operation_id": "prepare-1", "ACQUISITION.sample_rate": 250,
-                "ACQUISITION.signal_source": "file_reader"}
+    snapshot = {"CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "a" * 64, "stimulation": "a" * 64, "actuation": "a" * 64}, "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "g", "CONFIG.operation_id": "prepare-1", "ACQUISITION.sample_rate": 250}
     bindings = []
     for slot, kind, alias, parameters in (
         ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_count": 10,

@@ -9520,10 +9520,6 @@
             ],
             "title": "Kind"
           },
-          "plugin_type": {
-            "type": "string",
-            "title": "Plugin Type"
-          },
           "label": {
             "type": "string",
             "title": "Label"
@@ -9590,7 +9586,6 @@
           "domain",
           "selection",
           "kind",
-          "plugin_type",
           "label",
           "description",
           "schema",

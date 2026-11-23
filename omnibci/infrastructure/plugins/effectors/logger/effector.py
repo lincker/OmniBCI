@@ -9,13 +9,12 @@ from pathlib import Path
 import logging
 from typing import Mapping
 
-from omnibci.domain.ports.effector import Effector
+from omnibci.sdk import Effector
 
 logger = logging.getLogger(__name__)
 
 
 class LogEffector(Effector):
-    plugin_type = "logger"
 
     def __init__(
         self, *, parameters: Mapping[str, object], resource_root: Path,

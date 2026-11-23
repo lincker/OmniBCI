@@ -17,11 +17,11 @@ from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.bootstrap import _acquisition_binding, assemble, register_engine_listeners
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.application.configuration.accepted import accepted_runtime_settings
 from tests.plugin_configuration_helpers import accept_profiles, builtin_selection, install_package_root, prepare_runtime_plugins
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
-from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
+from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHistory
 
 
 SOURCE = '''
@@ -72,7 +72,7 @@ def configured_profiles(tmp_path, monkeypatch, *, actuation_port=8001):
     plugin = tmp_path / 'source-replay'
     plugin.mkdir(parents=True)
     monkeypatch.setenv('OMNIBCI_PLUGIN_DIR', str(root))
-    (plugin / 'manifest.toml').write_text('''manifest_version=2
+    (plugin / 'manifest.toml').write_text('''manifest_version=1
 [package]
 id="replay"
 domain="acquisition"
@@ -82,7 +82,6 @@ api_version="1"
 [[contributions]]
 id="default"
 kind="acquisition"
-plugin_type="test_replay"
 entrypoint="source:Replay"
 [contributions.configuration]
 schema="config.schema.json"
@@ -103,7 +102,7 @@ schema_version=1
     profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / 'profiles'),
                                     CatalogConfigurationAdapter())
     accepted = accept_profiles(profiles, [
-        ('acquisition.source', 'acquisition', 'test_replay', {}),
+        ('acquisition.source', 'acquisition', 'test.replay', {}),
         ('processing.decoder', 'decoder', 'THUBCI_SSVEP_classic40CCA', {}),
         ('processing.epoch_detector', 'epoch_detector', 'DEFAULT_EPOCH_DETECTOR', {}),
         ('stimulation.paradigm', 'paradigm', 'STIMULATION_THUBCI_SSVEP_classic40', {}),

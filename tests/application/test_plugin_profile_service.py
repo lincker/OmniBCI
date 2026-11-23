@@ -7,18 +7,18 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ProfileBinding, EngineSettings
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
-from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.application.plugin_packages import PluginPackageConflictError, PluginPackageError
+from omnibci.application.plugin_management.schema import PluginSchemaError
+from omnibci.application.plugin_management.packages import PluginPackageConflictError, PluginPackageError
 from omnibci.application.configuration.service import ConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from tests.infrastructure.test_package_store import package_archive
 from tests.plugin_configuration_helpers import builtin_selection
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
+from omnibci.application.configuration.accepted import accepted_runtime_settings
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 
@@ -31,7 +31,7 @@ def service(tmp_path, monkeypatch):
 
 
 def definition(service, kind, alias):
-    return next(item for item in service.catalog.list(kind) if item.plugin_type == alias)
+    return service.catalog.get(kind, builtin_selection(kind, alias))
 
 
 def create_source(service, name="Replay", **parameters):
@@ -232,7 +232,7 @@ def external_source_profile(service, monkeypatch, parameters):
     base = definition(service, "acquisition", "file_reader")
     types = {int: "integer", float: "number", bool: "boolean", str: "string"}
     external = replace(base, selection=PluginSelection("test.external-source", "source", "1.0.0"),
-        plugin_type="external_source", schema={"type": "object", "additionalProperties": False,
+        schema={"type": "object", "additionalProperties": False,
         "properties": {key: {"type": types[type(value)]} for key, value in parameters.items()}})
     original_get = service.catalog.get
     monkeypatch.setattr(service.catalog, "get", lambda kind, selection:
