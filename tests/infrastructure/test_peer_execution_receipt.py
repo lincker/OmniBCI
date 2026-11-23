@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from omnibci.application.plugin_execution import PluginExecutionReceipt
+from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 from omnibci.infrastructure.ipc.contracts import encode_event
 from omnibci.infrastructure.ipc.network import NetworkServer, read_event_frame
 from omnibci.infrastructure.ipc.peer_identity import PeerIdentity

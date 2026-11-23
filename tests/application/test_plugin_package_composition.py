@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from omnibci.application.configuration.errors import PluginProfileStorageError
-from omnibci.application.plugin_packages import PluginPackageConflictError
+from omnibci.application.plugin_management.packages import PluginPackageConflictError
 from omnibci.bootstrap import build_container
 from omnibci.presentation.main import create_app
 from tests.infrastructure.test_market_repository import _NOW, _URL, _DOWNLOAD, _Opener, _index, _signed
@@ -47,7 +47,6 @@ async def test_actual_container_shares_package_references_without_runtime_gate(t
     container = await build_container()
     try:
         packages = container.plugin_package_service
-        assert container.plugin_installation_service is packages
         assert not hasattr(packages, "profiles")
         assert container.configuration_service.change_guard() is container.package_owner
         assert packages.store.plugin_dir == tmp_path / "plugins"
@@ -128,7 +127,7 @@ async def test_operator_configured_market_uses_same_installer_and_admission(monk
 @pytest.mark.parametrize('role', ['stimulation', 'actuation'])
 @pytest.mark.parametrize('action', ['install', 'enable', 'remove'])
 async def test_node_resources_block_package_mutation_without_blocking_configuration(tmp_path, role, action):
-    from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
+    from omnibci.infrastructure.plugin_management.ownership import PluginStoreOwner
     container = await build_container()
     packages = container.plugin_package_service
     installed = packages.install(package_archive(tmp_path)).package
@@ -154,7 +153,6 @@ def test_real_lifespan_routes_install_enable_save_references_and_remove(tmp_path
     app = create_app()
     with TestClient(app) as client:
         container = app.state.container
-        assert app.state.plugin_installation_service is container.plugin_package_service
         assert app.state.plugin_package_service is container.plugin_package_service
         assert app.state.plugin_market_service is None
         assert client.get("/api/v1/market/catalog").status_code == 503

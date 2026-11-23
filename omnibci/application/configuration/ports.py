@@ -5,9 +5,9 @@ from omnibci.application.configuration.models import (
     ActivationSet, EngineSettings, ModuleActivation, ModuleActivationRevision,
     PluginProfile, ProfileRevision,
 )
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.plugin_packages import PackageVersion
-from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.application.plugin_management.packages import PackageVersion
+from omnibci.application.plugin_management.catalog import PluginConfiguration
 
 
 class ProfileVersionCatalog(Protocol):

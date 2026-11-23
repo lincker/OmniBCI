@@ -7,8 +7,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from omnibci.application.configuration.errors import PluginProfileStorageError, PluginProfileValidationError, ProfileRevisionConflict
-from omnibci.application.services.plugin_installation_service import PluginInstallationService
-from omnibci.infrastructure.plugins.package_store import DirectoryPluginPackageStore
+from omnibci.application.plugin_management.package_service import PluginPackageService
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.plugin_packages import router
 from tests.infrastructure.test_package_store import package_archive
@@ -17,11 +17,11 @@ from tests.infrastructure.test_package_store import package_archive
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    service = PluginInstallationService(DirectoryPluginPackageStore())
+    service = PluginPackageService(ManagedPluginPackageStore())
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router)
-    app.state.plugin_installation_service = service
+    app.state.plugin_package_service = service
     with TestClient(app) as http:
         yield http, service
 
@@ -78,7 +78,7 @@ def test_in_progress_configuration_change_rejects_installation(client, tmp_path)
 
 def test_unconfigured_installation_returns_unavailable(client):
     http, _ = client
-    del http.app.state.plugin_installation_service
+    del http.app.state.plugin_package_service
     assert http.get("/plugin-packages").status_code == 503
 
 

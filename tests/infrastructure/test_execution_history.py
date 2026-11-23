@@ -4,8 +4,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.plugin_execution import PluginExecutionReceipt
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.application.plugin_management.execution import PluginExecutionReceipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError, StartupReport, StartupReporter, wait_for_startup_report,
 )
@@ -47,7 +47,7 @@ def test_processing_standby_does_not_report_plugin_execution():
 
 
 def test_history_is_idempotent_and_does_not_relabel_an_operation(tmp_path):
-    from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
+    from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHistory
 
     history = PluginExecutionHistory(tmp_path)
     receipt = evidence()
@@ -66,7 +66,7 @@ def test_history_is_idempotent_and_does_not_relabel_an_operation(tmp_path):
 
 
 def test_history_write_failure_is_explicit_and_leaves_no_success_record(tmp_path, monkeypatch):
-    from omnibci.infrastructure.plugins import execution_history
+    from omnibci.infrastructure.plugin_management import ownership as execution_history
 
     monkeypatch.setattr(execution_history, "atomic_write", Mock(side_effect=OSError("storage unavailable")))
     with pytest.raises(OSError, match="storage unavailable"):

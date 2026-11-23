@@ -9,8 +9,8 @@ import pytest
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.ports.acquisition import TriggerEmitter
 from omnibci.infrastructure.actuation.actuator import Actuator
-from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError, PluginLoader
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 
@@ -81,7 +81,7 @@ def test_selected_trigger_platform_errors_are_not_replaced_by_empty_output(monke
 
 def test_selected_trigger_loading_errors_are_not_replaced_by_empty_output(monkeypatch):
     snapshot = {"PLUGINS.bindings": [binding("stimulation.trigger", "trigger", "neuroscan_scan45_trigger")]}
-    monkeypatch.setattr("omnibci.infrastructure.plugins.runtime_configuration.load_configured_plugin",
+    monkeypatch.setattr("omnibci.infrastructure.plugin_management.runtime.load_configured_plugin",
                         Mock(side_effect=OSError("trigger initialization failed")))
     with pytest.raises(OSError, match="trigger initialization failed"):
         Stimulator(settings_snapshot=snapshot)._load_trigger()
@@ -100,7 +100,7 @@ def test_selected_effector_keeps_host_revision_private_and_ignores_legacy_alias(
 
 
 def test_trigger_constructor_does_not_receive_host_revision(monkeypatch):
-    from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+    from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
 
     selected = binding("stimulation.trigger", "trigger", "neuroscan_scan45_trigger")
     descriptor = PluginCatalog().resolve_selection("trigger", builtin_selection("trigger", "neuroscan_scan45_trigger"))

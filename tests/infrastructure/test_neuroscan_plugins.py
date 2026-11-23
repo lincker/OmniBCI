@@ -11,8 +11,8 @@ from tests.plugin_configuration_helpers import builtin_selection
 import pytest
 
 from omnibci.domain.ports.acquisition import SignalSource
-from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.loader import PluginLoader
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 
 
 @pytest.mark.parametrize(
@@ -33,7 +33,7 @@ def test_neuroscan_driver_is_discoverable_and_loadable(
     assert descriptor.location.parts[-2:] == ("neuroscan", driver)
     assert str(descriptor.entrypoint) == f"{driver}:{class_name}"
     assert type(instance).__name__ == class_name
-    assert instance.plugin_type == plugin_type
+    assert descriptor.plugin_type == plugin_type
     assert instance.reader is None and instance.writer is None
 
 

@@ -1,6 +1,6 @@
 """Plugin discovery contract tests."""
 
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 
 
 def test_effector_catalog_includes_builtin_logger(monkeypatch, tmp_path):

@@ -29,7 +29,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.application.configuration.definitions import module_runtime_settings
@@ -47,7 +47,7 @@ mp = multiprocessing.get_context("spawn")
 
 
 def _configured_paradigm(snapshot: dict) -> str:
-    from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
+    from omnibci.infrastructure.plugin_management.runtime import resolve_configured_plugin
 
     descriptor, _ = resolve_configured_plugin(snapshot, 'stimulation.paradigm', 'paradigm')
     return descriptor.plugin_type

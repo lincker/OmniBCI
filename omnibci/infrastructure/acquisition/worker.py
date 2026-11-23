@@ -10,7 +10,7 @@ from typing import Optional
 
 from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.infrastructure.process_lifecycle import StartupReporter
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogForwarder
 from omnibci.infrastructure.acquisition.acquisition import (
     AcquisitionRuntime,
@@ -77,8 +77,7 @@ class AcquisitionWorker(mp.Process):
             command_queue=self.command_queue,
             data_manager=self.data_manager,
             event_bus=self.event_bus,
-            source_id=snapshot.get("ACQUISITION.signal_source") or getattr(
-                self.data_source, "plugin_type", type(self.data_source).__name__),
+            source_id=snapshot.get("ACQUISITION.signal_source") or type(self.data_source).__name__,
             generation=snapshot.get("CONFIG.generation"),
             acquisition_revision=snapshot.get("CONFIG.module_revisions", {}).get("acquisition"),
             engine_revision=snapshot.get("CONFIG.engine_revision"),
@@ -98,7 +97,7 @@ class AcquisitionWorker(mp.Process):
             self.runtime.run()
 
     def _load_data_source(self) -> None:
-        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+        from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
         self.data_source = load_configured_plugin(
             self.settings_snapshot, "acquisition.source", "acquisition", SignalSource,
         )

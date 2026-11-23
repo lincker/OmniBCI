@@ -7,8 +7,8 @@ import re
 
 from omnibci.application.configuration.definitions import SECTION_SETTING_KEYS
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
-from omnibci.application.ports.plugin_configuration_catalog import PluginConfigurationCatalog
+from omnibci.application.plugin_management.schema import PluginSchemaError, validate_parameters
+from omnibci.application.plugin_management.catalog import PluginConfigurationCatalog
 from omnibci.application.processing_source import materialize_processing_binding, processing_input
 
 
@@ -36,14 +36,6 @@ _ROLE_SETTING_KEYS = {
                | SECTION_SETTING_KEYS["processing"] | _CONTEXT_KEYS),
     "stimulation": SECTION_SETTING_KEYS["stimulation"] | {"debug"},
     "actuation": SECTION_SETTING_KEYS["actuation"] | {"debug"},
-}
-_ALIASES = {
-    "acquisition.source": "ACQUISITION.signal_source",
-    "processing.decoder": "ALGORITHM.decoder",
-    "processing.epoch_detector": "ALGORITHM.epoch_detector",
-    "stimulation.paradigm": "STIMULATION.paradigm",
-    "stimulation.trigger": "ACQUISITION.trigger",
-    "actuation.effector": "ACTUATION.effector",
 }
 
 
@@ -206,9 +198,8 @@ def project_node_configuration(runtime_snapshot: dict, role: str) -> NodeConfigu
 
 def materialize_node_configuration(configuration: NodeConfiguration,
                                    catalog: PluginConfigurationCatalog) -> dict:
-    """Validate exact local capabilities and derive their runtime aliases locally."""
+    """Validate exact local capabilities and derive runtime settings locally."""
     result = configuration.settings
-    filters = []
     bindings = []
     for binding in configuration.bindings:
         definition = catalog.get(binding.kind, binding.selection)
@@ -224,17 +215,12 @@ def materialize_node_configuration(configuration: NodeConfiguration,
         if _canonical(parameters) != _canonical(binding.parameters):
             raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
         bindings.append(materialize_processing_binding(binding))
-        if binding.slot in _ALIASES:
-            result[_ALIASES[binding.slot]] = definition.plugin_type
         if binding.kind == "acquisition":
+            result["ACQUISITION.signal_source"] = definition.plugin_type
             for key in ("sample_rate", "channel_count", "channel_labels"):
                 if _canonical(parameters.get(key)) != _canonical(result.get(f"ACQUISITION.{key}")):
                     raise PluginSchemaError(f"ACQUISITION.{key} disagrees with the pinned source")
             result.update({f"ACQUISITION.{key}": value for key, value in parameters.items()})
-        elif binding.kind == "filter":
-            filters.append(definition.plugin_type)
-    if configuration.role == "engine":
-        result["ALGORITHM.filters"] = filters
     result["PLUGINS.bindings"] = bindings
     result["CONFIG.module_revisions"] = configuration.module_revisions
     result["CONFIG.engine_revision"] = configuration.engine_revision

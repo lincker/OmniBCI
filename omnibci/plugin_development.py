@@ -16,14 +16,14 @@ from omnibci.application.commands.engine_commands import StartEngineCommand
 from omnibci.application.configuration.definitions import MODULES, validate_server_settings
 from omnibci.application.configuration.models import MODULE_KINDS
 from omnibci.application.configuration.service import ConfigurationService
-from omnibci.application.plugin_packages import PluginPackageConflictError
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.manifest import _unique_json_object
-from omnibci.infrastructure.plugins.package_installer import PackageInstallError
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.project_tools import package_project
-from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
+from omnibci.application.plugin_management.packages import PluginPackageConflictError
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.installer import PackageInstallError
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.project_tools import package_project
+from omnibci.infrastructure.plugin_management.ownership import PluginStoreOwner
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
+from omnibci.infrastructure.storage import strict_json_loads
 from omnibci.presentation.schemas.runtime_config import ModuleConfigurationRequest
 
 
@@ -31,7 +31,7 @@ def _read_configuration(path):
     path = Path(path)
     if path.stat().st_size > 1024 * 1024:
         raise ValueError("Development configuration exceeds the size limit")
-    document = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_json_object)
+    document = strict_json_loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict) or not document or set(document) - set(MODULES):
         raise ValueError("Development configuration must map module names to current configurations")
     modules = {}

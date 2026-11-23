@@ -8,10 +8,10 @@ import pytest
 from omnibci.application.configuration.definitions import merge_module_settings
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.ports.effector import Effector
-from omnibci.infrastructure.plugins.loader import PluginLoadError
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer
+from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
 from tests.infrastructure.test_plugin_preparation import installed
 from tests.plugin_configuration_helpers import builtin_selection
 

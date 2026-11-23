@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 import mne
 import numpy as np
 
-from omnibci.domain.signal_info import SignalInfo
+from omnibci.sdk import SignalInfo
 from omnibci.infrastructure.acquisition.metadata import signal_info
 
 

@@ -25,7 +25,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import configured_bindings, execution_receipt
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
 from omnibci.application.configuration.definitions import module_runtime_settings
@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 # Managed children must inherit the caller's current environment, not a forkserver's.
 mp = multiprocessing.get_context("spawn")
+
+
+def _configured_effector(snapshot: dict) -> str | None:
+    bindings = configured_bindings(snapshot, slot="actuation.effector")
+    if not bindings:
+        return None
+    selection = bindings[0].selection
+    return f"{selection.package_id}/{selection.contribution_id}@{selection.version}"
 
 
 def _run_actuation(
@@ -126,7 +134,6 @@ class ActuationProcessManager:
         if self._process is None and self._cleanup_error is not None:
             raise RuntimeError(self._cleanup_error)
         snapshot = deepcopy(settings_snapshot)
-        effector = snapshot.get("ACTUATION.effector")
         auto_spawn = snapshot.get(
             "ACTUATION.auto_spawn", MODULE_SETTING_DEFAULTS["actuation"]["ACTUATION.auto_spawn"],
         )
@@ -135,6 +142,7 @@ class ActuationProcessManager:
             self._auto_spawn = False
             logger.debug("auto_spawn=False — Actuation process must be started manually")
             return
+        effector = _configured_effector(snapshot)
         self._auto_spawn = True
         self._refresh_state_locked()
         if self._process is not None:

@@ -15,17 +15,17 @@ import pytest
 from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
-from omnibci.infrastructure.plugins.package_installer import (
+from omnibci.infrastructure.plugin_management.installer import (
     InstallationLimits,
     PackageInstallError,
     PluginPackageInstaller,
 )
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot
 
 
 def _manifest(**package_fields):
     return {
-        "manifest_version": 2,
+        "manifest_version": 1,
         "package": {
             "id": "device", "publisher": "acme", "version": "1.0.0",
             "api_version": "1", "domain": "acquisition", **package_fields,
@@ -319,7 +319,7 @@ def test_copy_pins_input_bytes_even_if_original_is_changed(tmp_path, monkeypatch
     {"api_version": "999"}, {"platforms": ["win32"]},
     {"host_version": "2.0.0"}, {"host_version": 1},
     {"requires": {"numpy": "99.0"}}, {"requires": {"unlisted-library": "1.0"}},
-    {"requires": {"numpy": ">=2.0"}}, {"requires": {"numpy": 2}},
+    {"requires": {"numpy": "~=2.0"}}, {"requires": {"numpy": ">=99.0"}}, {"requires": {"numpy": 2}},
     {"requires": {"scikit-learn": "1.8.0", "scikit_learn": "1.8.0"}},
     {"requires": ["numpy"]}, {"version": "../../elsewhere"},
     {"dependencies": {"numpy": "2.4.4"}},
@@ -346,6 +346,23 @@ def test_exact_host_dependency_constraints_and_partial_platform_support(tmp_path
     assert len(result.contributions) == 2
     assert result.contributions[0].supports_platform("linux")
     assert not result.contributions[1].supports_platform("linux")
+
+
+def test_host_dependency_ranges_and_scientific_rendering_allowlist(tmp_path):
+    from omnibci.infrastructure.plugin_management.compatibility import installed_host_libraries
+
+    host_libs = installed_host_libraries()
+    assert "scipy" in host_libs
+    assert "fastapi" not in host_libs
+    installer = PluginPackageInstaller(
+        tmp_path / "installed",
+        host_version="1.0.0",
+        host_dependencies={"numpy": "2.4.4", "scipy": "1.17.1", "pillow": "11.0.0"},
+        platform_name="linux",
+    )
+    manifest = _manifest(requires={"numpy": ">=2.0,<3", "scipy": ">=1.17.0", "Pillow": ">=10.1"})
+    result = installer.install(_archive(tmp_path, manifest=manifest))
+    assert result.package_id == "acme.device"
 
 
 def test_invalid_sibling_contribution_blocks_entire_installation(tmp_path):
@@ -382,9 +399,9 @@ def test_nested_namespace_entrypoint_and_package_entrypoint_are_accepted(tmp_pat
 
 
 @pytest.mark.parametrize("manifest", [
-    {"manifest_version": 1, "package": {"kind": "acquisition"}},
-    {"manifest_version": 2, "package": {}, "contributions": []},
-    {"manifest_version": 2, "package": {}, "contributions": [{"kind": []}]},
+    {"manifest_version": 2, "package": {"kind": "acquisition"}},
+    {"manifest_version": 1, "package": {}, "contributions": []},
+    {"manifest_version": 1, "package": {}, "contributions": [{"kind": []}]},
 ])
 def test_old_or_malformed_manifests_are_rejected(tmp_path, manifest):
     with pytest.raises(PackageInstallError):

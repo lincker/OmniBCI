@@ -8,12 +8,12 @@ from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
 from omnibci.domain.ports.effector import Effector
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import (
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.infrastructure.plugin_management.loader import PluginLoader
+from omnibci.infrastructure.plugin_management.catalog import (
     AmbiguousPluginError, PluginCatalog, PluginNotFoundError, PluginRoot,
 )
-from omnibci.infrastructure.plugins.manifest import PluginManifestError
+from omnibci.infrastructure.plugin_management.manifest import PluginManifestError
 
 
 def _contribution(identifier="reader", kind="acquisition", **fields):
@@ -36,7 +36,7 @@ def _write_package(root: Path, directory="device", *, publisher="acme",
         **(package_fields or {}),
     }
     document = {
-        "manifest_version": 2, "package": package,
+        "manifest_version": 1, "package": package,
         "contributions": contributions if contributions is not None else [_contribution()],
     }
     for name, contents in output_payload_files(document).items():
@@ -55,7 +55,7 @@ def _selection(contribution="reader", version="1.0.0", publisher="acme"):
 
 def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_path):
     location = _write_package(tmp_path, contributions=[
-        _contribution(display_name="Reader", params={"channels": 8}),
+        _contribution(display_name="Reader"),
         _contribution("trigger", "trigger", plugin_type="device_trigger"),
     ])
     marker = tmp_path / "executed"
@@ -74,7 +74,6 @@ def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_
     assert reader.selection == _selection()
     assert reader.plugin_type == "reader"
     assert reader.display_name == "Reader"
-    assert reader.params == {"channels": 8}
     assert trigger.plugin_type == "device_trigger"
     assert trigger.source == "user"
     assert trigger.location == location.resolve()
@@ -278,7 +277,7 @@ def test_duplicate_package_version_is_ambiguous_across_categories(tmp_path):
         assert catalog.list_contributions(category) == ()
 
 
-@pytest.mark.parametrize("manifest_version", [3, True, "2"])
+@pytest.mark.parametrize("manifest_version", [2, 3, True, "1"])
 def test_unknown_or_incorrectly_typed_manifest_version_is_rejected(tmp_path, manifest_version):
     location = _write_package(tmp_path)
     manifest = location / "manifest.toml"

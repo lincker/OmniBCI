@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.project_tools import package_project
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.project_tools import package_project
 from omnibci.presentation.main import create_app
 from omnibci.shared.events import EventType
 

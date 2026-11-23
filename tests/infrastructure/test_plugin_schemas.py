@@ -5,13 +5,13 @@ import pytest
 from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.plugin_schema import PluginSchemaError, validate_parameters
-from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
-from omnibci.infrastructure.plugins.plugin_catalog import (
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.application.plugin_management.schema import PluginSchemaError, validate_parameters
+from omnibci.infrastructure.plugin_management.loader import PluginLoader, PluginLoadError
+from omnibci.infrastructure.plugin_management.catalog import (
     PluginCatalog, PluginRoot, vendor_plugins_dir,
 )
-from omnibci.infrastructure.plugins.manifest import PluginManifestError
+from omnibci.infrastructure.plugin_management.manifest import PluginManifestError
 from omnibci.sdk import Effector
 
 
@@ -23,7 +23,7 @@ SCHEMA = {
 
 
 def package(tmp_path, **configuration):
-    manifest = {"manifest_version": 2, "package": {
+    manifest = {"manifest_version": 1, "package": {
         "id": "example", "publisher": "test", "version": "1", "api_version": "1", "domain": "actuation",
     }, "contributions": [{
         "id": "output", "kind": "effector", "entrypoint": "output:Output",

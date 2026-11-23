@@ -4,11 +4,11 @@ import sys
 
 import pytest
 
-from omnibci.application.plugin_packages import PluginPackageConflictError, PluginPackageStorageError
+from omnibci.application.plugin_management.packages import PluginPackageConflictError, PluginPackageStorageError
 
 
 def claim(root, *, role=None, configuration_root=None):
-    from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
+    from omnibci.infrastructure.plugin_management.ownership import PluginStoreOwner
     return PluginStoreOwner(root, role=role,
                             configuration_root=configuration_root or root.parent / 'configuration')
 
@@ -111,7 +111,7 @@ def test_cross_process_owner_exclusion_and_crash_retention(tmp_path, role):
     root = tmp_path / 'plugins'
     script = '''import os, sys
 from pathlib import Path
-from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
+from omnibci.infrastructure.plugin_management.ownership import PluginStoreOwner
 owner = PluginStoreOwner(Path(sys.argv[1]), configuration_root=Path(sys.argv[2]), role=sys.argv[3] or None)
 os._exit(0)
 '''

@@ -14,7 +14,7 @@ import pytest
 
 import omnibci.infrastructure.signal_processing.worker as worker_module
 from omnibci.application.events import SignalPreparationReceipt, CommandRequest, ProcessingInputStart
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, Prediction
@@ -27,7 +27,7 @@ from omnibci.infrastructure.signal_processing.worker import (
     SignalProcessingWorker,
 )
 from omnibci.infrastructure.plugins.algorithms.epoch.detector import DefaultEpochDetector
-from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
+from omnibci.infrastructure.plugin_management.loader import PluginLoader, PluginLoadError
 from omnibci.infrastructure.signal_processing.pipeline_configuration import load_filters
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.shared.events import EventType
@@ -50,7 +50,7 @@ class TestFilterLoading:
     def snapshot(count=1, *, missing=False):
         from dataclasses import replace
         from omnibci.application.configuration.models import ProfileBinding
-        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+        from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
         from uuid import uuid4
         descriptor = PluginCatalog().resolve_selection("filter", builtin_selection("filter", "BASELINE_CORRECTION"))
         selection = replace(descriptor.selection, package_id="missing") if missing else descriptor.selection
@@ -69,7 +69,7 @@ class TestFilterLoading:
         filters = load_filters(self.snapshot(2), prepared_signal(250))
         assert len(filters) == 2
         assert filters[0] is not filters[1]
-        assert all(item.plugin_type == "BASELINE_CORRECTION" for item in filters)
+        assert all(type(item).__name__ == "BaselineCorrection" for item in filters)
 
 
 class TestAlgorithmLoading:
@@ -77,7 +77,7 @@ class TestAlgorithmLoading:
         from omnibci.application.configuration.models import ProfileBinding
         from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
         from omnibci.infrastructure.signal_processing.signal_configuration import load_signal_pipeline
-        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+        from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
         snapshot = {"ACQUISITION.sample_rate": 1000, "CONFIG.module_revisions": {"acquisition": "test-revision", "processing": "test-revision", "stimulation": "test-revision", "actuation": "test-revision"}, "CONFIG.engine_revision": "engine"}
         bindings = []
         descriptors = []
@@ -103,7 +103,7 @@ class TestAlgorithmLoading:
         ]
         assert decoder.SAMPLE_COUNT == 375
         assert decoder.OFFSET_LENGTH == 50
-        assert detector.plugin_type == "DEFAULT_EPOCH_DETECTOR"
+        assert type(detector).__name__ == "DefaultEpochDetector"
         assert filters == []
 
 

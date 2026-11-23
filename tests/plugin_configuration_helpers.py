@@ -11,7 +11,7 @@ def section_settings(settings, section):
 
 def builtin_selection(kind, alias):
     """Choose an exact built-in package identity for a test fixture."""
-    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+    from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 
     return next(item.selection for item in PluginCatalog().list_contributions(kind) if item.plugin_type == alias)
 
@@ -27,8 +27,8 @@ def prepared_snapshot(snapshot, modules=None):
 
 def prepare_runtime_plugins(snapshot, modules):
     """Use the host preparation path without replacing existing artifact pins."""
-    from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-    from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
+    from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+    from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer
 
     return PluginArtifactPreparer(ManagedPluginPackageStore()).prepare_snapshot(snapshot, modules)
 
@@ -36,7 +36,7 @@ def prepare_runtime_plugins(snapshot, modules):
 def install_package_root(root):
     """Publish an external-style fixture through the real managed installer."""
     import zipfile
-    from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+    from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 
     archive = root.with_name(root.name + '.zip')
     with zipfile.ZipFile(archive, 'w') as writer:

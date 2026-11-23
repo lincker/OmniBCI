@@ -198,7 +198,7 @@ def _metadata_response(metadata):
 
 def _metadata_service():
     from omnibci.application.events import CommandResult
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
     from omnibci.application.configuration.models import ProfileBinding
     from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
     metadata = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=250, channels=(ChannelDescriptor(0, "C3", unit="uV", channel_id="channel-0"),)), native_event="final-row", provenance="device-reported"), source_id="test", connection_id="connection")

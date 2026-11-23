@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from omnibci.application.configuration.definitions import MODULES, SECTIONS, ENGINE_SETTING_DEFAULTS
 from omnibci.application.configuration.models import ActivationSet, ModuleActivation, EngineSettings, MODULE_KINDS
 from omnibci.application.configuration.errors import ProfileRevisionConflict
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.processing_source import processing_input
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.services.command_result_service import CommandDeliveryError, CommandTimeoutError

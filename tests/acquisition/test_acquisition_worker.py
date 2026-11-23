@@ -85,7 +85,7 @@ def test_connect_does_not_require_decoder_configuration(bindings):
 ])
 def test_file_source_worker_connects_with_unconfigured_processing(decoder):
     from omnibci.application.configuration.models import ProfileBinding
-    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+    from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 
     descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "file_reader"))
     source = ProfileBinding("acquisition.source", "acquisition", None, descriptor.selection, {
@@ -145,19 +145,16 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
     assert worker.runtime is runtime_class.return_value
 
 
-@pytest.mark.parametrize("plugin_type", [None, "plugin-source"])
-def test_runtime_source_identity_falls_back_to_plugin_type_or_class_name(plugin_type):
+def test_runtime_source_identity_falls_back_to_class_name():
     class Source:
         pass
 
     worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={})
     worker.data_source = Source()
-    if plugin_type is not None:
-        worker.data_source.plugin_type = plugin_type
     with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:
         worker._run()
 
-    assert runtime_class.call_args.kwargs["source_id"] == (plugin_type or "Source")
+    assert runtime_class.call_args.kwargs["source_id"] == "Source"
 
 
 def test_explicit_settings_are_shared_by_source_and_runtime():
@@ -168,7 +165,7 @@ def test_explicit_settings_are_shared_by_source_and_runtime():
     }
     worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot=snapshot)
     with patch(
-        "omnibci.infrastructure.plugins.runtime_configuration.load_configured_plugin"
+        "omnibci.infrastructure.plugin_management.runtime.load_configured_plugin"
     ) as load_source, patch(
         "omnibci.infrastructure.acquisition.worker.AcquisitionRuntime"
     ) as runtime_class:
@@ -184,7 +181,7 @@ def test_explicit_settings_are_shared_by_source_and_runtime():
 
 
 def test_historical_decoder_projection_requires_preparation():
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
     from omnibci.application.configuration.models import ProfileBinding
     from omnibci.application.processing_source import materialize_processing_binding
 
@@ -203,8 +200,8 @@ def test_historical_decoder_projection_requires_preparation():
 
 def test_load_data_source_uses_pinned_parameters_without_registry_or_global_settings():
     from omnibci.application.configuration.models import ProfileBinding
-    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-    from omnibci.infrastructure.plugins.loader import PluginLoader
+    from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
+    from omnibci.infrastructure.plugin_management.loader import PluginLoader
 
     descriptor = PluginCatalog().resolve_selection("acquisition", builtin_selection("acquisition", "file_reader"))
     binding = ProfileBinding(

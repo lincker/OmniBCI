@@ -2,14 +2,14 @@
 import pytest
 import tomlkit
 
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
-from omnibci.infrastructure.plugins.manifest import PluginManifestError
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot
+from omnibci.infrastructure.plugin_management.manifest import PluginManifestError
 
 
 def package(tmp_path, *, kind="decoder", **fields):
-    document = {"manifest_version": 2, "package": {
+    document = {"manifest_version": 1, "package": {
         "id": "example", "publisher": "test", "version": "1", "api_version": "1", "domain": "processing",
     }, "contributions": [{"id": "default", "kind": kind, "entrypoint": "decoder:Decoder", **fields}]}
     (tmp_path / "manifest.toml").write_text(tomlkit.dumps(document), encoding="utf-8")

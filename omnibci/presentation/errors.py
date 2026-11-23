@@ -27,7 +27,7 @@ from omnibci.application.configuration.errors import (
     ConfigProfileConflictError, ConfigProfileValidationError, PluginProfileNotFoundError,
     PluginProfileValidationError, ProfileRevisionConflict,
 )
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.services.command_result_service import (
     CommandDeliveryError,
     CommandExecutionError,

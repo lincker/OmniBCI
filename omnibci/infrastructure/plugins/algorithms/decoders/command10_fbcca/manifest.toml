@@ -1,5 +1,5 @@
-# OmniBCI Plugin Manifest — schema version 2
-manifest_version = 2
+# OmniBCI Plugin Manifest — schema version 1
+manifest_version = 1
 
 [package]
 domain = "processing"
@@ -15,18 +15,6 @@ plugin_type = "COMMAND10_SSVEP_FBCCA"
 entrypoint = "decoder:Command10FBCCA"
 display_name = "10-command SSVEP FBCCA"
 description = "Training-free FBCCA for the Command10 paradigm's fixed target IDs, frequencies and phases."
-
-[contributions.params]
-targets = 10
-paradigm_package = "OmniBCI.command10SSVEP"
-paradigm_version = "0.1.0"
-display_refresh_rate_hz = 60
-frequency_hz = "8.0 – 15.2"
-frequency_step_hz = 0.8
-phase_step = "0.5 π"
-harmonics = 5
-filter_bands_hz = "8–88, 16–88, 24–88"
-minimum_eeg_sample_rate_hz = 200
 
 [contributions.channel_requirements]
 description = "Select posterior EEG channels such as O1, Oz, O2 or parieto-occipital channels. Names and order are configurable; EEG sampling must be at least 200 Hz."

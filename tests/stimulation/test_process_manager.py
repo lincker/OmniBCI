@@ -8,7 +8,7 @@ import threading
 
 import pytest
 
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from tests.plugin_configuration_helpers import prepared_snapshot
 
 from omnibci.infrastructure.process_lifecycle import (

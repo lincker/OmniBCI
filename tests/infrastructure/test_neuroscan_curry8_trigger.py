@@ -12,7 +12,7 @@ import pytest
 
 from omnibci.infrastructure.plugins.acquisition.neuroscan.curry8 import trigger
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
 
@@ -155,7 +155,7 @@ def test_stimulator_loads_exact_curry_trigger_and_free_run_keeps_zero(driver, ad
                        {}).to_dict(),
     ]}))
     output = stimulator._load_trigger()
-    assert output.plugin_type == "neuroscan_curry8_trigger"
+    assert type(output).__name__ == "Curry8Trigger"
     output.setup()
     output.clear()
     paradigm = stimulator._load_paradigm()

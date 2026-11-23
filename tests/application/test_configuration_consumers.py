@@ -12,8 +12,8 @@ from omnibci.application.services.node_configuration_service import NodeConfigur
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.bootstrap import _RuntimeSettings
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.application.configuration.accepted import accepted_runtime_settings
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.plugin_configuration_helpers import accept_profiles
 

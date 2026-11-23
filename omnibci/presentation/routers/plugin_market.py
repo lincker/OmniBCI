@@ -1,24 +1,17 @@
 """Only operator-configured trusted repositories are available to the console."""
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from starlette.concurrency import run_in_threadpool
 
-from omnibci.application.services.plugin_market_service import PluginMarketService
-from omnibci.presentation.errors import ApiError
+from omnibci.application.plugin_management.market_service import PluginMarketService
+from omnibci.presentation.dependencies import get_plugin_market_service
 from omnibci.presentation.routers.plugin_packages import package_errors
-from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
+from omnibci.presentation.schemas.common import ApiResponse
 from omnibci.presentation.schemas.plugin_market import InstallMarketPackageRequest, MarketPackageResponse
 from omnibci.presentation.schemas.plugin_packages import PackageInstallationResponse
 
 router = APIRouter(prefix="/market", tags=["Plugin market"])
-
-
-def get_plugin_market_service(request: Request) -> PluginMarketService:
-    service = getattr(request.app.state, "plugin_market_service", None)
-    if service is None:
-        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Plugin market is not configured")
-    return service
 
 
 @router.get("/catalog", response_model=ApiResponse[list[MarketPackageResponse]])

@@ -10,15 +10,15 @@ from textwrap import dedent
 import pytest
 from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 
 from omnibci.domain.ports.effector import Effector
-from omnibci.infrastructure.plugins.descriptors import PluginEntrypoint
-from omnibci.infrastructure.plugins.loader import PluginLoadError, PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import (
+from omnibci.infrastructure.plugin_management.descriptors import PluginEntrypoint
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError, PluginLoader
+from omnibci.infrastructure.plugin_management.catalog import (
     AmbiguousPluginError, MissingEntrypointError, PluginRoot, PluginCatalog,
 )
-from omnibci.infrastructure.plugins.manifest import PluginManifestError
+from omnibci.infrastructure.plugin_management.manifest import PluginManifestError
 
 
 def _write_effector_manifest(
@@ -39,7 +39,7 @@ def _write_effector_manifest(
     if entrypoint:
         contribution["entrypoint"] = entrypoint
     (package_dir / "manifest.toml").write_text(tomlkit.dumps({
-        "manifest_version": 2,
+        "manifest_version": 1,
         "package": {"id": plugin_id, "publisher": publisher, "version": "1.0.0",
                     "domain": "actuation", "api_version": "1"},
         "contributions": [contribution],
@@ -72,7 +72,7 @@ def test_builtin_logger_descriptor_is_directly_loadable(monkeypatch, tmp_path):
     instance = PluginLoader.instantiate(descriptor, Effector, parameters={})
 
     assert type(instance).__name__ == "LogEffector"
-    assert instance.plugin_type == "logger"
+    assert descriptor.plugin_type == "logger"
 
 
 @pytest.mark.parametrize("directory", ["external", "vendor/series/external"])

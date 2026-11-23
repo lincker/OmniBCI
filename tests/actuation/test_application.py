@@ -10,7 +10,7 @@ import pytest
 
 from tests.execution_helpers import synthetic_execution_snapshot
 from tests.actuation_helpers import actuation_payload
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.actuation.application import Actuation

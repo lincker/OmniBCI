@@ -13,7 +13,7 @@ from omnibci.application.services.runtime_apply_service import RuntimeApplyCoord
 from tests.plugin_configuration_helpers import builtin_selection
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.plugin_config import router

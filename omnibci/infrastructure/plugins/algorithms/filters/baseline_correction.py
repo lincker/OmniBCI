@@ -25,12 +25,10 @@ from pathlib import Path
 from collections.abc import Mapping
 from numpy import typing as npt
 
-from omnibci.domain.signal_info import SignalInfo
-from omnibci.domain.ports.algorithm import Filter
+from omnibci.sdk import Filter, SignalInfo
 
 
 class BaselineCorrection(Filter):
-    plugin_type = "BASELINE_CORRECTION"
 
     def __init__(
         self, *, parameters: Mapping[str, object], resource_root: Path,

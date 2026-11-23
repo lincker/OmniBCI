@@ -8,7 +8,7 @@ from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 

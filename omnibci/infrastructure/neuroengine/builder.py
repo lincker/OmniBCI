@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHistory
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 
 from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS, MODULE_SETTING_DEFAULTS, module_runtime_settings
 from omnibci.infrastructure.acquisition.preview_channel import PreviewChannel

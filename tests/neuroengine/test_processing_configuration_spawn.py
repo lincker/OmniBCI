@@ -18,7 +18,7 @@ from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
 from omnibci.infrastructure.process_lifecycle import StartupReporter, wait_for_startup_report
 from omnibci.shared.events import EventType
 
@@ -45,7 +45,7 @@ def test_spawned_worker_preserves_old_trial_then_acknowledges_new_pipeline(tmp_p
     markers = tmp_path / "markers"
     markers.mkdir()
     plugin.mkdir(parents=True)
-    (plugin / "manifest.toml").write_text('''manifest_version = 2
+    (plugin / "manifest.toml").write_text('''manifest_version = 1
 [package]
 id = "trial_fixture"
 publisher = "Tests"

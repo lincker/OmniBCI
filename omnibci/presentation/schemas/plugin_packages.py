@@ -1,8 +1,9 @@
-"""HTTP values for offline package installation and installed inventory."""
-from typing import Literal
-from pydantic import BaseModel, Field
+"""HTTP schemas for plugin package installation, inventory, lifecycle, and version-profile review."""
+from typing import Any, Literal
+from pydantic import BaseModel, ConfigDict, Field
 
 from omnibci.presentation.schemas.plugin_config import PluginKind, PluginSelectionResponse
+from omnibci.presentation.schemas.signal_setup import ProcessingInputModel
 
 
 class PackageReferenceResponse(BaseModel):
@@ -37,3 +38,32 @@ class PackageVersionResponse(BaseModel):
 class PackageInstallationResponse(BaseModel):
     package: PackageVersionResponse
     already_installed: bool
+
+
+class SetPackageEnabledRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool
+
+
+class ProfileVersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source_profile_id: str
+    target_version: str = Field(min_length=1, max_length=128)
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    parameters: dict[str, Any] | None = None
+
+
+class CreateVersionProfileRequest(ProfileVersionRequest):
+    expected_source_revision: int = Field(ge=1)
+
+
+class ProfileVersionProposalResponse(BaseModel):
+    source_profile_id: str
+    source_revision: int
+    name: str
+    kind: PluginKind
+    selection: PluginSelectionResponse
+    parameters: dict[str, Any]
+    configuration_version: int
+    target_enabled: bool
+    processing_input: ProcessingInputModel | None = None

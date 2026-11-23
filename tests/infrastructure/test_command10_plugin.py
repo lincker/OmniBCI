@@ -4,12 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.plugin_schema import validate_parameters
-from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
-from omnibci.infrastructure.plugins.project_tools import package_project, validate_project
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.application.plugin_management.schema import validate_parameters
+from omnibci.infrastructure.plugin_management.loader import PluginLoader
+from omnibci.infrastructure.plugin_management.installer import PluginPackageInstaller
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot
+from omnibci.infrastructure.plugin_management.project_tools import package_project, validate_project
 from omnibci.sdk import FrameTiming, Paradigm, RenderSurface, TextureHandle, TriggerOutput
 
 
@@ -22,7 +22,6 @@ def test_builtin_is_a_standalone_paradigm_with_generic_trial_controls():
     descriptor = catalog.resolve_selection('paradigm', SELECTION)
     assert descriptor.location == PACKAGE
     assert descriptor.api_version == '1'
-    assert descriptor.params['targets'] == 10
     assert descriptor.controls['target_cue']['payload_key'] == 'cue_target_id'
     assert descriptor.controls['target_cue']['default_sequence'] == '1-10'
     assert not any(item.identifier == SELECTION.package_id for item in catalog.list_contributions('decoder'))

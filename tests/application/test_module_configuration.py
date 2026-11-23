@@ -10,13 +10,13 @@ from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULT
 from omnibci.application.configuration.models import ModuleActivation, ProfileBinding
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.domain.channel_mapping import ProcessingInput
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.application.configuration.accepted import accepted_runtime_settings
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 

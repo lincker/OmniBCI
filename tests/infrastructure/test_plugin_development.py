@@ -10,14 +10,14 @@ import tomlkit
 
 from omnibci import sdk
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.plugin_packages import PluginPackageConflictError
-from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.package_installer import PackageInstallError
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginNotFoundError
-from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
-from omnibci.infrastructure.plugins.project_tools import package_project
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.application.plugin_management.packages import PluginPackageConflictError
+from omnibci.infrastructure.plugin_management.loader import PluginLoader
+from omnibci.infrastructure.plugin_management.installer import PackageInstallError
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginNotFoundError
+from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer
+from omnibci.infrastructure.plugin_management.project_tools import package_project
 from tests.plugin_development_helpers import KINDS, SLOTS, source_project, configuration_file, module_configuration
 
 

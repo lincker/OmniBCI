@@ -1,7 +1,7 @@
 """Processing mappings never execute retired montage configuration."""
 import pytest
 
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.processing_source import processing_input
 from omnibci.presentation.schemas.signal_setup import ProcessingInputModel

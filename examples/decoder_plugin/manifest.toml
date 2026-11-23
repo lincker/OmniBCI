@@ -2,7 +2,7 @@
 # This demo classifies the sign of an Oz window mean; it is not a BCI model.
 
 # Manifest document format; independent of package, constructor and schema versions.
-manifest_version = 2
+manifest_version = 1
 
 [package]
 domain = "processing"

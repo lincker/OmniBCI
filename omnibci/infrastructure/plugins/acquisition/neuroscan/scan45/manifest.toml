@@ -1,6 +1,6 @@
-# OmniBCI Plugin Manifest — schema version 2
+# OmniBCI Plugin Manifest — schema version 1
 
-manifest_version = 2
+manifest_version = 1
 
 [package]
 domain = "acquisition"

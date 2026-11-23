@@ -5,13 +5,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.application.plugin_management.schema import validate_parameters
 from omnibci.domain.signal import SignalChunk
-from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
-from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot
-from omnibci.infrastructure.plugins.project_tools import package_project, validate_project
+from omnibci.infrastructure.plugin_management.loader import PluginLoader, PluginLoadError
+from omnibci.infrastructure.plugin_management.installer import PluginPackageInstaller
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot
+from omnibci.infrastructure.plugin_management.project_tools import package_project, validate_project
 from omnibci.infrastructure.signal_processing.epoch.epoch_processor import EpochProcessor
 from omnibci.sdk import Decoder
 from tests.infrastructure.test_command10_decoder import PACKAGE, DEFAULTS, signal_info, synthetic
@@ -24,9 +24,6 @@ def test_builtin_manifest_defaults_and_channel_requirements():
     descriptor = PluginCatalog().resolve_selection('decoder', SELECTION)
     assert descriptor.location == PACKAGE
     assert descriptor.api_version == '1'
-    assert descriptor.params['targets'] == 10
-    assert descriptor.params['display_refresh_rate_hz'] == 60
-    assert descriptor.params['paradigm_package'] == 'OmniBCI.command10SSVEP'
     assert descriptor.channel_requirements.signal_type == 'eeg'
     assert descriptor.channel_requirements.min_count == 1
     assert validate_parameters(descriptor.configuration_schema, {}) == DEFAULTS

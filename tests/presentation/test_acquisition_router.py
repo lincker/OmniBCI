@@ -220,7 +220,7 @@ class TestAcquisitionStatus:
     ):
         from copy import deepcopy
         from omnibci.application.events import AcquisitionSnapshot
-        from omnibci.application.plugin_identity import PluginSelection
+        from omnibci.application.plugin_management.identity import PluginSelection
         from omnibci.application.configuration.models import ProfileBinding
         from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
         from omnibci.shared.events import Event, EventType

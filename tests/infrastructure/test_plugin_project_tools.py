@@ -10,7 +10,7 @@ import zipfile
 import pytest
 import tomlkit
 
-from omnibci.infrastructure.plugins.package_installer import InstallationLimits, PackageInstallError, PluginPackageInstaller
+from omnibci.infrastructure.plugin_management.installer import InstallationLimits, PackageInstallError, PluginPackageInstaller
 from tests.infrastructure.test_package_installer import _manifest
 
 
@@ -28,7 +28,7 @@ def project(tmp_path):
 
 @pytest.fixture
 def tools():
-    return importlib.import_module("omnibci.infrastructure.plugins.project_tools")
+    return importlib.import_module("omnibci.infrastructure.plugin_management.project_tools")
 
 
 def test_static_validation_and_packaging_have_identical_inventory(tools, project, tmp_path, monkeypatch):

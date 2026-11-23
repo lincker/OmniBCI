@@ -7,8 +7,8 @@ import pytest
 
 from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ProfileBinding
 from omnibci.application.configuration.service import ConfigurationService
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
+from omnibci.application.configuration.accepted import accepted_runtime_settings
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.plugin_configuration_helpers import accept_profiles, builtin_selection
 

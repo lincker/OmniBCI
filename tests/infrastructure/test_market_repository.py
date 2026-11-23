@@ -18,18 +18,18 @@ import pytest
 import tomlkit
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from omnibci.infrastructure.plugins.market_repository import (
+from omnibci.infrastructure.plugin_management.market import (
     MarketLimits,
     MarketRepositoryError,
     StaticMarketRepository,
     canonical_index_bytes,
 )
-from omnibci.application.plugin_packages import PluginPackageError
-from omnibci.application.services.plugin_installation_service import PluginInstallationService
-from omnibci.application.services.plugin_market_service import PluginMarketService
-from omnibci.infrastructure.plugins.market_adapter import MarketRepositoryAdapter
-from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
-from omnibci.infrastructure.plugins.package_store import DirectoryPluginPackageStore
+from omnibci.application.plugin_management.packages import PluginPackageError
+from omnibci.application.plugin_management.package_service import PluginPackageService
+from omnibci.application.plugin_management.market_service import PluginMarketService
+from omnibci.infrastructure.plugin_management.market import MarketRepositoryAdapter
+from omnibci.infrastructure.plugin_management.installer import PluginPackageInstaller
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 
 _URL = "https://plugins.example.test/repository/index.json"
 _DOWNLOAD = "https://plugins.example.test/repository/packages/device-1.0.0.zip"
@@ -38,7 +38,7 @@ _NOW = datetime(2026, 9, 23, 12, tzinfo=UTC)
 
 def _package_bytes(*, publisher="acme", version="1.0.0"):
     manifest = {
-        "manifest_version": 2,
+        "manifest_version": 1,
         "package": {"id": "device", "publisher": publisher, "version": version, "api_version": "1", "domain": "acquisition"},
         "contributions": [{"id": "reader", "kind": "acquisition", "entrypoint": "driver:Reader"}],
     }
@@ -318,8 +318,8 @@ def test_signed_catalog_archive_identity_mismatch_is_rejected_before_publication
     opener.routes[_URL] = _signed(index, key)
     package = index["packages"][0]
 
-    store = DirectoryPluginPackageStore(tmp_path / "plugins")
-    service = PluginMarketService(MarketRepositoryAdapter(client), PluginInstallationService(store))
+    store = ManagedPluginPackageStore(tmp_path / "plugins")
+    service = PluginMarketService(MarketRepositoryAdapter(client), PluginPackageService(store))
     with pytest.raises(PluginPackageError, match="does not match|do not match"):
         service.install(package["package_id"], package["version"])
 
@@ -427,7 +427,7 @@ def test_pathological_content_length_is_rejected_without_integer_conversion(repo
 def test_overall_transfer_deadline_is_enforced(repository, monkeypatch):
     client, _, _, _, _ = repository
     moments = iter([0.0, 121.0])
-    monkeypatch.setattr("omnibci.infrastructure.plugins.market_repository.time.monotonic", lambda: next(moments))
+    monkeypatch.setattr("omnibci.infrastructure.plugin_management.market.time.monotonic", lambda: next(moments))
 
     with pytest.raises(MarketRepositoryError, match="time limit"):
         client.list_packages()
@@ -493,12 +493,12 @@ def test_signed_local_http_repository_installs_and_refuses_real_redirects(tmp_pa
     try:
         base = f"http://127.0.0.1:{server.server_port}"
         installer = PluginPackageInstaller(tmp_path / "plugins" / "packages", host_version="1.0.0", host_dependencies={})
-        store = DirectoryPluginPackageStore(tmp_path / "plugins", installer=installer)
+        store = ManagedPluginPackageStore(tmp_path / "plugins", installer=installer)
         client = StaticMarketRepository(
             base + "/index.json", {"test-key": key.public_key()},
             tmp_path / "cache", allow_http=True, clock=lambda: _NOW,
         )
-        service = PluginMarketService(MarketRepositoryAdapter(client), PluginInstallationService(store))
+        service = PluginMarketService(MarketRepositoryAdapter(client), PluginPackageService(store))
         assert service.install("acme.device", "1.0.0").package.package_id == "acme.device"
         redirected = StaticMarketRepository(
             base + "/redirect.json", {"test-key": key.public_key()},

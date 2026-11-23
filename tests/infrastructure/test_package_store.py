@@ -6,16 +6,16 @@ import pytest
 from tests.plugin_configuration_helpers import output_payload_files
 import tomlkit
 
-from omnibci.application.plugin_packages import PluginPackageError, PluginPackageNotFoundError
-from omnibci.infrastructure.plugins.package_store import DirectoryPluginPackageStore
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginNotFoundError
+from omnibci.application.plugin_management.packages import PluginPackageError, PluginPackageNotFoundError
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginNotFoundError
 
 
 def package_archive(tmp_path, version="1.0.0", *, properties=None, schema_version=1,
                     package_id="acme.device", code=None):
     publisher, name = package_id.split(".")
     manifest = {
-        "manifest_version": 2,
+        "manifest_version": 1,
         "package": {"id": name, "publisher": publisher, "version": version, "api_version": "1", "domain": "actuation"},
         "contributions": [{"id": "output", "kind": "effector", "plugin_type": "test_output",
                            "entrypoint": "driver:Driver", "display_name": "Test output",
@@ -38,7 +38,7 @@ def package_archive(tmp_path, version="1.0.0", *, properties=None, schema_versio
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
-    return DirectoryPluginPackageStore()
+    return ManagedPluginPackageStore()
 
 
 def test_installed_inventory_is_disabled_and_static(store, tmp_path):

@@ -6,12 +6,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from omnibci.application.plugin_packages import PluginPackageConflictError, package_references_from_settings
+from omnibci.application.plugin_management.packages import PluginPackageConflictError, package_references_from_settings
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.plugin_package_service import PluginPackageService
+from omnibci.application.plugin_management.package_service import PluginPackageService
 from omnibci.application.configuration.service import ConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from tests.infrastructure.test_package_store import package_archive
 

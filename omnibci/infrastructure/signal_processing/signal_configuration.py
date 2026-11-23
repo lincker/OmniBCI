@@ -2,7 +2,7 @@
 from dataclasses import replace
 
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
 
 
 def mapped_input(plan):

@@ -9,7 +9,7 @@ from queue import Empty, Full
 from uuid import uuid4
 
 from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandRequest, CommandResult
-from omnibci.application.plugin_execution import bindings_fingerprint
+from omnibci.application.plugin_management.execution import bindings_fingerprint
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogListener
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker

@@ -17,19 +17,18 @@ from omnibci.application.services.results_service import ResultsService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
-from omnibci.application.services.plugin_installation_service import PluginInstallationService
-from omnibci.application.services.plugin_package_service import PluginPackageService
-from omnibci.application.services.plugin_market_service import PluginMarketService
-from omnibci.application.plugin_packages import package_references_from_settings
+from omnibci.application.configuration.accepted import accepted_runtime_settings
+from omnibci.application.plugin_management.package_service import PluginPackageService
+from omnibci.application.plugin_management.market_service import PluginMarketService
+from omnibci.application.plugin_management.packages import package_references_from_settings
 from omnibci.infrastructure.server_logging import ServerLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
-from omnibci.infrastructure.plugins.plugin_catalog import user_plugins_dir
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.store_ownership import PluginStoreOwner
-from omnibci.infrastructure.plugins.market_adapter import configured_market_service
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter, user_plugins_dir
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHistory, PluginStoreOwner
+from omnibci.infrastructure.plugin_management.market import configured_market_service
+from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
 from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
 
@@ -82,7 +81,6 @@ class AppContainer:
     configuration_service: "ConfigurationService | None" = None
     runtime_configuration: "RuntimeConfigurationService | None" = None
     node_configuration: "NodeConfigurationService | None" = None
-    plugin_installation_service: "PluginInstallationService | None" = None
     plugin_package_service: "PluginPackageService | None" = None
     plugin_market_service: "PluginMarketService | None" = None
     signal_setup_service: object | None = None
@@ -160,8 +158,6 @@ async def build_container(*, host_settings: dict | None = None,
 
 
 async def _build_container_services(host_settings, allow_process_termination, package_store, repository, package_references_lock):
-    from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
-    from omnibci.infrastructure.plugins.execution_history import PluginExecutionHistory
     execution_history = PluginExecutionHistory(repository.root)
     artifact_preparer = PluginArtifactPreparer(package_store)
 
@@ -242,7 +238,6 @@ async def _build_container_services(host_settings, allow_process_termination, pa
         ),
         admission_guard=package_references_lock.mutation,
     )
-    container.plugin_installation_service = packages
     container.plugin_package_service = packages
     container.plugin_market_service = configured_market_service(packages)
     return container

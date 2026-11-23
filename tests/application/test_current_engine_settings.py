@@ -6,7 +6,7 @@ import pytest
 from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS
 from omnibci.application.configuration.errors import PluginProfileValidationError
 from omnibci.application.configuration.models import EngineSettings
-from omnibci.application.plugin_schema import PluginSchemaError
+from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService

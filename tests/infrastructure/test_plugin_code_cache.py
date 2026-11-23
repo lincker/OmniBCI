@@ -7,8 +7,8 @@ import sys
 import pytest
 
 from omnibci.domain.ports.effector import Effector
-from omnibci.infrastructure.plugins.loader import PluginLoader, PluginLoadError
-from omnibci.infrastructure.plugins.plugin_catalog import PluginRoot
+from omnibci.infrastructure.plugin_management.loader import PluginLoader, PluginLoadError
+from omnibci.infrastructure.plugin_management.catalog import PluginRoot
 from tests.infrastructure.test_plugin_contributions import _catalog, _contribution, _write_package
 
 
@@ -156,7 +156,7 @@ def test_resource_changes_are_part_of_artifact_identity(tmp_path):
 
 def test_failed_sibling_import_does_not_evict_running_contribution_code(tmp_path):
     from dataclasses import replace
-    from omnibci.infrastructure.plugins.descriptors import PluginEntrypoint
+    from omnibci.infrastructure.plugin_management.descriptors import PluginEntrypoint
 
     _, (descriptor, second), marker = package(tmp_path, extra={'broken.py': "raise RuntimeError('broken sibling')\n"})
     first = construct(descriptor)

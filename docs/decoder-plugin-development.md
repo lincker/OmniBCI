@@ -19,7 +19,7 @@ Only `manifest.toml` has a prescribed filename. The manifest references the othe
 
 ## Manifest and channel requirements
 
-Copy the commented starter manifest, rename its publisher/package/contribution IDs, and retain `manifest_version = 2` with `package.api_version = "1"`. Package identity is case-sensitive `publisher.id`; package release and configuration-schema versions have separate meanings.
+Copy the commented starter manifest, rename its publisher/package/contribution IDs, and retain `manifest_version = 1` with `package.api_version = "1"`. Package identity is case-sensitive `publisher.id`; package release and configuration-schema versions have separate meanings.
 
 Declare `kind = "decoder"`, a package-relative `module:Class` entrypoint and `[contributions.channel_requirements]`. The requirements table is mandatory for a Decoder but may be empty. There is no separate signal-contract selector.
 
@@ -76,7 +76,7 @@ Pre-trigger buffering is independent of baseline correction. A Filter receives t
 
 Use the supported closed JSON Schema subset: object root, `additionalProperties: false`, declared fields and valid defaults. JSON descriptions belong in `description` fields. External references and unsupported keywords fail static validation. `x-scope` describes portability; `x-apply` suggests a boundary while the host decides when changes can apply.
 
-Optional package/contribution `platforms` constrain `darwin`, `linux` and `win32`. `package.engines.omnibci` supports the documented numeric comparison subset, while `package.host_version` and `[package.requires]` check exact host/library versions. The host never installs dependencies from the plugin. Do not vendor `omnibci`, ship a virtual environment or expect build hooks to run.
+Optional package/contribution `platforms` constrain `darwin`, `linux` and `win32`. `package.engines.omnibci` supports the documented numeric comparison subset, `package.host_version` checks an exact host version, and `[package.requires]` checks exact or numeric-comparison versions of host-exposed scientific/rendering libraries. The host never installs dependencies from the plugin. Do not vendor `omnibci`, ship a virtual environment or expect build hooks to run.
 
 ## Validate, develop and install
 

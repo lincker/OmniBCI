@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from tests.execution_helpers import output_bindings, synthetic_execution_snapshot
 
 from omnibci.infrastructure.process_lifecycle import (
@@ -23,8 +23,9 @@ from omnibci.infrastructure.actuation.process_manager import (
 
 
 def _effector_snapshot(effector="logger"):
-    return synthetic_execution_snapshot({"ACTUATION.effector": effector, "CONFIG.module_revisions": {"actuation": "a" * 64},
-            "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run", "PLUGINS.bindings": [output_bindings()[1]]})
+    binding = {**output_bindings()[1], "selection": {"package_id": "test.effector", "contribution_id": effector, "version": "1.0.0"}}
+    return synthetic_execution_snapshot({"CONFIG.module_revisions": {"actuation": "a" * 64},
+            "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run", "PLUGINS.bindings": [binding]})
 
 
 def _cooperative_child(stop_event, stopped_flag):
@@ -128,7 +129,7 @@ class TestSpawnMode:
         assert kwargs["daemon"] is True
         assert m.is_alive is True and m.is_ready is True
         assert m.state is ChildProcessState.READY
-        assert m.current_effector == "logger"
+        assert m.current_effector == "test.effector/logger@1.0.0"
         startup_pipe.sender.close.assert_called_once_with()
 
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
@@ -169,13 +170,23 @@ class TestSpawnMode:
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
     def test_effector_change_restarts_after_cooperative_exit(
-        self, mock_proc_cls, mock_event_cls
+        self, mock_proc_cls, mock_event_cls, startup_pipe
     ):
         old_process, _ = _mock_process(exits_after_join=1, pid=1001)
         new_process, _ = _mock_process(pid=1002)
         old_stop, new_stop = MagicMock(), MagicMock()
         mock_proc_cls.side_effect = [old_process, new_process]
         mock_event_cls.side_effect = [old_stop, new_stop]
+        startup_pipe.receiver.recv.side_effect = [
+            StartupReport.ready(
+                "Actuation", module_revisions={"actuation": "a" * 64}, engine_revision="b" * 64, generation="run",
+                execution=execution_receipt(_effector_snapshot(), "actuation", "prepare-1"),
+            ),
+            StartupReport.ready(
+                "Actuation", module_revisions={"actuation": "a" * 64}, engine_revision="b" * 64, generation="run",
+                execution=execution_receipt(_effector_snapshot("arm_v2"), "actuation", "prepare-1"),
+            ),
+        ]
         m = ActuationProcessManager()
         m.start(settings_snapshot=_effector_snapshot())
         m.start(settings_snapshot=_effector_snapshot("arm_v2"))
@@ -270,7 +281,7 @@ class TestSpawnMode:
 
         assert m._process is proc
         assert m._stop_event is stop_event
-        assert m._effector == "logger"
+        assert m._effector == "test.effector/logger@1.0.0"
         assert m.state is ChildProcessState.FAILED
         proc.close.assert_not_called()
 

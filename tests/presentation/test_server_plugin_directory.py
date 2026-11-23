@@ -7,11 +7,11 @@ import pytest
 import tomlkit
 from fastapi.testclient import TestClient
 
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, user_plugins_dir
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.project_tools import package_project
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, user_plugins_dir
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.project_tools import package_project
 from omnibci.presentation.main import create_app
 
 
@@ -22,7 +22,7 @@ def _plugin(directory):
     package = directory / "effectors" / "directory"
     package.mkdir(parents=True)
     (package / "manifest.toml").write_text(tomlkit.dumps({
-        "manifest_version": 2,
+        "manifest_version": 1,
         "package": {"id": "directory", "publisher": "test", "version": SELECTION.version,
                     "domain": "actuation", "api_version": "1"},
         "contributions": [{"id": "default", "kind": "effector", "plugin_type": "directory_probe",

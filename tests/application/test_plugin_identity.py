@@ -12,12 +12,14 @@ import pytest
 def test_identity_import_loads_no_other_project_modules():
     result = subprocess.run([sys.executable, "-B", "-c", """
 import sys
-from omnibci.application.plugin_identity import PluginSelection, PLUGIN_KINDS
+from omnibci.application.plugin_management.identity import PluginSelection, PLUGIN_KINDS
 
 assert PluginSelection('acme.test', 'main', '1.0.0').version == '1.0.0'
 assert 'effector' in PLUGIN_KINDS
 assert {name for name in sys.modules if name.startswith('omnibci.')} == {
-    'omnibci.application', 'omnibci.application.plugin_identity',
+    'omnibci.application',
+    'omnibci.application.plugin_management',
+    'omnibci.application.plugin_management.identity',
 }
 """], cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
@@ -25,7 +27,7 @@ assert {name for name in sys.modules if name.startswith('omnibci.')} == {
 
 @pytest.mark.parametrize("module_name", [
     "omnibci.application.configuration.models",
-    "omnibci.infrastructure.plugins.descriptors",
+    "omnibci.infrastructure.plugin_management.descriptors",
 ])
 def test_previous_owners_do_not_export_identity(module_name):
     module = import_module(module_name)
@@ -34,7 +36,7 @@ def test_previous_owners_do_not_export_identity(module_name):
 
 
 def test_selection_round_trips_and_cannot_be_mutated():
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
 
     data = {"package_id": "acme.test", "contribution_id": "main", "version": "1.0.0"}
     selection = PluginSelection.from_dict(data)
@@ -50,7 +52,7 @@ def test_selection_round_trips_and_cannot_be_mutated():
 
 @pytest.mark.parametrize("version", ["1", "0.0.0", "1beta", "1.2.3-rc.1+build.4", "1" * 128])
 def test_existing_exact_version_spellings_are_preserved(version):
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
 
     selection = PluginSelection("acme.test", "main", version)
     assert PluginSelection.from_dict(selection.to_dict()) == selection
@@ -58,7 +60,7 @@ def test_existing_exact_version_spellings_are_preserved(version):
 
 @pytest.mark.parametrize("version", [None, "", "*", ">=1", "1.0.*", " 1.0.0", "1.0.0.", "1" * 129, "１.0.0"])
 def test_selections_require_exact_versions(version):
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
 
     with pytest.raises(ValueError) as raised:
         PluginSelection("acme.test", "main", version)
@@ -70,7 +72,7 @@ def test_selections_require_exact_versions(version):
     ("package_id", " acme.test"), ("contribution_id", 1), ("contribution_id", "main "),
 ])
 def test_selection_fields_reject_coercion_or_trimming(field, value):
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
 
     data = {"package_id": "acme.test", "contribution_id": "main", "version": "1.0.0", field: value}
     with pytest.raises(ValueError) as raised:
@@ -84,7 +86,7 @@ def test_selection_fields_reject_coercion_or_trimming(field, value):
     {"package_id": "acme.test", "contribution_id": "main", "version": "1.0.0", 0: "extra"},
 ])
 def test_selection_documents_require_exact_fields(data):
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
 
     with pytest.raises(ValueError, match="fields") as raised:
         PluginSelection.from_dict(data)

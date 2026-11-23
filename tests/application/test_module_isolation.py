@@ -8,7 +8,7 @@ import pytest
 from omnibci.application.configuration.models import EngineSettings
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
+from omnibci.application.configuration.accepted import accepted_runtime_settings
 
 
 @pytest.mark.asyncio

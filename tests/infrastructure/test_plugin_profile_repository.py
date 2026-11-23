@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 import tomlkit
 
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import ModuleActivation, PluginProfile, ProfileBinding, EngineSettings
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileStorageError, PluginProfileValidationError, ProfileRevisionConflict
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
@@ -228,7 +228,7 @@ def test_failed_module_replace_preserves_current_and_history(repository, monkeyp
     entry = repository.record_module_history(saved, str(uuid4()))
     def fail(*args):
         raise OSError("disk full")
-    monkeypatch.setattr("omnibci.infrastructure.repositories.configuration_storage.os.replace", fail)
+    monkeypatch.setattr("omnibci.infrastructure.storage.os.replace", fail)
     with pytest.raises(PluginProfileStorageError, match="disk full"):
         repository.save_module(ModuleActivation("processing", {"ALGORITHM.baseline_duration": 1.0}, ()),
                                expected_revision=saved.revision)

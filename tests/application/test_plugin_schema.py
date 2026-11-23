@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from omnibci.application.plugin_schema import (
+from omnibci.application.plugin_management.schema import (
     PluginSchemaError,
     validate_parameters,
     validate_schema,
@@ -187,3 +187,28 @@ def test_cyclic_parameter_values_fail_without_recursion_errors():
     parameters["self"] = parameters
     with pytest.raises(PluginSchemaError, match="depth"):
         validate_parameters(_object(), parameters)
+
+
+def test_validate_controls_accepts_valid_and_rejects_malformed_controls():
+    from omnibci.application.plugin_management.schema import validate_controls
+
+    valid = {
+        "n_trials": {"label": "Trials", "type": "int", "default": 1, "min": 1, "field": "n_trials"},
+        "target_cue": {
+            "label": "Cue", "type": "int", "default": 1, "default_sequence": "1-10",
+            "min": 0, "max": 10, "field": "trial_params", "payload_key": "cue_target_id",
+        },
+    }
+    assert validate_controls(valid) == valid
+
+    for bad in (
+        {"x": {"field": "unknown"}},
+        {"a": {"field": "n_trials"}, "b": {"field": "n_trials"}},
+        {"x": {"field": "trial_params"}},
+        {"x": {"field": "n_trials", "payload_key": "extra"}},
+        {"x": {"field": "n_trials", "min": 5, "max": 2}},
+        {"x": {"field": "trial_params", "payload_key": "k", "type": "int", "min": 1, "max": 5, "default_sequence": "1-9"}},
+        {"x": {"field": "n_trials", "unsupported_key": 1}},
+    ):
+        with pytest.raises(PluginSchemaError):
+            validate_controls(bad)

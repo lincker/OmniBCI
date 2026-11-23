@@ -18,8 +18,8 @@ from omnibci.domain.ports.acquisition import SignalSource
 from omnibci.application.source_metadata import descriptor_layout, source_fingerprint
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand, AcquisitionRuntime
 from omnibci.infrastructure.ipc.data_manager import DataManager
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.shared.events import EventType
 
@@ -133,7 +133,7 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
 
     monkeypatch.setattr(data, "put_data", capture)
     acquisition = AcquisitionRuntime(
-        source, Queue(), data, bus, source_id=source.plugin_type,
+        source, Queue(), data, bus, source_id="neuroscan_curry8_reader",
         generation="curry-generation", acquisition_revision="curry-revision", engine_revision="engine",
     )
     processor = make_processor(

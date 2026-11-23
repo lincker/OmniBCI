@@ -49,7 +49,6 @@ def _payload_id(payload: Mapping[str, object], key: str, minimum: int) -> int:
 
 
 class Command10SSVEP(Paradigm):
-    plugin_type = 'STIMULATION_COMMAND10_SSVEP'
 
     def __init__(self, *, parameters: Mapping[str, object], resource_root: Path) -> None:
         if not isinstance(parameters, Mapping) or parameters:

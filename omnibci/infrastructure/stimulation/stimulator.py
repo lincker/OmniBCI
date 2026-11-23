@@ -9,8 +9,7 @@ import threading
 from copy import deepcopy
 
 from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULTS
-from omnibci.application.plugin_schema import validate_parameters
-from omnibci.infrastructure.plugins.loader import PluginLoader
+from omnibci.application.plugin_management.schema import validate_parameters
 from omnibci.domain.ports.acquisition import TriggerEmitter
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.infrastructure.stimulation.render_loop import RenderLoop
@@ -84,8 +83,8 @@ class Stimulator:
     # ── Internal loaders ───────────────────────────────────────────────────
 
     def _load_trigger(self) -> TriggerEmitter:
-        from omnibci.infrastructure.plugins.preparation import configured_bindings
-        from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+        from omnibci.infrastructure.plugin_management.preparation import configured_bindings
+        from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
         if not any(binding.slot == "stimulation.trigger" for binding in configured_bindings(self._snapshot)):
             return _NoTrigger()
         return load_configured_plugin(
@@ -93,12 +92,12 @@ class Stimulator:
         )
 
     def _load_paradigm(self) -> Paradigm:
-        from omnibci.infrastructure.plugins.runtime_configuration import resolve_configured_plugin
-        descriptor, parameters = resolve_configured_plugin(
-            self._snapshot, "stimulation.paradigm", "paradigm",
+        from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin_bundle
+        loaded = load_configured_plugin_bundle(
+            self._snapshot, "stimulation.paradigm", "paradigm", Paradigm,
         )
-        self._payload_schemas = deepcopy(descriptor.payload_schemas)
-        return PluginLoader.instantiate(descriptor, Paradigm, parameters=parameters)
+        self._payload_schemas = dict(loaded.payload_schemas)
+        return loaded.instance
 
     # ── Internal setup ─────────────────────────────────────────────────────
 

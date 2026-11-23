@@ -9,7 +9,7 @@ from omnibci.application.commands.stimulation_commands import StartStimTrialComm
 from omnibci.infrastructure.actuation.actuator import Actuator
 from omnibci.application.commands.actuation_commands import validate_actuation_command
 from tests.actuation_helpers import actuation_payload
-from omnibci.infrastructure.plugins.manifest import PluginManifestError, parse_manifest
+from omnibci.infrastructure.plugin_management.manifest import PluginManifestError, parse_manifest
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 from omnibci.presentation.schemas.stimulation import StartTrialRequest
 from tests.infrastructure.test_output_plugin_configuration import binding

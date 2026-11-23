@@ -6,10 +6,10 @@ import shutil
 import pytest
 
 from omnibci.application.configuration.models import ProfileBinding
-from omnibci.application.plugin_packages import PluginPackageError
-from omnibci.infrastructure.plugins.loader import PluginLoadError
-from omnibci.infrastructure.plugins.package_installer import PackageInstallError
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.application.plugin_management.packages import PluginPackageError
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError
+from omnibci.infrastructure.plugin_management.installer import PackageInstallError
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from tests.infrastructure.test_package_store import package_archive
 from tests.plugin_configuration_helpers import builtin_selection
 
@@ -26,18 +26,18 @@ def installed(tmp_path):
 
 
 def prepare(store, binding):
-    from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer
+    from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer
     return PluginArtifactPreparer(store).prepare(binding)
 
 
 def read(binding, record):
-    from omnibci.infrastructure.plugins.preparation import read_prepared_plugin
+    from omnibci.infrastructure.plugin_management.preparation import read_prepared_plugin
     return read_prepared_plugin(binding, record)
 
 
 def test_execution_receipt_exports_only_owned_pins_without_local_paths(installed):
-    from omnibci.infrastructure.plugins.preparation import execution_receipt
-    from omnibci.application.plugin_execution import bindings_fingerprint
+    from omnibci.infrastructure.plugin_management.preparation import execution_receipt
+    from omnibci.application.plugin_management.execution import bindings_fingerprint
 
     store, binding, _ = installed
     record = prepare(store, binding)
@@ -53,7 +53,7 @@ def test_execution_receipt_exports_only_owned_pins_without_local_paths(installed
 
 
 def test_managed_preparation_and_json_handoff_are_static_and_offline(installed, monkeypatch):
-    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+    from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
     store, binding, _ = installed
     record = prepare(store, binding)
     monkeypatch.setattr(PluginCatalog, 'resolve_selection', lambda *a, **k: pytest.fail('No second catalog search'))
@@ -173,7 +173,7 @@ def test_receipt_metadata_and_inert_bytecode_do_not_change_content_identity(inst
 
 
 def test_preparation_rechecks_declared_dependencies_in_the_actual_environment(tmp_path):
-    from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
+    from omnibci.infrastructure.plugin_management.installer import PluginPackageInstaller
     from tests.infrastructure.test_package_installer import _archive, _manifest
     directory = tmp_path / 'plugins'
     installer = PluginPackageInstaller(directory / 'packages', host_dependencies={'numpy': '0.0.0'})
@@ -228,7 +228,7 @@ def test_installation_rejects_packaged_bytecode(installed, tmp_path, name):
 
 
 def test_environment_drift_is_detected_after_preparation(installed, monkeypatch):
-    from omnibci.infrastructure.plugins import preparation
+    from omnibci.infrastructure.plugin_management import preparation
     store, binding, _ = installed
     record = prepare(store, binding)
     libraries = preparation.installed_host_libraries()
@@ -238,7 +238,7 @@ def test_environment_drift_is_detected_after_preparation(installed, monkeypatch)
 
 
 def test_edit_during_static_declaration_read_does_not_escape_verification(installed, monkeypatch):
-    from omnibci.infrastructure.plugins import preparation
+    from omnibci.infrastructure.plugin_management import preparation
     store, binding, _ = installed
     record = prepare(store, binding)
     parse = preparation.parse_manifest
@@ -252,7 +252,7 @@ def test_edit_during_static_declaration_read_does_not_escape_verification(instal
 
 
 def test_accepted_market_evidence_is_retained_without_refreshing_at_preparation(installed):
-    from omnibci.application.plugin_packages import MarketVerification
+    from omnibci.application.plugin_management.packages import MarketVerification
     store, binding, _ = installed
     path = store.packages_dir / 'acme.device/1.0.0/.omnibci-install.json'
     receipt = json.loads(path.read_text())
@@ -264,3 +264,55 @@ def test_accepted_market_evidence_is_retained_without_refreshing_at_preparation(
     assert record['origin'] == 'market' and record['verified_repository'] == 'example.plugins'
     assert read(binding, record).selection == binding.selection
     assert path.read_text() == json.dumps(receipt)
+
+
+def test_prepare_and_load_bundle_hash_artifact_once_per_stage(tmp_path, monkeypatch):
+    from omnibci.domain.ports.effector import Effector
+    from omnibci.infrastructure.plugin_management import inventory as inventory_mod
+    from omnibci.infrastructure.plugin_management import loader as loader_mod
+    from omnibci.infrastructure.plugin_management import preparation
+    from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin_bundle
+
+    store = ManagedPluginPackageStore(tmp_path / 'plugins')
+    code = """from omnibci.sdk import Effector
+class Driver(Effector):
+    def __init__(self, *, parameters, resource_root):
+        self.parameters = parameters
+    def setup(self): pass
+    def execute(self, command): pass
+    def quiesce(self): pass
+    def teardown(self): pass
+"""
+    package = store.install_archive(package_archive(tmp_path, code=code)).package
+    store.set_enabled(package.package_id, package.version, True)
+    binding = ProfileBinding('actuation.effector', 'effector', None,
+                             package.contributions[0].selection, {'gain': 1.0})
+    calls = 0
+    original_with_stats = inventory_mod.artifact_inventory_with_stats
+    original_inventory = inventory_mod.artifact_inventory
+
+    def count_with_stats(location):
+        nonlocal calls
+        calls += 1
+        return original_with_stats(location)
+
+    def count_inventory(location):
+        nonlocal calls
+        calls += 1
+        return original_inventory(location)
+
+    monkeypatch.setattr(preparation, 'artifact_inventory_with_stats', count_with_stats)
+    monkeypatch.setattr(loader_mod, 'artifact_inventory', count_inventory)
+
+    record = prepare(store, binding)
+    assert calls == 1
+
+    calls = 0
+    snapshot = {
+        'PLUGINS.bindings': [binding.to_dict()],
+        'PLUGINS.artifacts': {binding.slot: record},
+    }
+    loaded = load_configured_plugin_bundle(snapshot, binding.slot, 'effector', Effector)
+    assert calls == 1
+    assert isinstance(loaded.instance, Effector)
+    assert 'command' in loaded.payload_schemas

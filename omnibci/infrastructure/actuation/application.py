@@ -35,7 +35,7 @@ from omnibci.application.events import CommandFailureKind, CommandRequest, Comma
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.async_lifecycle import await_owned
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from omnibci.infrastructure.outbound import make_actuation_ack, make_actuation_fault
 from omnibci.infrastructure.ipc.peer_channel import PeerChannel
 from omnibci.infrastructure.actuation.engine_channel import engine_peer_config

@@ -142,8 +142,7 @@ def merge_module_settings(current: dict, selected: dict, modules) -> dict:
         keys = SECTION_SETTING_KEYS[module]
 
         def belongs(key):
-            return key in keys or (module == "acquisition" and key.startswith("ACQUISITION.")
-                                   and key != "ACQUISITION.trigger")
+            return key in keys or (module == "acquisition" and key.startswith("ACQUISITION."))
 
         result = {key: value for key, value in result.items() if not belongs(key)}
         result.update({key: deepcopy(value) for key, value in selected.items() if belongs(key)})
@@ -171,9 +170,7 @@ def module_runtime_settings(snapshot: dict, module: str) -> dict:
     prefixes = tuple("ALGORITHM." if name == "processing" else name.upper() + "." for name in modules)
     shared = {"CONFIG.generation", "CONFIG.engine_revision", "CONFIG.operation_id", "debug"}
     result = {key: deepcopy(value) for key, value in snapshot.items()
-              if key in shared or key.startswith(prefixes) and key != "ACQUISITION.trigger"}
-    if module == "stimulation" and "ACQUISITION.trigger" in snapshot:
-        result["ACQUISITION.trigger"] = deepcopy(snapshot["ACQUISITION.trigger"])
+              if key in shared or key.startswith(prefixes)}
     result["CONFIG.module_revisions"] = {
         name: snapshot.get("CONFIG.module_revisions", {}).get(name) for name in modules
     }

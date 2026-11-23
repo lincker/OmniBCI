@@ -7,18 +7,18 @@ from uuid import uuid4
 
 import pytest
 
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.models import ActivationSet, ModuleActivation, ProfileBinding, EngineSettings
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.domain.channel_mapping import ChannelBinding, ProcessingInput
-from omnibci.application.plugin_schema import PluginSchemaError
-from omnibci.application.plugin_packages import PluginPackageConflictError, PluginPackageError
+from omnibci.application.plugin_management.schema import PluginSchemaError
+from omnibci.application.plugin_management.packages import PluginPackageConflictError, PluginPackageError
 from omnibci.application.configuration.service import ConfigurationService
-from omnibci.infrastructure.plugins.configuration_catalog import CatalogConfigurationAdapter
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from tests.infrastructure.test_package_store import package_archive
 from tests.plugin_configuration_helpers import builtin_selection
-from omnibci.infrastructure.plugins.accepted_configuration import accepted_runtime_settings
+from omnibci.application.configuration.accepted import accepted_runtime_settings
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
 

@@ -17,8 +17,8 @@ from omnibci.application.configuration.definitions import module_runtime_setting
 from omnibci.infrastructure.actuation import process_manager as actuation
 from omnibci.infrastructure.stimulation import process_manager as stimulation
 from omnibci.infrastructure.process_lifecycle import StartupReport, StartupReporter
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.preparation import PluginArtifactPreparer, execution_receipt
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer, execution_receipt
 from tests.execution_helpers import output_bindings, synthetic_execution_snapshot
 
 
@@ -112,7 +112,7 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
     if component == "Stimulation":
         assert manager.current_paradigm == "STIMULATION_THUBCI_SSVEP_classic40"
     else:
-        assert manager.current_effector == "selected-plugin"
+        assert manager.current_effector == "test.effector/default@1.0.0"
     assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": {**module_runtime_settings(original, component.lower()), "CONFIG.operation_id": manager._settings_snapshot["CONFIG.operation_id"]}}
 
     saved["CONFIG.module_revisions"][component.lower()] = "b" * 64

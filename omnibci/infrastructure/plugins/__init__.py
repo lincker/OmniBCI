@@ -1,1 +1,1 @@
-"""Manifest-based plugin discovery, loading and package management."""
+"""Built-in OmniBCI plugin packages."""

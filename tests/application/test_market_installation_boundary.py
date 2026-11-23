@@ -6,13 +6,13 @@ from datetime import UTC, datetime
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from omnibci.application.plugin_market import PluginMarketError
-from omnibci.application.plugin_packages import PluginPackageError
-from omnibci.application.services.plugin_installation_service import PluginInstallationService
-from omnibci.application.services.plugin_market_service import PluginMarketService
-from omnibci.infrastructure.plugins.market_adapter import MarketRepositoryAdapter
-from omnibci.infrastructure.plugins.market_repository import StaticMarketRepository
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
+from omnibci.application.plugin_management.market import PluginMarketError
+from omnibci.application.plugin_management.packages import PluginPackageError
+from omnibci.application.plugin_management.package_service import PluginPackageService
+from omnibci.application.plugin_management.market_service import PluginMarketService
+from omnibci.infrastructure.plugin_management.market import MarketRepositoryAdapter
+from omnibci.infrastructure.plugin_management.market import StaticMarketRepository
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from tests.infrastructure.test_market_repository import _NOW, _URL, _DOWNLOAD, _Opener, _index, _signed
 from tests.infrastructure.test_package_store import package_archive
 
@@ -33,7 +33,7 @@ def services(artifacts, guard=nullcontext):
     repository = StaticMarketRepository(_URL, {"test-key": key.public_key()}, archive.parent / "cache",
                                         expected_repository_id="example.plugins", clock=lambda: _NOW)
     repository._opener = _Opener({_URL: _signed(index, key), _DOWNLOAD: archive.read_bytes()})
-    installation = PluginInstallationService(store, admission_guard=guard)
+    installation = PluginPackageService(store, admission_guard=guard)
     return PluginMarketService(MarketRepositoryAdapter(repository), installation), repository, installation
 
 

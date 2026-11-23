@@ -5,10 +5,10 @@ import pytest
 
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.ports.effector import Effector
-from omnibci.infrastructure.plugins import preparation
-from omnibci.infrastructure.plugins.loader import PluginLoadError
-from omnibci.infrastructure.plugins.package_lifecycle_store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugins.runtime_configuration import load_configured_plugin
+from omnibci.infrastructure.plugin_management import preparation
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError
+from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
+from omnibci.infrastructure.plugin_management.runtime import load_configured_plugin
 from tests.infrastructure.test_package_store import package_archive
 
 

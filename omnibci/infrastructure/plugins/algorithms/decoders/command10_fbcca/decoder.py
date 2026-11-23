@@ -45,7 +45,6 @@ def _basis(data):
 
 
 class Command10FBCCA(Decoder):
-    plugin_type = 'COMMAND10_SSVEP_FBCCA'
 
     def __init__(self, *, parameters: Mapping[str, object], resource_root: Path,
                  input_signal: SignalInfo) -> None:

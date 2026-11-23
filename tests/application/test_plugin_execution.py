@@ -17,7 +17,7 @@ def receipt_data():
 
 
 def test_execution_evidence_cannot_be_changed_through_input_or_export():
-    from omnibci.application.plugin_execution import PluginExecutionReceipt
+    from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 
     data = receipt_data()
     expected = deepcopy(data)
@@ -34,7 +34,7 @@ def test_execution_evidence_cannot_be_changed_through_input_or_export():
     "bad_origin", "false_proof", "missing_field",
 ])
 def test_execution_evidence_rejects_invalid_or_excess_information(change):
-    from omnibci.application.plugin_execution import PluginExecutionReceipt
+    from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 
     data = receipt_data()
     artifact = data["artifacts"]["actuation.effector"]
@@ -61,7 +61,7 @@ def test_execution_evidence_rejects_invalid_or_excess_information(change):
 
 
 def test_peer_admission_checks_operation_and_binding_not_controller_environment():
-    from omnibci.application.plugin_execution import PluginExecutionReceipt
+    from omnibci.application.plugin_management.execution import PluginExecutionReceipt
     from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
 
     receipt = PluginExecutionReceipt.from_dict(receipt_data())

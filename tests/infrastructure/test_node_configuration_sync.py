@@ -4,17 +4,17 @@ import json
 from uuid import uuid4
 
 from tests.execution_helpers import synthetic_execution_snapshot
-from omnibci.application.plugin_execution import bindings_fingerprint
-from omnibci.infrastructure.plugins.preparation import execution_receipt
+from omnibci.application.plugin_management.execution import bindings_fingerprint
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from threading import Event as ThreadEvent
 
 import pytest
 
 from omnibci.application.commands.engine_commands import StartEngineCommand, StopEngineCommand
 from omnibci.application.node_configuration import NodeConfiguration, materialize_node_configuration
-from omnibci.application.plugin_identity import PluginSelection
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.domain.channel_mapping import ProcessingInput
-from omnibci.application.ports.plugin_configuration_catalog import PluginConfiguration
+from omnibci.application.plugin_management.catalog import PluginConfiguration
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
 from omnibci.application.configuration.service import ConfigurationService

@@ -94,7 +94,7 @@ class TestLifecycle:
         (package_dir / "manifest.toml").write_text(
             dedent(
                 """
-                manifest_version = 2
+                manifest_version = 1
                 [package]
                 id = "user-device"
                 publisher = "alice"
@@ -148,7 +148,7 @@ class TestLifecycle:
         from tests.plugin_configuration_helpers import install_package_root, prepared_snapshot
         install_package_root(package_dir)
         from omnibci.application.configuration.models import ProfileBinding
-        from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
+        from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
         descriptor = next(item for item in PluginCatalog().list_contributions("effector") if item.plugin_type == "user_device")
         binding = ProfileBinding("actuation.effector", "effector", None, descriptor.selection, {})
         actuator = Actuator(settings_snapshot=prepared_snapshot({"PLUGINS.bindings": [binding.to_dict()]}))

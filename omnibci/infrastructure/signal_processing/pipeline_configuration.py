@@ -3,11 +3,11 @@
 from copy import deepcopy
 from dataclasses import dataclass
 
-from omnibci.application.plugin_schema import validate_parameters
+from omnibci.application.plugin_management.schema import validate_parameters
 from omnibci.application.processing_source import processing_input, validate_plan_binding
 from omnibci.domain.ports.algorithm import Decoder, Filter
-from omnibci.infrastructure.plugins.preparation import configured_bindings
-from omnibci.infrastructure.plugins.runtime_configuration import (
+from omnibci.infrastructure.plugin_management.preparation import configured_bindings
+from omnibci.infrastructure.plugin_management.runtime import (
     resolve_configured_plugin, load_configured_plugin,
 )
 from omnibci.domain.signal_info import SignalInfo
@@ -73,7 +73,7 @@ def build_pipeline_update(current: dict, candidate: dict, *, sample_rate: int | 
     from omnibci.application.configuration.definitions import SECTION_SETTING_KEYS
     fixed_keys = SECTION_SETTING_KEYS["processing"] | SECTION_SETTING_KEYS["engine"] | SECTION_SETTING_KEYS["acquisition"]
     fixed_keys = fixed_keys | {key for key in current.keys() | snapshot.keys()
-                              if key.startswith("ACQUISITION.") and key != "ACQUISITION.trigger"}
+                              if key.startswith("ACQUISITION.")}
     if (any(current.get(key) != snapshot.get(key) for key in fixed_keys)
             or current.get("CONFIG.generation") != snapshot.get("CONFIG.generation")
             or current.get("CONFIG.engine_revision") != snapshot.get("CONFIG.engine_revision")

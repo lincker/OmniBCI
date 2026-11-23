@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 import tomlkit
 
-from omnibci.infrastructure.plugins.package_installer import PluginPackageInstaller
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot, vendor_plugins_dir
+from omnibci.infrastructure.plugin_management.installer import PluginPackageInstaller
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot, vendor_plugins_dir
 
 
 def package(root):
     (root / 'manifest.toml').write_text(tomlkit.dumps({
-        'manifest_version': 2,
+        'manifest_version': 1,
         'package': {'id': 'device', 'publisher': 'test', 'version': '1.0.0',
                     'api_version': '1', 'domain': 'acquisition'},
         'contributions': [
@@ -28,7 +28,7 @@ def package(root):
 
 
 def test_static_reader_returns_the_same_builtin_descriptors_as_catalog():
-    manifest = importlib.import_module('omnibci.infrastructure.plugins.manifest')
+    manifest = importlib.import_module('omnibci.infrastructure.plugin_management.manifest')
     root = vendor_plugins_dir()
     catalog = PluginCatalog({'acquisition': lambda: [PluginRoot(root, 'builtin', 100)]})
     descriptors, errors = catalog._scan('acquisition', all_categories=True)
@@ -49,13 +49,13 @@ def test_installation_reads_a_multi_contribution_manifest_once(tmp_path, monkeyp
         return original(path, *args, **kwargs)
     monkeypatch.setattr(Path, 'read_text', read)
     installer = PluginPackageInstaller(tmp_path / 'installed', host_version='1.0.0')
-    descriptors = installer._validate_package(tmp_path)
+    descriptors = installer.validate_package(tmp_path)
     assert [item.contribution_id for item in descriptors] == ['source', 'output']
     assert reads == [tmp_path / 'manifest.toml']
 
 
 def test_invalid_sibling_keeps_identity_for_no_fallback_resolution(tmp_path):
-    manifest = importlib.import_module('omnibci.infrastructure.plugins.manifest')
+    manifest = importlib.import_module('omnibci.infrastructure.plugin_management.manifest')
     package(tmp_path)
     (tmp_path / 'output.json').write_text('{"type":"object"}')
     with pytest.raises(manifest.PluginManifestError) as caught:

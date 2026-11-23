@@ -11,8 +11,7 @@ def test_output_changes_do_not_invalidate_processing_replacement():
     before = selected_snapshot()
     after = deepcopy(before)
     after["CONFIG.module_revisions"].update(processing="new", stimulation="new-stimulation", actuation="new-actuation")
-    after.update({"STIMULATION.renderer": "another-renderer", "ACTUATION.max_command_age_s": 2.0,
-                  "ACQUISITION.trigger": "another-trigger"})
+    after.update({"STIMULATION.renderer": "another-renderer", "ACTUATION.max_command_age_s": 2.0})
     after["PLUGINS.bindings"][1]["parameters"]["window_duration"] = 1.5
     after["PLUGINS.bindings"].append({
         "slot": "stimulation.paradigm", "kind": "paradigm", "profile_id": None,

@@ -9,8 +9,8 @@ import pytest
 
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.domain.channel_mapping import ChannelDescriptor, ProcessingInput, SignalInfo, compile_processing_plan
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog
-from omnibci.infrastructure.plugins.loader import PluginLoadError
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
+from omnibci.infrastructure.plugin_management.loader import PluginLoadError
 from omnibci.infrastructure.signal_processing import pipeline_configuration as configuration
 
 
@@ -178,7 +178,7 @@ def test_decoder_replacement_and_filter_removal_build_complete_bundle():
         {"window_duration": 1.0, "offset_time": 0.0}, processing_input=ProcessingInput(),
     ).to_dict()
     bundle = _build(before, after)
-    assert bundle.decoder.plugin_type == "THUBCI_SSVEP_classic40FBCCA"
+    assert type(bundle.decoder).__name__ == "Classic40FBCCA"
     assert bundle.filters == ()
 
 

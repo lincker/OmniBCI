@@ -168,7 +168,7 @@ def test_processing_input_cannot_redeclare_acquisition_metadata(signal_service, 
 
 def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service):
     from uuid import uuid4
-    from omnibci.application.plugin_identity import PluginSelection
+    from omnibci.application.plugin_management.identity import PluginSelection
     from omnibci.application.configuration.models import PluginProfile, ProfileBinding
     from omnibci.domain.channel_mapping import ProcessingInput
     service, _, _, _ = signal_service
