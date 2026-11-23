@@ -15,7 +15,6 @@ publisher = "OmniBCI"
 [[contributions]]
 id = "default"
 kind = "paradigm"
-plugin_type = "STIMULATION_THUBCI_SSVEP_classic40"
 entrypoint = "ssvep:Classic40SSVEP_2"
 display_name = "Classic 40-target SSVEP"
 description = "40-class steady-state visual evoked potential paradigm (THUBCI)."

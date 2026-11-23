@@ -60,11 +60,11 @@ def test_malformed_drafts_are_rejected_without_writes(signal_client, patch):
 def connected_descriptor(signal_client, signal_type="unknown"):
     service = signal_client.app.state.container.signal_setup_service
     service.engine.is_engine_ready = True
-    service.engine.applied_snapshot = {"ACQUISITION.signal_source": "fixture", "PLUGINS.bindings": [{"slot": "acquisition.source", "kind": "acquisition", "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1"}, "parameters": {}}]}
+    service.engine.applied_snapshot = {"PLUGINS.bindings": [{"slot": "acquisition.source", "kind": "acquisition", "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1"}, "parameters": {}}]}
     descriptor = source_descriptor(SourceObservation(native_text="native", signal_info=SignalInfo(sample_rate=500, channels=(
         ChannelDescriptor(0, "CH1", signal_type=signal_type, unit="uV", channel_id="channel-0"),
         ChannelDescriptor(1, "CH1", unit="uV", channel_id="channel-1"),
-    )), native_event="final-row", provenance="protocol-defined"), source_id="fixture", connection_id="current-connection")
+    )), native_event="final-row", provenance="protocol-defined"), source_id="test.source/default@1", connection_id="current-connection")
     service.acquisition.cached_descriptor_for = lambda binding: deepcopy(descriptor)
     return descriptor
 

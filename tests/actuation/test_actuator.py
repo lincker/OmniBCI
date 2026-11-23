@@ -104,7 +104,6 @@ class TestLifecycle:
                 [[contributions]]
                 id = "default"
                 kind = "effector"
-                plugin_type = "user_device"
                 entrypoint = "driver:UserDevice"
                 display_name = "User Device"
                 [contributions.payload_schemas]
@@ -121,11 +120,9 @@ class TestLifecycle:
         (package_dir / "driver.py").write_text(
             dedent(
                 """
-                from omnibci.domain.ports.effector import Effector
+                from omnibci.sdk import Effector
 
                 class UserDevice(Effector):
-                    plugin_type = "user_device"
-
                     def __init__(self, *, parameters, resource_root):
                         self.calls = []
 
@@ -148,8 +145,9 @@ class TestLifecycle:
         from tests.plugin_configuration_helpers import install_package_root, prepared_snapshot
         install_package_root(package_dir)
         from omnibci.application.configuration.models import ProfileBinding
+        from omnibci.application.plugin_management.identity import PluginSelection
         from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
-        descriptor = next(item for item in PluginCatalog().list_contributions("effector") if item.plugin_type == "user_device")
+        descriptor = PluginCatalog().resolve_selection("effector", PluginSelection("alice.user-device", "default", "1.0.0"))
         binding = ProfileBinding("actuation.effector", "effector", None, descriptor.selection, {})
         actuator = Actuator(settings_snapshot=prepared_snapshot({"PLUGINS.bindings": [binding.to_dict()]}))
         actuator.setup()

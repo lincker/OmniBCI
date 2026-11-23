@@ -1,8 +1,8 @@
 /** Plugin-owned current parameters and reusable saved profiles. */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConfigDialog, type ConfigDialogProps } from "./ConfigDialog";
-import { SchemaForm, initialSchemaValue, schemaErrors, sameParameters, normalizedParameters } from "./SchemaForm";
-import { pluginConfigApi as api, selectionKey,
+import { SchemaForm, initialSchemaValue, schemaErrors, sameParameters, normalizedParameters, type ConfigurationSchema } from "./SchemaForm";
+import { pluginConfigApi as api, selectionId, selectionKey,
   type PluginDefinition, type PluginKind, type PluginProfile } from "./api/plugin-config";
 import { useI18n, translatePluginName, type TranslationKey } from "./i18n";
 import "./PluginProfiles.css";
@@ -38,6 +38,18 @@ const observedFields = new Set(["sample_rate", "channel_count", "channel_labels"
 const connectionParameters = (parameters: Record<string, unknown>) => Object.fromEntries(
   Object.entries(parameters).filter(([key]) => !observedFields.has(key)));
 
+function isReportedSourceSchema(schema: ConfigurationSchema | null | undefined): boolean {
+  const properties = schema?.properties;
+  if (!properties) return false;
+  const required = new Set(schema.required ?? []);
+  const declared = [...observedFields].filter((key) => key in properties);
+  return declared.length > 0 && declared.every((key) => !required.has(key));
+}
+
+function supportsChannelLabels(schema: ConfigurationSchema | null | undefined): boolean {
+  return !!schema?.properties && "channel_labels" in schema.properties;
+}
+
 function focusSection(id: string) {
   if (typeof document === "undefined") return;
   const section = document.getElementById(id);
@@ -45,10 +57,10 @@ function focusSection(id: string) {
   section?.scrollIntoView({ block: "start" });
 }
 
-function observedParameters(metadata: DataSourceMetadata, pluginType: string | undefined): Record<string, unknown> {
+function observedParameters(metadata: DataSourceMetadata, schema: ConfigurationSchema | null | undefined): Record<string, unknown> {
   const output = metadata.descriptor!;
   const parameters: Record<string, unknown> = { sample_rate: output.sample_rate, channel_count: output.output_row_count };
-  if (pluginType === "neuroscan_curry8_reader") {
+  if (supportsChannelLabels(schema)) {
     try {
       const labels: unknown = JSON.parse(metadata.metadata)?.channel_labels;
       if (Array.isArray(labels) && labels.length === output.output_row_count && labels.every((label) => typeof label === "string")) {
@@ -78,7 +90,7 @@ function editorFor(profile: PluginProfile | undefined, definitions: PluginDefini
   while (names.has(`new profile ${index}`)) index += 1;
   return { sourceOrigin: "new", profile: null, selection: definition?.selection ?? null,
     configurationVersion: definition?.configuration_version ?? undefined, schema: definition?.schema, available: definition?.available, plugin: pluginKey, name: `new profile ${index}`,
-    parameters: ["file_reader", "neuroscan_curry8_reader"].includes(definition?.plugin_type ?? "")
+    parameters: isReportedSourceSchema(definition?.schema)
       ? connectionParameters(defaults) : defaults,
     processingInput: definition?.kind === "decoder" ? emptyProcessingInput() : null };
 }
@@ -149,7 +161,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
     ...(slot.kind === "decoder" ? processingInputErrors(editor.processingInput, t) : [])];
   const missingDecoderInput = slot.kind === "decoder" && (editor.requiresProcessingInputReview || !editor.processingInput);
   const moduleValidation = current.validationError(module);
-  const reportedSource = ["neuroscan_curry8_reader", "file_reader"].includes(definition?.plugin_type ?? "");
+  const reportedSource = isReportedSourceSchema(definition?.schema);
   const sourceParameters = editor.parameters;
   const sourceParameterKey = JSON.stringify(sourceParameters);
   const sourceSelected = !!selectedBinding && runtime.status?.accepted[module] === activation?.revision
@@ -282,7 +294,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
   const useObservedValues = () => {
     if (busy || !canUseObserved || metadataRevision !== metadataGeneration.current) return;
     setEditor((current) => ({ ...current, parameters: { ...connectionParameters(current.parameters),
-      ...observedParameters(sourceMetadata!, definition?.plugin_type) } }));
+      ...observedParameters(sourceMetadata!, definition?.schema) } }));
     setNotice("profiles.observedValuesCopied");
   };
   const sourceSchema = slot.kind === "acquisition" && definition?.schema
@@ -295,7 +307,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
     {slot.kind === "trigger" ? <option value="">{t("profiles.noTrigger")}</option>
       : !definitions.length && !missingPlugins.length && <option value="">{t("profiles.noPlugins")}</option>}
     {definitions.map((item) => <option key={selectionKey(item.selection)} value={selectionKey(item.selection)}>
-      {translatePluginName(item.plugin_type, item.label, t)} · {item.selection.version} · {item.selection.package_id}/{item.selection.contribution_id}
+      {translatePluginName(selectionId(item.selection), item.label, t)} · {item.selection.version} · {item.selection.package_id}/{item.selection.contribution_id}
       {item.available ? "" : t("profiles.platformUnavailable")}{item.schema ? "" : t("profiles.noSchemaSuffix")}
     </option>)}
     {missingPlugins.map(([key, selection]) => <option key={key} value={key}>
@@ -448,7 +460,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
           {reportedSource ? <dl className="expected-source-parameters">
             <div><dt>{t("metadata.sampleRate")}</dt><dd>{String(editor.parameters.sample_rate ?? t("metadata.notConfirmed"))}</dd></div>
             <div><dt>{t("metadata.outputRows")}</dt><dd>{String(editor.parameters.channel_count ?? t("metadata.notConfirmed"))}</dd></div>
-            {definition?.plugin_type === "neuroscan_curry8_reader" && <div><dt>{t("metadata.channelLabels")}</dt>
+            {supportsChannelLabels(definition?.schema) && <div><dt>{t("metadata.channelLabels")}</dt>
               <dd>{Array.isArray(editor.parameters.channel_labels) ? editor.parameters.channel_labels.join(", ") : t("metadata.notConfirmed")}</dd></div>}
           </dl> : <SchemaForm schema={dimensionSchema} value={editor.parameters} disabled={busy} onChange={changeParameters} />}
         </details>}

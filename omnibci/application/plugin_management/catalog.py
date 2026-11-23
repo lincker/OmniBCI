@@ -10,7 +10,6 @@ from omnibci.domain.decoder_input import DecoderChannelRequirements
 class PluginConfiguration:
     selection: PluginSelection
     kind: str
-    plugin_type: str
     label: str
     description: str | None
     schema: dict | None

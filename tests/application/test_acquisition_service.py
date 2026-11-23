@@ -180,11 +180,16 @@ class TestAcquisitionStatus:
 
     def test_configured_dimensions_are_not_reported_as_source_metadata(self):
         service = AcquisitionAppService(MagicMock(), settings={
-            "ACQUISITION.signal_source": "test", "ACQUISITION.channel_count": 9,
+            "PLUGINS.bindings": [{
+                "slot": "acquisition.source", "kind": "acquisition",
+                "selection": {"package_id": "test.source", "contribution_id": "default", "version": "1.0.0"},
+                "parameters": {},
+            }],
+            "ACQUISITION.channel_count": 9,
             "ACQUISITION.sample_rate": 1000,
         })
         status = service.handle_get_status(GetAcquisitionStatusQuery())
-        assert status.source == "test"
+        assert status.source == "test.source/default@1.0.0"
         assert status.channel_count is None
         assert status.sample_rate is None
         assert status.metadata_available is False

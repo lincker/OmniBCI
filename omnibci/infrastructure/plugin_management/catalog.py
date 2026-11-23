@@ -439,7 +439,6 @@ def adapt_descriptor(descriptor: PluginDescriptor, platform_name: str):
         selection=descriptor.selection,
         kind=descriptor.category,
         domain=descriptor.package.domain,
-        plugin_type=descriptor.plugin_type,
         label=descriptor.display_name,
         description=descriptor.description,
         schema=deepcopy(descriptor.configuration_schema),

@@ -216,7 +216,6 @@ def materialize_node_configuration(configuration: NodeConfiguration,
             raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
         bindings.append(materialize_processing_binding(binding))
         if binding.kind == "acquisition":
-            result["ACQUISITION.signal_source"] = definition.plugin_type
             for key in ("sample_rate", "channel_count", "channel_labels"):
                 if _canonical(parameters.get(key)) != _canonical(result.get(f"ACQUISITION.{key}")):
                     raise PluginSchemaError(f"ACQUISITION.{key} disagrees with the pinned source")

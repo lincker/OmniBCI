@@ -11,7 +11,6 @@ publisher = "OmniBCI"
 [[contributions]]
 id = "default"
 kind = "decoder"
-plugin_type = "COMMAND10_SSVEP_FBCCA"
 entrypoint = "decoder:Command10FBCCA"
 display_name = "10-command SSVEP FBCCA"
 description = "Training-free FBCCA for the Command10 paradigm's fixed target IDs, frequencies and phases."

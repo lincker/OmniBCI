@@ -6,7 +6,7 @@ import { translateControlLabel, translatePluginName, useI18n, type TranslationKe
 import { EpochProcessing } from "./EpochProcessing";
 import { AcquisitionPreview } from "./AcquisitionPreview";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
-import { pluginConfigApi, selectionKey, configurationModules, type PluginDefinition } from "./api/plugin-config";
+import { pluginConfigApi, selectionId, selectionKey, configurationModules, type PluginDefinition } from "./api/plugin-config";
 import { MAX_TRIALS, parseTrialSequence, readTrialControls, type TrialControl } from "./plugin-controls";
 import { ModuleRuntime } from "./ModuleRuntime";
 import { LiveResults } from "./LiveResults";
@@ -116,16 +116,18 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       <small className="meta">{t("run.pinnedVersion", { version: binding.selection.version })}</small></>;
   };
   const missingRecording = recordingPathMissing(currentSource && "selection" in currentSource ? currentSource : undefined);
-  const playback = bindings("acquisition").some((item) => item.slot === "acquisition.source" && item.selection.package_id === "OmniBCI.file_reader");
-  const currentParadigm = stimulation.data?.paradigm || selectedParadigm?.plugin_type || "";
+  const playback = acquisition.data?.metadata_provenance === "file-reported"
+    || bindings("acquisition").some((item) => item.slot === "acquisition.source" && "data_file_path" in item.parameters);
+  const selectedParadigmId = selectedParadigm ? selectionId(selectedParadigm.selection) : "";
+  const currentParadigm = stimulation.data?.paradigm || selectedParadigmId;
   const paradigmName = translatePluginName(currentParadigm,
-    selectedParadigm?.plugin_type === currentParadigm ? selectedParadigm.label : currentParadigm || t("run.none"), t);
+    selectedParadigm && selectedParadigmId === currentParadigm ? selectedParadigm.label : currentParadigm || t("run.none"), t);
   const paradigmBinding = bindings("stimulation").find((item) => item.slot === "stimulation.paradigm");
   const paradigmKey = paradigmBinding ? selectionKey(paradigmBinding.selection) : null;
   const trialControlsReady = readyFor("stimulation") && selectedParadigm && (externalStimulation || selectedParadigm.available)
     && selectionKey(selectedParadigm.selection) === paradigmKey && !loadError && !controlsLoading
     && matches("stimulation", true)
-    && (!stimulation.data?.active || externalStimulation || stimulation.data.paradigm === selectedParadigm.plugin_type);
+    && (!stimulation.data?.active || externalStimulation || stimulation.data.paradigm === selectedParadigmId);
   const engineReason = !engineAvailable ? t("run.reason.engineUnavailable") : null;
   const stimulationReason = !stimulationAvailable ? t("run.reason.stimulationUnavailable") : null;
   const paradigmUnavailable = !selectedParadigm || !externalStimulation && !selectedParadigm.available;

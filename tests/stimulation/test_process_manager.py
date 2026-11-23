@@ -143,7 +143,7 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
     engine_service._applied_snapshot = snapshot
     stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=snapshot)
 
-    paradigm = "STIMULATION_THUBCI_SSVEP_classic40"
+    paradigm = "OmniBCI.classic40SSVEP/default@0.1.0"
     assert manager.current_paradigm == paradigm
     assert mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"] == {
         **snapshot, "PLUGINS.bindings": [snapshot["PLUGINS.bindings"][0]], "CONFIG.operation_id": "prepare-1",

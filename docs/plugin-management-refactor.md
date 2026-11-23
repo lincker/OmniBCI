@@ -1,6 +1,6 @@
 # Plugin Management Refactor Plan & `plugin_type` Removal Roadmap
 
-Status: Phases 1–4 implemented on branch `refactor/plugin-management` (branched from `dev` at `474b7cf`); Section 3 (`plugin_type` removal) remains mandatory immediate follow-up.
+Status: Phases 1–4 and Section 3 (complete `plugin_type` removal) implemented on branch `refactor/plugin-management` (branched from `dev` at `474b7cf`).
 
 ## 1. Confirmed Architectural Decisions
 
@@ -41,21 +41,19 @@ Status: Phases 1–4 implemented on branch `refactor/plugin-management` (branche
 
 ---
 
-## 3. Mandatory Follow-Up: Complete Removal of `plugin_type`
+## 3. Complete Removal of `plugin_type` (Implemented)
 
-`plugin_type` is a legacy v1 global string alias that conflicts with exact `PluginSelection(package_id, contribution_id, version)` identity. For example, two versions or packages declaring the same `plugin_type` collide in status comparisons (`stimulation.data.paradigm === selectedParadigm.plugin_type`), and frontend UI behavior is hardcoded to specific built-in aliases.
+`plugin_type` was a legacy v1 global string alias that conflicted with exact `PluginSelection(package_id, contribution_id, version)` identity. All active touchpoints below have been migrated on `refactor/plugin-management`:
 
-**This follow-up MUST be executed immediately after `refactor/plugin-management` merges** (as a dedicated cross-module PR touching `acquisition`, `stimulation`, `signal_setup`, OpenAPI schemas, and `frontend/`).
+### 3.1 Replaced Touchpoints
 
-### 3.1 Remaining Active Touchpoints to Replace
-
-| Area | Current Usage | Target Replacement |
+| Area | Previous Usage | Implemented Replacement |
 | --- | --- | --- |
-| **Acquisition `source_id`** | `configuration/service.py:320`, `node_configuration.py:41`, `signal_setup_service.py:82-127`, `processing_source.py:43-50`, `acquisition_service.py:252`, `acquisition/worker.py:80` pass `ACQUISITION.signal_source` (`plugin_type`) as `source_id`. | Identify the active source by exact `PluginSelection` (or canonical `f"{package_id}/{contribution_id}@{version}"` / structured `selection` field) in `AcquisitionStatus`, `SourceMetadata`, and `SignalSetupService`; remove `ACQUISITION.signal_source`. |
-| **Stimulation status `paradigm`** | `stimulation/process_manager.py:49-53` (`_configured_paradigm`) exposes `descriptor.plugin_type`; `frontend/src/RunConsole.tsx:120-128` compares `stimulation.data.paradigm === selectedParadigm.plugin_type`. | Expose exact `paradigm_selection: PluginSelection` (and optional display label) in `StimulationStatus`; compare exact `selectionKey(...)` in `RunConsole.tsx`. |
-| **Frontend acquisition metadata UI** | `frontend/src/PluginProfiles.tsx:51,81,152,451` hardcodes `["file_reader", "neuroscan_curry8_reader"]` and `definition?.plugin_type === "neuroscan_curry8_reader"` to decide whether to hide dimension fields until device observation and whether to import `channel_labels`. | Replace hardcoded alias checks with explicit source observation capability metadata (e.g., driven by `SourceObservation.provenance` or minimal acquisition manifest capability flags) so third-party acquisition plugins work identically without frontend edits. |
-| **Frontend i18n display names** | `frontend/src/i18n.tsx:141-146` (`translatePluginName`) keys `PLUGIN_NAME_KEYS` by `plugin_type`. | Key built-in i18n display overrides by canonical `f"{package_id}/{contribution_id}"` (falling back to manifest `display_name`). |
-| **Manifest, Catalog & OpenAPI** | `manifest.py`, `descriptors.py`, `PluginConfiguration`, `PluginConfigurationResponse`, all built-in `manifest.toml` files, and `frontend/src/api/rest-types.ts`. | Remove `plugin_type` from `manifest.toml`, `PluginDescriptor`, `PluginConfiguration`, `PluginConfigurationResponse`, and regenerate `docs/openapi.json` + `frontend/src/api/rest-types.ts`. |
+| **Acquisition `source_id`** | `configuration/service.py`, `node_configuration.py`, `signal_setup_service.py`, `processing_source.py`, `acquisition_service.py`, `acquisition/worker.py` passed `ACQUISITION.signal_source` (`plugin_type`). | Derived `source_id` directly from the `acquisition.source` binding via `PluginSelection.canonical_id` (`f"{package_id}/{contribution_id}@{version}"`) across `processing_source.source_id_for`, `AcquisitionStatus`, `SourceMetadata`, `SignalSetupService`, and `AcquisitionWorker`; removed `ACQUISITION.signal_source`. |
+| **Stimulation status `paradigm`** | `stimulation/process_manager.py` exposed `descriptor.plugin_type`; `frontend/src/RunConsole.tsx` compared `stimulation.data.paradigm === selectedParadigm.plugin_type`. | `StimulationProcessManager._configured_paradigm` now returns `descriptor.selection.canonical_id` (matching `ActuationProcessManager._configured_effector`); `RunConsole.tsx` compares `stimulation.data.paradigm === selectionId(selectedParadigm.selection)`. |
+| **Frontend acquisition metadata UI & playback** | `frontend/src/PluginProfiles.tsx` hardcoded `["file_reader", "neuroscan_curry8_reader"]` and `definition?.plugin_type === "neuroscan_curry8_reader"`; `RunConsole.tsx` hardcoded `OmniBCI.file_reader`. | Replaced hardcoded checks with schema-driven helpers (`isReportedSourceSchema` inspecting optional vs. required dimension fields and `supportsChannelLabels` checking `channel_labels` in `schema.properties`) and provenance/parameter playback detection in `RunConsole.tsx`. |
+| **Frontend i18n display names** | `frontend/src/i18n.tsx` keyed `PLUGIN_NAME_KEYS` by `plugin_type`. | Re-keyed `PLUGIN_NAME_KEYS` by `f"{package_id}/{contribution_id}"` with `@version` stripping in `translatePluginName`. |
+| **Manifest, Catalog & OpenAPI** | `manifest.py`, `descriptors.py`, `PluginConfiguration`, `PluginConfigurationResponse`, all built-in `manifest.toml` files, `docs/openapi.json`, and `frontend/src/api/rest-types.ts`. | Removed `plugin_type` across manifests, parser (rejected as an unsupported field), descriptors, catalog, REST schemas, and regenerated `docs/openapi.json` + `frontend/src/api/rest-types.ts`. |
 
 ### 3.2 Acceptance Criteria for the Follow-Up PR
 

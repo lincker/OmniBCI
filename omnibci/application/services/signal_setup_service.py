@@ -13,7 +13,7 @@ from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.application.processing_source import (
     acquisition_binding_key, binding_for, processing_binding_key, processing_input,
-    validate_source_binding,
+    source_id_for, validate_source_binding,
 )
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.runtime_admission import admitted
@@ -77,10 +77,6 @@ class SignalSetupService:
         except ValueError as exc:
             source_error = str(exc)
             accepted_settings = {"PLUGINS.bindings": [binding.to_dict() for binding in accepted.bindings()]}
-            source_binding = next((item for item in accepted.bindings() if item.kind == "acquisition"), None)
-            if source_binding is not None:
-                accepted_settings["ACQUISITION.signal_source"] = self.profiles.get_plugin_configuration(
-                    "acquisition", source_binding.selection).plugin_type
         active = self.engine.applied_snapshot if self.engine.is_engine_ready else None
         selected = accepted_settings or active or {}
         inputs = []
@@ -120,11 +116,11 @@ class SignalSetupService:
                      and receipt.processing_revision == active.get("CONFIG.module_revisions", {}).get("processing")
                      and receipt.source_fingerprint == source_fingerprint(metadata)
                      and receipt.connection_id == metadata.get("connection_id"))
-        source_id = selected.get("ACQUISITION.signal_source")
+        source_id = source_id_for(selected)
         profile = self._profile(source_binding)
         source_context = None
         if source_id is not None:
-            same_source = bool(active and source_id == active.get("ACQUISITION.signal_source")
+            same_source = bool(active and source_id == source_id_for(active)
                                and acquisition_binding_key(source_binding) == acquisition_binding_key(
                                    binding_for(active, "acquisition.source")))
             source_context = {"source_id": source_id,

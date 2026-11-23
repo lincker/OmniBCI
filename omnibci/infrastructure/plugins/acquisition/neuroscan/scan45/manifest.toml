@@ -12,7 +12,6 @@ publisher = "OmniBCI"
 [[contributions]]
 id = "default"
 kind = "acquisition"
-plugin_type = "neuroscan_scan45_reader"
 entrypoint = "scan45:Scan45DataReader"
 display_name = "Neuroscan Scan45"
 description = "Neuroscan Scan 4.5 EEG acquisition driver."
@@ -23,7 +22,6 @@ schema_version = 1
 [[contributions]]
 id = "trigger"
 kind = "trigger"
-plugin_type = "neuroscan_scan45_trigger"
 entrypoint = "scan45:Scan45Trigger"
 display_name = "Neuroscan Scan45 Parallel Trigger"
 description = "Parallel-port event output on Windows."

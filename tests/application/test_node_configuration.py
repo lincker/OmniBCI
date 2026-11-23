@@ -56,7 +56,7 @@ class LocalCatalog:
         self.calls = []
         self.definitions = {
             kind: PluginConfiguration(
-                selection=binding(kind).selection, kind=kind, domain=SLOTS[kind].split(".")[0], plugin_type=f"local_{kind}",
+                selection=binding(kind).selection, kind=kind, domain=SLOTS[kind].split(".")[0],
                 label=kind, description=None, available=True, configuration_version=1,
                 schema={"type": "object", "properties": {}, "additionalProperties": False},
             ) for kind in kinds
@@ -87,8 +87,7 @@ def test_node_needs_only_owned_plugins(runtime, role, kinds):
 
     assert {kind for kind, _ in catalog.calls} == kinds
     assert {item["kind"] for item in result["PLUGINS.bindings"]} == kinds
-    if role == "engine":
-        assert result["ACQUISITION.signal_source"] == "local_acquisition"
+    assert "ACQUISITION.signal_source" not in result
     assert "STIMULATION.paradigm" not in result
     assert "ACTUATION.effector" not in result
     assert "ALGORITHM.decoder" not in result
@@ -186,7 +185,7 @@ def test_decoder_input_overrides_legacy_setup_using_pinned_source(runtime, proce
     result = materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
     assert selected_processing_input(result) == processing_input
     assert "SIGNAL.setup" not in result
-    assert result["ACQUISITION.signal_source"] == "local_acquisition"
+    assert "ACQUISITION.signal_source" not in result
     assert dto.bindings[1].processing_input == processing_input
     assert "SIGNAL.setup" not in project_node_configuration(runtime, "stimulation").settings
 

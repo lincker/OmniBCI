@@ -652,23 +652,26 @@ test("refreshing the library preserves current values despite changed saved prof
   });
 });
 
-function observedSource(data, expected = null, pluginType = "neuroscan_curry8_reader") {
+function observedSource(data, expected = null, mode = "curry8") {
   const sourceDefinition = data.definitions.find((item) => selectionKey(item.selection) === selectionKey(scanV1));
-  sourceDefinition.plugin_type = pluginType;
+  const sourceId = `${scanV1.package_id}/${scanV1.contribution_id}@${scanV1.version}`;
   Object.assign(sourceDefinition.schema.properties, {
     sample_rate: { type: "integer", minimum: 1, title: "Expected sample rate (Hz)" },
     channel_count: { type: "integer", minimum: 2, title: "Expected output rows including event row" },
   });
-  if (pluginType === "neuroscan_curry8_reader") sourceDefinition.schema.properties.channel_labels = {
+  if (mode === "curry8") sourceDefinition.schema.properties.channel_labels = {
     type: "array", minItems: 1, items: { type: "string" }, title: "Channel labels",
   };
+  if (mode === "user-declared") sourceDefinition.schema.required = [
+    ...(sourceDefinition.schema.required ?? []), "sample_rate", "channel_count",
+  ];
   const saved = data.profiles.find((item) => item.profile_id === "lab-a");
   if (expected) Object.assign(saved.parameters, expected);
   data.activation.bindings.find((item) => item.slot === "acquisition.source").parameters = clone(saved.parameters);
-  const descriptor = { source_id: pluginType, connection_id: "connection-a", sample_rate: 500,
+  const descriptor = { source_id: sourceId, connection_id: "connection-a", sample_rate: 500,
     signal_channel_count: 2, output_row_count: 3, trigger_row_index: 2, channels: [],
-    native_event: "final-row", provenance: pluginType === "file_reader" ? "file-reported" : "device-reported" };
-  data.metadata = { source_id: pluginType, connection_id: "connection-a", metadata: "Device information", descriptor,
+    native_event: "final-row", provenance: mode === "file" ? "file-reported" : "device-reported" };
+  data.metadata = { source_id: sourceId, connection_id: "connection-a", metadata: "Device information", descriptor,
     comparison: { status: expected ? "mismatched" : "unconfirmed",
       sample_rate: { expected: expected?.sample_rate ?? null, actual: 500 },
       channel_count: { expected: expected?.channel_count ?? null, actual: 3 } } };
@@ -781,7 +784,7 @@ test("File Reader does not import Curry8 labels from opaque metadata", async () 
     assert.equal(form(harness).props.value.channel_labels, undefined);
     assert.doesNotMatch(text(harness.tree), /Channel labels/);
   }, { engineRunning: true, configure: (data) => {
-    observedSource(data, null, "file_reader");
+    observedSource(data, null, "file");
     data.metadata.metadata = JSON.stringify({ channel_labels: curryLabels });
   } });
 });
@@ -862,7 +865,7 @@ test("Scan45 retains editable declarations and cannot adopt them as verified obs
     assert.equal(metadata(harness).props.onSaveObservedProfile, undefined);
     assert.equal(calls.create.length, 0);
   }, { engineRunning: true, configure: (data) => {
-    observedSource(data, { sample_rate: 500, channel_count: 3 }, "neuroscan_scan45_reader");
+    observedSource(data, { sample_rate: 500, channel_count: 3 }, "user-declared");
     data.metadata.descriptor.provenance = "user-declared";
     data.metadata.comparison.status = "unverified";
   } });

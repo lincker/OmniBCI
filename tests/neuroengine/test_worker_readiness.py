@@ -242,7 +242,6 @@ domain = "processing"
         [[contributions]]
         id = "default"
         kind = "decoder"
-        plugin_type = "readiness_decoder"
         entrypoint = "decoder:ReadinessDecoder"
         channel_requirements = {min_count = 1}
         [contributions.configuration]
@@ -278,7 +277,7 @@ domain = "processing"
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(plugin_dir))
     from tests.plugin_configuration_helpers import install_package_root
     install_package_root(package)
-    return "readiness_decoder", marker
+    return "test.readiness", marker
 
 
 def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
@@ -286,8 +285,7 @@ def _pinned_worker_snapshot(decoder_alias, broken_kind=None):
     from omnibci.domain.channel_mapping import ProcessingInput
     from omnibci.infrastructure.plugin_management.catalog import PluginCatalog
     from tests.plugin_configuration_helpers import prepared_snapshot
-    snapshot = {"CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "a" * 64, "stimulation": "a" * 64, "actuation": "a" * 64}, "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "g", "CONFIG.operation_id": "prepare-1", "ACQUISITION.sample_rate": 250,
-                "ACQUISITION.signal_source": "file_reader"}
+    snapshot = {"CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "a" * 64, "stimulation": "a" * 64, "actuation": "a" * 64}, "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "g", "CONFIG.operation_id": "prepare-1", "ACQUISITION.sample_rate": 250}
     bindings = []
     for slot, kind, alias, parameters in (
         ("acquisition.source", "acquisition", "file_reader", {"sample_rate": 250, "channel_count": 10,

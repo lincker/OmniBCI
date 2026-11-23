@@ -25,7 +25,7 @@ def _plugin(directory):
         "manifest_version": 1,
         "package": {"id": "directory", "publisher": "test", "version": SELECTION.version,
                     "domain": "actuation", "api_version": "1"},
-        "contributions": [{"id": "default", "kind": "effector", "plugin_type": "directory_probe",
+        "contributions": [{"id": "default", "kind": "effector",
                            "display_name": "Directory probe", "entrypoint": "driver:Probe",
                            "payload_schemas": {"command": "command.schema.json"}}],
     }), encoding="utf-8")

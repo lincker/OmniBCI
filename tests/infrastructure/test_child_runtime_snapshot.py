@@ -110,7 +110,7 @@ def test_snapshot_transport_and_revision_restart(monkeypatch, module, manager_cl
     assert factory.call_count == 1
     spawned = factory.call_args.kwargs
     if component == "Stimulation":
-        assert manager.current_paradigm == "STIMULATION_THUBCI_SSVEP_classic40"
+        assert manager.current_paradigm == "OmniBCI.classic40SSVEP/default@0.1.0"
     else:
         assert manager.current_effector == "test.effector/default@1.0.0"
     assert pickle.loads(pickle.dumps(spawned["kwargs"])) == {"settings_snapshot": {**module_runtime_settings(original, component.lower()), "CONFIG.operation_id": manager._settings_snapshot["CONFIG.operation_id"]}}

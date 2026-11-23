@@ -240,11 +240,13 @@ def test_catalog_exposes_exact_identity_and_plugin_owned_schema(client):
     http, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/acquisition")
     assert response.status_code == 200
-    reader = next(item for item in response.json()["data"] if item["plugin_type"] == "file_reader")
+    reader = next(item for item in response.json()["data"]
+                  if item["selection"] == builtin_selection("acquisition", "file_reader").to_dict())
     assert reader["selection"]["contribution_id"] == "default"
     assert reader["selection"]["version"]
     assert reader["schema"]["properties"]["file_reader_chunk_size"]["type"] == "integer"
     assert "location" not in reader
+    assert "plugin_type" not in reader
     assert http.get(f"{PREFIX}/plugin-catalog/unknown").status_code == 422
 
 
@@ -263,12 +265,13 @@ def test_catalog_lists_each_plugin_kind_without_applying_configuration(client, k
     assert response.status_code == 200
     plugins = response.json()["data"]
     assert all(plugin["kind"] == kind for plugin in plugins)
-    plugin = next(plugin for plugin in plugins if plugin["plugin_type"] == alias)
-    assert plugin["selection"] == builtin_selection(kind, alias).to_dict()
+    expected_selection = builtin_selection(kind, alias).to_dict()
+    plugin = next(plugin for plugin in plugins if plugin["selection"] == expected_selection)
+    assert plugin["selection"] == expected_selection
     assert plugin["label"]
     assert plugin["schema"]["type"] == "object"
     assert isinstance(plugin["available"], bool)
-    assert not {"id", "name", "display_name", "params", "location", "entrypoint"}.intersection(plugin)
+    assert not {"id", "name", "display_name", "params", "plugin_type", "location", "entrypoint"}.intersection(plugin)
     assert service.repository.list_profiles() == []
     assert all(module is None for module in service.repository.get_activation_set().modules.values())
 
@@ -277,8 +280,9 @@ def test_catalog_exposes_stimulation_trial_controls(client):
     http, _ = client
     response = http.get(f"{PREFIX}/plugin-catalog/paradigm")
     assert response.status_code == 200
+    expected = builtin_selection("paradigm", "STIMULATION_THUBCI_SSVEP_classic40").to_dict()
     paradigm = next(plugin for plugin in response.json()["data"]
-                    if plugin["plugin_type"] == "STIMULATION_THUBCI_SSVEP_classic40")
+                    if plugin["selection"] == expected)
     assert paradigm["controls"]["n_trials"] == {
         "label": "Trial count", "type": "int", "default": 1, "min": 1, "field": "n_trials",
     }

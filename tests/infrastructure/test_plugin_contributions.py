@@ -56,7 +56,7 @@ def _selection(contribution="reader", version="1.0.0", publisher="acme"):
 def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_path):
     location = _write_package(tmp_path, contributions=[
         _contribution(display_name="Reader"),
-        _contribution("trigger", "trigger", plugin_type="device_trigger"),
+        _contribution("trigger", "trigger", display_name="Device Trigger"),
     ])
     marker = tmp_path / "executed"
     (location / "driver.py").write_text(
@@ -72,9 +72,8 @@ def test_cross_category_contributions_share_package_and_discovery_is_static(tmp_
     assert reader.identifier == trigger.identifier == "acme.device"
     assert reader.contribution_id == "reader"
     assert reader.selection == _selection()
-    assert reader.plugin_type == "reader"
     assert reader.display_name == "Reader"
-    assert trigger.plugin_type == "device_trigger"
+    assert trigger.display_name == "Device Trigger"
     assert trigger.source == "user"
     assert trigger.location == location.resolve()
     assert catalog.scan("trigger") == (trigger,)
@@ -90,11 +89,11 @@ def test_contributions_are_discovered_across_configured_roots(tmp_path, kind):
     assert len(catalog.list_contributions(kind)) == 1
 
 
-def test_distinct_contributions_and_publishers_do_not_collapse_by_alias(tmp_path):
+def test_distinct_contributions_and_publishers_do_not_collapse(tmp_path):
     for publisher in ("alice", "bob"):
         _write_package(tmp_path, publisher, publisher=publisher, contributions=[
-            _contribution("first", plugin_type="shared_alias"),
-            _contribution("second", plugin_type="shared_alias"),
+            _contribution("first", display_name="Shared Label"),
+            _contribution("second", display_name="Shared Label"),
         ])
     catalog = _catalog(PluginRoot(tmp_path, "user", 0))
 
@@ -227,7 +226,6 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
     (location / "driver.py").write_text(
         "from omnibci.domain.ports.effector import Effector\n"
         "class Driver(Effector):\n"
-        "    plugin_type = 'output'\n"
         "    def __init__(self, *, parameters, resource_root): pass\n"
         "    def setup(self): pass\n"
         "    def teardown(self): pass\n"
@@ -248,12 +246,12 @@ def test_v2_effector_can_be_loaded_from_exact_selection(tmp_path):
 
 
 
-def test_exact_builtin_selection_ignores_another_publishers_alias(monkeypatch, tmp_path):
+def test_exact_builtin_selection_ignores_another_publishers_contribution(monkeypatch, tmp_path):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path))
     catalog = PluginCatalog()
     builtin = catalog.resolve_selection("effector", PluginSelection("omnibci.logger", "default", "0.1.0"))
     location = _write_package(tmp_path / "effectors", contributions=[
-        _contribution("output", "effector", plugin_type="logger"),
+        _contribution("output", "effector", display_name="Logger"),
     ])
 
     assert catalog.resolve_selection("effector", PluginSelection("omnibci.logger", "default", "0.1.0")) == builtin
@@ -264,6 +262,16 @@ def test_exact_builtin_selection_ignores_another_publishers_alias(monkeypatch, t
     assert catalog.resolve_selection("effector", PluginSelection("omnibci.logger", "default", "0.1.0")) == builtin
     with pytest.raises(PluginNotFoundError):
         catalog.resolve_selection("effector", _selection("output"))
+
+
+def test_manifest_rejects_removed_plugin_type_field(tmp_path):
+    from omnibci.infrastructure.plugin_management.manifest import PluginManifestError, parse_manifest, read_manifest
+
+    location = _write_package(tmp_path, contributions=[
+        _contribution("reader", "acquisition", plugin_type="legacy_alias"),
+    ])
+    with pytest.raises(PluginManifestError, match="Unsupported contribution fields: plugin_type"):
+        parse_manifest(read_manifest(location), location, source="user", precedence=0, host_version="1.0.0")
 
 
 def test_duplicate_package_version_is_ambiguous_across_categories(tmp_path):

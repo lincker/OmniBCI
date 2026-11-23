@@ -12,7 +12,6 @@ api_version = "1"
 [[contributions]]
 id = "default"
 kind = "filter"
-plugin_type = "BASELINE_CORRECTION"
 entrypoint = "baseline_correction:BaselineCorrection"
 display_name = "Baseline Correction"
 

@@ -23,7 +23,6 @@ class PluginConfigurationResponse(BaseModel):
     domain: ConfigurationModule
     selection: PluginSelectionResponse
     kind: PluginKind
-    plugin_type: str
     label: str
     description: str | None
     schema_: dict[str, Any] | None = Field(alias="schema")

@@ -120,7 +120,8 @@ test("each locale has exactly the same keys and interpolation parameters", async
 test("known plugin metadata is translated while unknown and user-defined names are preserved", async () => {
   const { translatePluginName, translateControlLabel } = await server.ssrLoadModule("/src/i18n.tsx");
   const chinese = (key, params) => translate("zh", key, params);
-  assert.equal(translatePluginName("file_reader", "File Playback", chinese), "文件回放");
+  assert.equal(translatePluginName("OmniBCI.file_reader/default", "File Playback", chinese), "文件回放");
+  assert.equal(translatePluginName("OmniBCI.file_reader/default@0.1.0", "File Playback", chinese), "文件回放");
   assert.equal(translateControlLabel("n_trials", "Trial count", chinese), "试次数");
   for (const identifier of ["custom_plugin", "constructor", "toString", "__proto__"]) {
     assert.equal(translatePluginName(identifier, "My lab plugin", chinese), "My lab plugin");

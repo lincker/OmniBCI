@@ -22,7 +22,8 @@ const currentRequest = (module, selected) => ({ settings: selected?.settings ?? 
   bindings: currentBindings(module, {}, [], selected) });
 const revision = "accepted-stimulation";
 const paradigm = { selection: { package_id: "example.visual", contribution_id: "main", version: "1.0.0" },
-  kind: "paradigm", plugin_type: "visual_trials", label: "Visual trials", available: true };
+  kind: "paradigm", label: "Visual trials", available: true };
+const paradigmId = `${paradigm.selection.package_id}/${paradigm.selection.contribution_id}@${paradigm.selection.version}`;
 const activation = { revision, bindings: [{ slot: "stimulation.paradigm", kind: "paradigm",
   selection: paradigm.selection, parameters: {} }] };
 const sourceActivation = { ...activation, bindings: [...activation.bindings, {
@@ -47,7 +48,7 @@ const latestProfiles = [...new Map(completeActivation.bindings.map((binding) => 
   profile_id: binding.profile_id, name: `Saved ${binding.profile_id}`, revision: 99,
   selection: { package_id: "latest.package", contribution_id: "new-contribution", version: "9.9.9" },
 }])).values()];
-const ready = { active: true, process_alive: true, engine_connected: true, paradigm: paradigm.plugin_type };
+const ready = { active: true, process_alive: true, engine_connected: true, paradigm: paradigmId };
 const numericControls = { cue: { type: "int", field: "trial_params", payload_key: "event_id", default: 2, min: 1, max: 4 } };
 const sequenceControls = {
   trials: { type: "int", field: "n_trials", default: 1, min: 1 },
@@ -637,4 +638,12 @@ test("a parameterless paradigm sends explicit empty objects", () => {
     submit(render({ controls: {}, controlValues: { n_trials: "2" } }));
     assert.deepEqual(calls, [[2, [{}, {}]]]);
   });
+});
+
+test("different versions of the same paradigm package are detected as a mismatch", () => {
+  const runningOlder = { ...ready, paradigm: "example.visual/main@0.9.0" };
+  const tree = render({ stimulation: runningOlder });
+  const button = triggerButton(tree);
+  assert.equal(button.props.disabled, true);
+  assert.match(description(tree, button), /paradigm/i);
 });

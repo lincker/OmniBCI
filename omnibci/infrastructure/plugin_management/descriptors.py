@@ -98,7 +98,6 @@ class PluginDescriptor:
     package: PluginPackageDescriptor
     contribution_id: str
     category: str
-    plugin_type: str
     entrypoint: PluginEntrypoint | None
     display_name: str
     description: str | None = None

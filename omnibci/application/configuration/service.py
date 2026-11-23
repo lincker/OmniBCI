@@ -310,14 +310,6 @@ class ConfigurationService:
         for binding in activation_set.bindings():
             bindings.append(materialize_processing_binding(binding))
             if binding.kind == "acquisition":
-                # The display alias is optional for an idle source. Its module
-                # validates the pinned plugin when it is applied or started.
-                try:
-                    definition = self.catalog.get(binding.kind, binding.selection)
-                except PluginSchemaError:
-                    pass
-                else:
-                    result["ACQUISITION.signal_source"] = definition.plugin_type
                 result.update({f"ACQUISITION.{key}": value for key, value in binding.parameters.items()})
         result["CONFIG.module_revisions"] = {
             module: activation_set.modules[module].revision if activation_set.modules[module] else None

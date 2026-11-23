@@ -34,8 +34,13 @@ def test_file_starter_decoder_and_logger_preserve_trial_and_execution_identity(t
     installed = store.install_archive(archive).package
     store.set_enabled(installed.package_id, installed.version, True)
 
+    from tests.plugin_configuration_helpers import builtin_selection
+
     def binding(slot, kind, alias, parameters, **extra):
-        descriptor = next(item for item in store.catalog.list_contributions(kind) if item.plugin_type == alias)
+        descriptor = next(
+            (item for item in store.catalog.list_contributions(kind) if item.contribution_id == alias),
+            None,
+        ) or store.catalog.resolve_selection(kind, builtin_selection(kind, alias))
         return {"slot": slot, "selection": descriptor.selection.to_dict(), "parameters": parameters, **extra}
 
     with socket.socket() as available:

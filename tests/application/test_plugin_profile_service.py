@@ -31,7 +31,7 @@ def service(tmp_path, monkeypatch):
 
 
 def definition(service, kind, alias):
-    return next(item for item in service.catalog.list(kind) if item.plugin_type == alias)
+    return service.catalog.get(kind, builtin_selection(kind, alias))
 
 
 def create_source(service, name="Replay", **parameters):
@@ -232,7 +232,7 @@ def external_source_profile(service, monkeypatch, parameters):
     base = definition(service, "acquisition", "file_reader")
     types = {int: "integer", float: "number", bool: "boolean", str: "string"}
     external = replace(base, selection=PluginSelection("test.external-source", "source", "1.0.0"),
-        plugin_type="external_source", schema={"type": "object", "additionalProperties": False,
+        schema={"type": "object", "additionalProperties": False,
         "properties": {key: {"type": types[type(value)]} for key, value in parameters.items()}})
     original_get = service.catalog.get
     monkeypatch.setattr(service.catalog, "get", lambda kind, selection:

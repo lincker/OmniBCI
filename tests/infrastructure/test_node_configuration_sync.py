@@ -46,7 +46,7 @@ class MetadataCatalog:
                 properties = {"gain": {"type": "number", "default": 1.0}}
             self.definitions[kind] = PluginConfiguration(
                 selection=PluginSelection(f"test.{kind}", kind, "1.0.0"), kind=kind,
-                plugin_type=f"test_{kind}", label=kind, description=None,
+                label=kind, description=None,
                 configuration_version=1, domain=_SLOTS[kind].split(".")[0],
                 schema={"type": "object", "additionalProperties": False, "properties": properties},
                 available=not server or kind not in {"paradigm", "trigger", "effector"},

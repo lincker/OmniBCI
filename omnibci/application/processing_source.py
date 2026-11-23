@@ -11,8 +11,27 @@ def materialize_processing_binding(binding):
 
 
 def binding_for(snapshot, slot):
-    return next((item for item in snapshot.get("PLUGINS.bindings", ())
-                 if item.get("slot") == slot), None)
+    if snapshot is None:
+        return None
+    bindings = snapshot.get("PLUGINS.bindings", ())
+    return next((item for item in bindings if item.get("slot") == slot), None)
+
+
+def binding_selection_id(binding) -> str | None:
+    if not isinstance(binding, dict):
+        return None
+    selection = binding.get("selection")
+    if isinstance(selection, dict):
+        package_id = selection.get("package_id")
+        contribution_id = selection.get("contribution_id")
+        version = selection.get("version")
+        if all(isinstance(part, str) and part for part in (package_id, contribution_id, version)):
+            return f"{package_id}/{contribution_id}@{version}"
+    return None
+
+
+def source_id_for(snapshot) -> str | None:
+    return binding_selection_id(binding_for(snapshot, "acquisition.source"))
 
 
 def processing_input(snapshot):
@@ -40,14 +59,14 @@ def acquisition_binding_key(binding):
 
 def processing_binding_key(snapshot):
     value = processing_input(snapshot)
-    return {"source_id": snapshot.get("ACQUISITION.signal_source"),
+    return {"source_id": source_id_for(snapshot),
             "source": acquisition_binding_key(binding_for(snapshot, "acquisition.source")),
             "input": value.to_dict() if value is not None else None}
 
 
 def validate_source_binding(snapshot, metadata):
     info = descriptor_layout(metadata)
-    if metadata["source_id"] != snapshot.get("ACQUISITION.signal_source"):
+    if metadata["source_id"] != source_id_for(snapshot):
         raise ValueError("Source metadata belongs to a different acquisition source")
     if metadata["provenance"] in {"device-reported", "file-reported"}:
         return

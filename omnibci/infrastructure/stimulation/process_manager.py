@@ -50,7 +50,7 @@ def _configured_paradigm(snapshot: dict) -> str:
     from omnibci.infrastructure.plugin_management.runtime import resolve_configured_plugin
 
     descriptor, _ = resolve_configured_plugin(snapshot, 'stimulation.paradigm', 'paradigm')
-    return descriptor.plugin_type
+    return descriptor.selection.canonical_id
 
 
 def _run_stimulation(

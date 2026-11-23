@@ -54,6 +54,10 @@ class PluginSelection:
         if not is_valid_version(self.version):
             raise ValueError("version must be an exact package version")
 
+    @property
+    def canonical_id(self) -> str:
+        return f"{self.package_id}/{self.contribution_id}@{self.version}"
+
     def to_dict(self) -> dict:
         return {"package_id": self.package_id, "contribution_id": self.contribution_id, "version": self.version}
 

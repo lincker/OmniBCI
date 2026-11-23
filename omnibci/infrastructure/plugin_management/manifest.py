@@ -25,7 +25,7 @@ _PACKAGE_FIELDS = frozenset({
     "icon", "readme", "domain", "engines",
 })
 _CONTRIBUTION_FIELDS = frozenset({
-    "id", "kind", "entrypoint", "plugin_type", "display_name", "description",
+    "id", "kind", "entrypoint", "display_name", "description",
     "controls", "platforms", "configuration", "channel_requirements", "payload_schemas",
 })
 
@@ -131,8 +131,8 @@ def _parse_contributions(
     """Validate a manifest v1 package completely before exposing any contribution."""
     manifest_path = package_dir / MANIFEST_NAME
     package = _table(document, "package", manifest_path, required=True)
-    if any(key in package for key in ("kind", "plugin_type", "entrypoint")) or any(
-        key in document for key in ("runtime", "params", "controls")
+    if any(key in package for key in ("kind", "entrypoint")) or any(
+        key in document for key in ("runtime", "controls")
     ):
         raise PluginManifestError(
             f"{manifest_path}: execution fields belong to contributions"
@@ -222,9 +222,6 @@ def _parse_contributions(
             package=metadata,
             contribution_id=identifier,
             category=category,
-            plugin_type=_optional_string(
-                contribution, "plugin_type", manifest_path, section="contributions",
-            ) or identifier,
             entrypoint=entrypoint,
             display_name=_optional_string(
                 contribution, "display_name", manifest_path, section="contributions",

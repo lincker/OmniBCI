@@ -10,5 +10,5 @@ def test_effector_catalog_includes_builtin_logger(monkeypatch, tmp_path):
     effectors = {plugin.identifier: plugin for plugin in PluginCatalog().list_contributions("effector")}
 
     assert "omnibci.logger" in effectors
-    assert effectors["omnibci.logger"].plugin_type == "logger"
+    assert effectors["omnibci.logger"].selection.contribution_id == "default"
     assert effectors["omnibci.logger"].source == "builtin"

@@ -82,7 +82,6 @@ api_version="1"
 [[contributions]]
 id="default"
 kind="acquisition"
-plugin_type="test_replay"
 entrypoint="source:Replay"
 [contributions.configuration]
 schema="config.schema.json"
@@ -103,7 +102,7 @@ schema_version=1
     profiles = ConfigurationService(TomlConfigurationRepository(tmp_path / 'profiles'),
                                     CatalogConfigurationAdapter())
     accepted = accept_profiles(profiles, [
-        ('acquisition.source', 'acquisition', 'test_replay', {}),
+        ('acquisition.source', 'acquisition', 'test.replay', {}),
         ('processing.decoder', 'decoder', 'THUBCI_SSVEP_classic40CCA', {}),
         ('processing.epoch_detector', 'epoch_detector', 'DEFAULT_EPOCH_DETECTOR', {}),
         ('stimulation.paradigm', 'paradigm', 'STIMULATION_THUBCI_SSVEP_classic40', {}),

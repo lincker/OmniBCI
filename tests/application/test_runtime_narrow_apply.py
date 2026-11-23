@@ -7,6 +7,7 @@ import pytest
 from omnibci.application.events import CommandResult, StreamDrainReceipt
 from omnibci.application.configuration.models import ActivationSet, ModuleActivation
 from omnibci.application.configuration.errors import ProfileRevisionConflict
+from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.services.command_result_service import CommandTimeoutError
 from omnibci.shared.events import EventType
@@ -600,7 +601,6 @@ api_version="1"
 [[contributions]]
 id="default"
 kind="effector"
-plugin_type="alternate_logger"
 entrypoint="effector:AlternateLogger"
 [contributions.payload_schemas]
 command="command.schema.json"
@@ -615,14 +615,14 @@ schema_version=1
     (plugin / "effector.py").write_text(
         "from omnibci.infrastructure.plugins.effectors.logger.effector import LogEffector\n"
         "class AlternateLogger(LogEffector):\n"
-        "    plugin_type = 'alternate_logger'\n"
+        "    pass\n"
     )
     (plugin / "config.schema.json").write_text(json.dumps({
         "type": "object", "properties": {}, "additionalProperties": False,
     }))
     install_package_root(plugin)
     original = profiles.create("effector", builtin_selection("effector", "logger"), "Logger", {})
-    alternate = profiles.create("effector", builtin_selection("effector", "alternate_logger"),
+    alternate = profiles.create("effector", PluginSelection("test.alternate_logger", "default", "1.0.0"),
                                 "Alternate logger", {})
     bindings.append({"slot": "actuation.effector", "profile_id": original.profile_id})
     settings = {**profiles.default_module_settings("actuation"), "ACTUATION.auto_spawn": True,

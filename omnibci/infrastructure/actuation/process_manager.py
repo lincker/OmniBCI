@@ -46,8 +46,7 @@ def _configured_effector(snapshot: dict) -> str | None:
     bindings = configured_bindings(snapshot, slot="actuation.effector")
     if not bindings:
         return None
-    selection = bindings[0].selection
-    return f"{selection.package_id}/{selection.contribution_id}@{selection.version}"
+    return bindings[0].selection.canonical_id
 
 
 def _run_actuation(
