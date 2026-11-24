@@ -24,7 +24,7 @@ adapter is imported lazily only while encoding rich domain values.
 import json
 
 from omnibci.shared.events import Event, EventType
-from omnibci.infrastructure.ipc.protocol import Frame, MAX_FRAME_BODY_BYTES
+from omnibci.infrastructure.ipc.protocol import Frame
 
 PROTOCOL_VERSION = 1
 SUPPORTED_VERSIONS = frozenset({PROTOCOL_VERSION})

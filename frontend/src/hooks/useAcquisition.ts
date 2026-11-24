@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, errorMessage } from "../api/client";
 import { useI18n, type Translate } from "../i18n";
 import { usePoll } from "./usePoll";
 import type { RuntimeConfiguration } from "./useRuntimeConfiguration";
@@ -11,7 +11,7 @@ type Operation = "connect" | "disconnect" | "read" | "stopRead";
 /** Interpret only worker error types carried by the existing command response. */
 function acquisitionError(cause: unknown, t: Translate): string | null {
   if (cause === undefined) return null;
-  if (!(cause instanceof ApiError)) return cause instanceof Error ? cause.message : String(cause);
+  if (!(cause instanceof ApiError)) return errorMessage(cause);
   const detail = cause.detail;
   const workerError = detail && typeof detail === "object" && !Array.isArray(detail)
     && "error_code" in detail ? detail.error_code : undefined;

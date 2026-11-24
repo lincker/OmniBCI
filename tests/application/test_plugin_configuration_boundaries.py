@@ -137,4 +137,4 @@ def test_configuration_versions_need_only_two_read_operations(repository, profil
     assert copied.profile_id != profile.profile_id and copied.selection.version == "2.0.0"
     assert copied.parameters == profile.parameters
     assert repository.get_profile(profile.profile_id) == profile
-    assert all(value is None for value in repository.get_activation_set().modules.values())
+    assert all(value is None for value in service.selected_configuration().modules.values())

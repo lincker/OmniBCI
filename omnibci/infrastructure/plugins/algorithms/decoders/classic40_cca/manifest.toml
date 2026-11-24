@@ -10,7 +10,7 @@ api_version = "1"
 publisher = "OmniBCI"
 
 [[contributions]]
-# Version 2 requires prepared input metadata and enforces channel_requirements.
+# API v1 requires prepared input metadata and enforces channel_requirements.
 id = "default"
 kind = "decoder"
 entrypoint = "classic_40_cca:Classic40CCA"

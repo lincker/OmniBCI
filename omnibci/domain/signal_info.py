@@ -69,7 +69,6 @@ class ChannelDescriptor:
         data = record(value, "channel", set(cls.__dataclass_fields__))
         if not {"index", "name", "channel_id"} <= data.keys():
             raise ValueError("channel requires index, name, and channel_id")
-        name(data["channel_id"], "channel_id")
         return cls(**data)
 
 

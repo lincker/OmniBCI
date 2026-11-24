@@ -51,7 +51,6 @@ class AcquisitionCommand(Enum):
     get_metadata      = 'get metadata'
     connect           = 'connect'
     start_stream      = 'start stream'
-    stop_stream       = 'stop stream'
     stop_and_drain    = 'stop and drain'
     disconnect        = 'disconnect'
     get_checkpoint    = 'get checkpoint'
@@ -75,7 +74,6 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.connect: EventType.ConnectDataProvider.name,
     AcquisitionCommand.disconnect: EventType.DisconnectDataProvider.name,
     AcquisitionCommand.start_stream: EventType.StartStream.name,
-    AcquisitionCommand.stop_stream: EventType.StopStream.name,
     AcquisitionCommand.stop_and_drain: EventType.StopAndDrain.name,
     AcquisitionCommand.get_checkpoint: EventType.GetSourceCheckpoint.name,
     AcquisitionCommand.restore_checkpoint: EventType.RestoreSourceCheckpoint.name,
@@ -192,7 +190,6 @@ class AcquisitionRuntime:
             AcquisitionCommand.connect:          self._on_connect,
             AcquisitionCommand.disconnect:       self._on_disconnect,
             AcquisitionCommand.start_stream:     self._on_start_stream,
-            AcquisitionCommand.stop_stream:      self._on_stop_stream,
             AcquisitionCommand.stop_and_drain:   self._on_stop_stream,
             AcquisitionCommand.stop_acquisition: self._on_stop_acquisition,
             AcquisitionCommand.get_metadata:     self._on_get_metadata,

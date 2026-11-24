@@ -332,7 +332,7 @@ function CapturePanel({ generation, revision, connectionId, streaming, disabled 
     setError(null); setBusy(true);
     try {
       const result = await api.acqPreviewStart({ generation, expected_revision: revision,
-        connection_id: connectionId!, selection: parsePreviewSelection(form, snapshot.limits), continuous: true });
+        connection_id: connectionId!, selection: parsePreviewSelection({ ...form, chunkCount: String(snapshot.limits.max_chunks) }, snapshot.limits), continuous: true });
       if (!result) throw new Error("No preview status was returned.");
       setSnapshot(result); setEpoch((value) => value + 1);
     } catch (cause) { setError((cause as Error).message); }

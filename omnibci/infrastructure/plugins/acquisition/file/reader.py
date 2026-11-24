@@ -32,11 +32,6 @@ class FileReader(SignalSource):
             raise ValueError("Select a recording file before starting acquisition")
         self.file_path = str(resolve_config_path(file_path))
 
-    def set_file_path(self, file_path: str | Path):
-        if not str(file_path).strip():
-            raise ValueError("Select a recording file before starting acquisition")
-        self.file_path = str(resolve_config_path(file_path))
-
     async def connect(self) -> None:
         """Open the signal file."""
         if self.reader_adapter is not None:

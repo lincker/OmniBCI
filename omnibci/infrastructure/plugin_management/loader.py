@@ -181,10 +181,6 @@ class PluginLoader:
                     f"{descriptor.identifier}/{descriptor.contribution_id} is not supported "
                     f"on {sys.platform}"
                 )
-            if entrypoint is None:
-                raise PluginLoadError(
-                    f"{descriptor.manifest_path}: plugin has no entrypoint"
-                )
 
             expected_location = descriptor.location
             location = expected_location.resolve()

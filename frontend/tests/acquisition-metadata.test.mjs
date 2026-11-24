@@ -161,34 +161,16 @@ test("the adoption action is disabled when the current source is unavailable or 
 test("Scan45 declarations are shown as unverified and have no adoption action", () => {
   const value = { ...source("Metadata is not implemented.", { ...descriptor, provenance: "user-declared" }),
     comparison: comparison("unverified", { sample_rate: 500, channel_count: 3 }) };
-  const tree = render({ value, canUseObserved: true, onUseObserved: () => {}, onSaveObservedProfile: () => {} });
+  const tree = render({ value, canUseObserved: true, onUseObserved: () => {} });
   assert.match(text(tree), /cannot independently verify/);
   assert.match(text(tree), /Declared \(configuration\)/);
   assert.doesNotMatch(text(tree), /Use observed values/);
-  assert.doesNotMatch(text(tree), /Save observed values as new profile/);
 });
 
-test("saving observations as a new profile requires its own explicit action and a current source", () => {
-  let saves = 0;
-  const value = { ...source("Device information"), comparison: comparison("mismatched", { sample_rate: 1000, channel_count: 10 }) };
-  const props = { value, canUseObserved: true, onSaveObservedProfile: () => { saves += 1; } };
-  const tree = render(props);
-  const save = elements(tree).find((element) => element.type === "button" && text(element) === "Save observed values as new profile");
-  assert.equal(saves, 0);
-  assert.equal(save.props.disabled, false);
-  save.props.onClick();
-  assert.equal(saves, 1);
-  for (const overrides of [{ busy: true }, { canUseObserved: false }]) {
-    const disabled = elements(render({ ...props, ...overrides }))
-      .find((element) => element.type === "button" && text(element) === "Save observed values as new profile");
-    assert.equal(disabled.props.disabled, true);
-  }
-});
-
-test("missing source information offers no new-profile action", () => {
+test("missing source information offers no adoption action", () => {
   for (const value of [null, source("Device information", null), source("Device information")]) {
-    const tree = render({ value, canUseObserved: true, onSaveObservedProfile: () => {} });
-    assert.doesNotMatch(text(tree), /Save observed values as new profile/);
+    const tree = render({ value, canUseObserved: true, onUseObserved: () => {} });
+    assert.doesNotMatch(text(tree), /Use observed values/);
   }
 });
 

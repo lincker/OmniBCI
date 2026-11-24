@@ -52,11 +52,9 @@ def test_foundation_settings_do_not_parse_idle_module_files():
     repository = SimpleNamespace(
         get_engine=Mock(return_value=EngineSettings({})),
         get_module=Mock(side_effect=ValueError("idle module is corrupt")),
-        get_activation_set=Mock(side_effect=ValueError("idle module is corrupt")),
     )
     profiles = ConfigurationService(repository)
     profiles.materialize = lambda selected: selected
     selected = accepted_runtime_settings(profiles=profiles, active_kinds=set())
     assert selected.engine is not None
     repository.get_module.assert_not_called()
-    repository.get_activation_set.assert_not_called()

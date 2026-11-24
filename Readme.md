@@ -65,7 +65,7 @@ runs on Windows, macOS, and Linux.
 +------------------------------------------------------------------------------------------+
 | Plugin System: catalog -> descriptors -> loader                                         |
 | SignalSource: Data Provider        | Epoch / Filter / Decoder: NeuroEngine               |
-| Paradigm: Stimulation              | Effector: Actuation                                 |
+| Paradigm / Trigger: Stimulation      | Effector: Actuation                                 |
 +------------------------------------------------------------------------------------------+
 ```
 
@@ -82,10 +82,11 @@ point inward:
 | --- | --- | --- |
 | Presentation | `omnibci/presentation` | FastAPI routes, request/response schemas, WebSocket endpoints, and error mapping |
 | Application | `omnibci/application` | Use-case orchestration, commands, queries, application services, and ports |
-| Domain | `omnibci/domain` | Sessions, signals, epochs, classification results, and core interfaces |
+| Domain | `omnibci/domain` | Signal layout, channel mapping, classification results, and core plugin/port interfaces |
 | Infrastructure | `omnibci/infrastructure` | Acquisition, signal processing, IPC, process management, plugins, persistence, and external-device adapters |
 | Shared kernel | `omnibci/shared` | Cross-process event contracts and common utilities with no internal package dependencies |
 | Configuration | `omnibci/application/configuration` | Definitions, validation, Server/Engine/module settings and plugin Profiles |
+| Plugin management | `omnibci/application/plugin_management`, `omnibci/infrastructure/plugin_management` | Package catalog, manifest/schema validation, installation, and on-demand plugin loading |
 | Composition root | `omnibci/bootstrap.py` | Selects concrete implementations from configuration and assembles the object graph |
 
 The Application layer does not depend directly on Infrastructure.
@@ -118,7 +119,7 @@ variable or `PLUGINS.user_dir` in the user configuration directory's
 ### Requirements
 
 - Python 3.14 or later.
-- Node.js 18.x or 20 or later, with npm.
+- Node.js 22.12 or later, with npm.
 - An OpenGL-capable graphical environment for visual stimulation.
 
 ### 1. Install the Server
@@ -198,9 +199,10 @@ Useful endpoints:
 - OpenAPI schema: <http://127.0.0.1:8000/openapi.json>
 
 Append `--reload` during API development if automatic reloads are useful.
-Starting the API process initializes services and listeners. Start NeuroEngine
-explicitly through the web console or API to resolve the selected profile and
-build the engine graph.
+Starting the API process initializes HTTP and WebSocket services without
+starting NeuroEngine or binding output ports. Start NeuroEngine explicitly
+through the web console or API to initialize shared runtime infrastructure,
+then connect Acquisition or start other modules independently.
 
 ### 5. Start the Web Console
 
@@ -299,3 +301,19 @@ and reconnect the node. Engine configuration changes also require disconnecting 
 nodes and restarting the engine.
 See [module configuration](docs/module-config.md) for the boundaries and the
 distinction between Server services and the Engine runtime foundation.
+
+## Documentation
+
+| Document | Topic |
+| --- | --- |
+| [Module configuration](docs/module-config.md) | Independent module/Engine configuration, runtime identity, and lifecycle boundaries |
+| [Plugin profiles](docs/plugin-profiles.md) | Current configuration, saved Profiles, history/restore, and device-specific parameters |
+| [Plugin API v1](docs/plugin-api-v1.md) | Canonical 19-name `omnibci.sdk` contracts, role lifecycles, and display-timing boundaries |
+| [Plugin manifest](docs/plugin-manifest.md) | `manifest.toml` format v1, parameter/payload schemas, and host/library compatibility |
+| [Develop a plugin](docs/plugin-development.md) | Authoring workflow with `omnibci-plugin validate`, `package`, and `develop` |
+| [Write a Decoder plugin](docs/decoder-plugin-development.md) | Decoder authoring guide and channel-mapping contract |
+| [Stimulation frame pack](docs/stimulation-frame-pack.md) | Classic40 `.ofp` v2 archive layout and rebuild tool |
+| [Web and server contracts](docs/frontend-separation.md) | REST `/api/v1` routes, authentication, and WebSocket result stream |
+| [Frontend UI and UX](docs/frontend-ui-ux-design.md) | Console layout, guided Run pipeline, design tokens, and interaction rules |
+| [Desktop app](docs/desktop.md) | Electron packaging, bundled CPython runtime, and local/remote server modes |
+| [Validation](docs/validation.md) | Automated checks, local test commands, and hardware/display validation gates |

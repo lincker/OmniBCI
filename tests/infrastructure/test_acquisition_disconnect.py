@@ -104,13 +104,12 @@ def test_fetch_transport_loss_invalidates_identity_and_metadata(projected, error
 @pytest.mark.parametrize("command", [
     AcquisitionCommand.get_metadata,
     AcquisitionCommand.start_stream,
-    AcquisitionCommand.stop_stream,
 ])
 @pytest.mark.parametrize("correlated", [False, True])
 def test_command_transport_failure_publishes_disconnection_before_failure(command, correlated):
     async def scenario():
         source = Source()
-        source.is_streaming = command is AcquisitionCommand.stop_stream
+        source.is_streaming = False
 
         async def lose_connection():
             source.is_connected = source.is_streaming = False
@@ -284,7 +283,7 @@ def test_stop_write_failure_latches_loss_after_joining_pending_reader():
         acquisition.fetch_task = asyncio.create_task(acquisition.fetch())
         old_task = acquisition.fetch_task
         await asyncio.wait_for(reading.wait(), timeout=1)
-        await acquisition.execute((AcquisitionCommand.stop_stream, CommandRequest("stop")))
+        await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("stop")))
 
         assert old_task.done()
         assert acquisition.fetch_task is None

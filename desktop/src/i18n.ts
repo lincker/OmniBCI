@@ -32,7 +32,6 @@ const zh = {
   "Desktop operation failed.": "桌面操作失败。"
 } as const;
 
-export function desktopText(language: "en" | "zh", message: keyof typeof zh, params?: Record<string, string | number>): string {
-  const template = language === "zh" ? zh[message] : message;
-  return template.replace(/\{(\w+)\}/g, (match, key: string) => params?.[key] == null ? match : String(params[key]));
+export function desktopText(language: "en" | "zh", message: keyof typeof zh): string {
+  return language === "zh" ? zh[message] : message;
 }

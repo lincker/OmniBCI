@@ -1,8 +1,8 @@
 """
 LogEffector — hardware-free Effector for end-to-end smoke tests.
 
-With ``ACTUATION.effector = 'logger'`` the full closed loop
-(TrialCompleted → ActuationCommand → execute → ActuationAck) can be exercised
+Selecting ``omnibci.logger/default`` in the Actuation module exercises the full
+closed loop (TrialCompleted → ActuationCommand → execute → ActuationAck)
 without any device attached: each command is simply logged.
 """
 from pathlib import Path

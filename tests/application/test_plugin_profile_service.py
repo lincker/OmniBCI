@@ -47,7 +47,7 @@ def select(service, profile, slot):
 
 
 def runtime(service):
-    return service.materialize(service.repository.get_activation_set())
+    return service.materialize(service.selected_configuration())
 
 
 def test_profile_management_does_not_read_unrelated_server_settings(service):
@@ -71,7 +71,7 @@ def test_curry8_parallel_address_survives_profile_save_and_update(service):
                              expected_revision=profile.revision)
     assert updated.parameters == {"parallel_port_address": "0xFFF8"}
     assert updated.revision == profile.revision + 1
-    assert all(item is None for item in service.repository.get_activation_set().revisions().values())
+    assert all(item is None for item in service.selected_configuration().revisions().values())
 
 
 def test_decoder_mapping_defaults_initialize_once_and_remain_explicit(service):
@@ -189,7 +189,7 @@ def test_materialized_runtime_uses_pinned_source_values_and_generation(service):
     source = select(service, profile, "acquisition.source")
     service.update(profile.profile_id, name=profile.name, parameters={"file_reader_chunk_size": 999},
                    expected_revision=profile.revision)
-    values = service.materialize(service.repository.get_activation_set(), generation="run-1")
+    values = service.materialize(service.selected_configuration(), generation="run-1")
     assert values["ACQUISITION.file_reader_chunk_size"] == 123
     assert values["CONFIG.module_revisions"]["acquisition"] == source.revision
     assert values["CONFIG.generation"] == "run-1"
@@ -332,7 +332,7 @@ def test_server_restart_does_not_add_server_values_to_runtime(service):
     previous = service.repository.save_engine(service.propose_engine(ENGINE_SETTING_DEFAULTS), expected_revision=None)
     restarted = ConfigurationService(service.repository, service.catalog)
     assert restarted.propose_engine(previous.settings) == previous
-    assert "NEUROENGINE.command_timeout_s" not in restarted.materialize(service.repository.get_activation_set())
+    assert "NEUROENGINE.command_timeout_s" not in restarted.materialize(service.selected_configuration())
 
 @pytest.fixture
 def version_services(tmp_path, monkeypatch):

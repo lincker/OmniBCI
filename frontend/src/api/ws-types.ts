@@ -10,7 +10,7 @@
  */
 
 /** Engine decoded one trial in the current engine generation. */
-export interface TrialCompletedMessage {
+interface TrialCompletedMessage {
   event: "TrialCompleted";
   generation: string;
   trial_number: number;
@@ -34,11 +34,11 @@ export interface StimulationAckMessage {
 }
 
 /** Server heartbeat (~15 s). No payload — resets the client staleness timer. */
-export interface PingMessage {
+interface PingMessage {
   event: "Ping";
 }
 
-export type WsMessage =
+type WsMessage =
   | TrialCompletedMessage
   | StimulationAckMessage
   | PingMessage;

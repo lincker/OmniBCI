@@ -1,18 +1,18 @@
 """
 /api/v1/stimulation — Stimulation paradigm control endpoints.
 """
-from omnibci.application.configuration.errors import ProfileRevisionConflict
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends
 
-from omnibci.presentation.dependencies import get_stimulation_service
-from omnibci.presentation.routers.runtime_config import get_runtime_configuration
+from omnibci.presentation.dependencies import (
+    get_engine_service, get_runtime_configuration, get_stimulation_service,
+)
 from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
 from omnibci.presentation.errors import (
-    ApiError,
     COMMAND_EXECUTION_RESPONSES,
-    command_error_to_api_error, configuration_errors,
+    command_errors,
+    configuration_errors,
 )
-from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
+from omnibci.presentation.schemas.common import ApiResponse
 from omnibci.presentation.schemas.stimulation import (
     StartTrialRequest,
     StimulationStatusResponse,
@@ -21,13 +21,8 @@ from omnibci.application.commands.stimulation_commands import (
     StopStimulationCommand,
     StartStimTrialCommand,
 )
+from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.stimulation_service import StimulationAppService
-from omnibci.application.services.command_result_service import (
-    CommandDeliveryError,
-    CommandExecutionError,
-    CommandRejectedError,
-    CommandTimeoutError,
-)
 from omnibci.application.ports.engine_port import STIMULATION_PEER
 
 router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
@@ -39,10 +34,9 @@ router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
     summary="Stimulation subsystem status",
 )
 def stimulation_status(
-    request: Request,
+    engine_service: NeuroEngineService = Depends(get_engine_service),
     svc: StimulationAppService = Depends(get_stimulation_service),
 ):
-    engine_service = request.app.state.engine_service
     return ApiResponse(data=StimulationStatusResponse(
         active=svc.is_active,
         process_alive=svc.process_alive,
@@ -68,15 +62,9 @@ async def start_stimulation(
     summary="Stop stimulation",
 )
 def stop_stimulation(svc: StimulationAppService = Depends(get_stimulation_service)):
-    try:
+    with command_errors():
         svc.handle_stop_stimulation(StopStimulationCommand())
         return ApiResponse(message="Stimulation stopped")
-    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
-        raise command_error_to_api_error(e)
-    except ProfileRevisionConflict:
-        raise
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
 @router.post(
@@ -89,15 +77,9 @@ def start_trial(
     body: StartTrialRequest,
     svc: StimulationAppService = Depends(get_stimulation_service),
 ):
-    try:
+    with command_errors():
         svc.handle_start_trial(StartStimTrialCommand(
             n_trials=body.n_trials,
             trial_params=body.trial_params,
         ))
         return ApiResponse(message="Trial started")
-    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
-        raise command_error_to_api_error(e)
-    except ProfileRevisionConflict:
-        raise
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))

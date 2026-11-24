@@ -87,12 +87,10 @@ def test_invalid_channel_count_rejected_before_connecting(channels):
 
 
 @pytest.mark.parametrize("body", [b"", bytes(3), bytes(8), bytes(15), bytes(17)])
-def test_malformed_frame_does_not_change_event_state(body):
+def test_malformed_frame_is_rejected(body):
     reader = scan45.Scan45DataReader(parameters={'channel_count': 4}, resource_root=Path(__file__).parent)
-    reader._previous_event = 7
     with pytest.raises(ValueError, match="complete samples of 4 channels"):
         reader._unpack_int32_eeg(body)
-    assert reader._previous_event == 7
 
 
 def test_packet_header_size_must_match_body():

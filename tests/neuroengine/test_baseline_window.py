@@ -2,10 +2,8 @@
 Tests for pre-trigger capture, the epoch window, and baseline correction.
 
 Covers:
-  - Epoch VO: pre_trigger_data/window views, validation, equality.
   - PreTriggerBuffer: rolling capacity, take_pre_trigger_data, disabled (capacity 0).
-  - EpochProcessor: pre-trigger data kept separate from the decode window;
-    build_epoch stitches [pre_trigger_data | window] and sets trigger_offset.
+  - EpochProcessor: pre-trigger data kept separate from the decode window.
   - SignalProcessor: pre_trigger_samples derived from Processing baseline_duration.
 """
 from __future__ import annotations
@@ -16,7 +14,6 @@ import numpy as np
 import pytest
 
 from tests.processing_helpers import make_processor
-from omnibci.domain.epoch import Epoch
 from omnibci.domain.ports.algorithm import Decoder, Prediction
 from omnibci.infrastructure.signal_processing.epoch.epoch_processor import EpochProcessor
 from omnibci.infrastructure.signal_processing.epoch.pretrigger_buffer import PreTriggerBuffer
@@ -81,46 +78,6 @@ class _CaptureDecoder(Decoder):
 
 
 # ---------------------------------------------------------------------------
-# Epoch VO
-# ---------------------------------------------------------------------------
-
-class TestEpochPreTriggerWindow:
-    def test_default_trigger_offset_is_zero_and_window_is_whole(self):
-        ep = Epoch(data=np.ones((2, 5)), event_id=1, sample_rate=1000, channel_count=2)
-        assert ep.trigger_offset == 0
-        assert ep.has_pre_trigger_data is False
-        assert ep.pre_trigger_data.shape == (2, 0)
-        assert ep.window.shape == (2, 5)
-
-    def test_split_at_trigger_offset(self):
-        data = np.arange(2 * 6).reshape(2, 6).astype(float)
-        ep = Epoch(data=data, event_id=1, sample_rate=1000, channel_count=2, trigger_offset=2)
-        assert ep.has_pre_trigger_data is True
-        np.testing.assert_array_equal(ep.pre_trigger_data, data[:, :2])
-        assert np.shares_memory(ep.pre_trigger_data, ep.data)
-        assert not ep.pre_trigger_data.flags.writeable
-        np.testing.assert_array_equal(ep.window, data[:, 2:])
-        assert ep.duration_samples == 6
-        assert ep.duration_seconds == 0.006
-
-    def test_trigger_offset_must_leave_a_window(self):
-        with pytest.raises(ValueError):
-            Epoch(data=np.ones((2, 4)), event_id=1, sample_rate=1000,
-                  channel_count=2, trigger_offset=4)  # no window samples
-
-    def test_negative_trigger_offset_rejected(self):
-        with pytest.raises(ValueError):
-            Epoch(data=np.ones((2, 4)), event_id=1, sample_rate=1000,
-                  channel_count=2, trigger_offset=-1)
-
-    def test_equality_includes_trigger_offset(self):
-        d = np.ones((2, 4))
-        a = Epoch(data=d.copy(), event_id=1, sample_rate=1000, channel_count=2, trigger_offset=1)
-        b = Epoch(data=d.copy(), event_id=1, sample_rate=1000, channel_count=2, trigger_offset=2)
-        assert a != b
-
-
-# ---------------------------------------------------------------------------
 # PreTriggerBuffer
 # ---------------------------------------------------------------------------
 
@@ -162,24 +119,22 @@ class TestEpochProcessorPreTriggerData:
         # _ConstDecoder echoes window length: pre-trigger data is not prepended.
         assert clf.target_id == 7
 
-    def test_build_epoch_stitches_pre_trigger_data_and_sets_offset(self):
+    def test_pre_trigger_data_stored_separately_from_window(self):
         ep = EpochProcessor(decoder=_ConstDecoder(), sample_rate=1000)
         window = np.ones((2, 7))
         pre_trigger_data = np.zeros((2, 3))
         ep.initialize_epoch(_chunk(window), start_idx=0, event_id=5, pre_trigger_data=pre_trigger_data)
-        epoch = ep.build_epoch()
-        assert epoch.trigger_offset == 3
-        assert epoch.data.shape == (2, 10)
-        np.testing.assert_array_equal(epoch.pre_trigger_data, pre_trigger_data)
-        np.testing.assert_array_equal(epoch.window, window)
+        assert ep.pre_trigger_samples == 3
+        assert ep.sample_count == 7
+        np.testing.assert_array_equal(ep._pre_trigger_data, pre_trigger_data)
+        np.testing.assert_array_equal(ep._epoch_data, window)
 
     def test_no_pre_trigger_data_leaves_window_unchanged(self):
         ep = EpochProcessor(decoder=_ConstDecoder(), sample_rate=1000)
         window = np.ones((2, 4))
         ep.initialize_epoch(_chunk(window), start_idx=0, event_id=5)
-        epoch = ep.build_epoch()
-        assert epoch.trigger_offset == 0
-        assert epoch.data.shape == (2, 4)
+        assert ep.pre_trigger_samples == 0
+        assert ep.sample_count == 4
 
 
 # ---------------------------------------------------------------------------
@@ -259,47 +214,3 @@ class TestBaselineCorrectionInPipeline:
 
 if __name__ == "__main__":
     pytest.main(["-s", "-v", __file__])
-
-
-# ---------------------------------------------------------------------------
-# P2-10: Epoch 构造不再有副作用（不改调用者数组 + 自身只读）
-# ---------------------------------------------------------------------------
-
-class TestEpochConstructionSideEffects:
-    def test_caller_array_stays_writeable(self):
-        """构造 Epoch 不得就地冻结调用者传入的数组。"""
-        src = np.ones((2, 5))
-        assert src.flags.writeable
-        Epoch(data=src, event_id=1, sample_rate=1000, channel_count=2)
-        assert src.flags.writeable          # 旧实现下此处会变 False
-        src[0, 0] = 42.0                     # 调用者仍可自由写自己的 buffer
-        assert src[0, 0] == 42.0
-
-    def test_epoch_data_is_read_only_copy(self):
-        """Epoch 持有的是自有只读副本（值对象不可变契约保留）。"""
-        src = np.ones((2, 5))
-        ep = Epoch(data=src, event_id=1, sample_rate=1000, channel_count=2)
-        assert not ep.data.flags.writeable
-        with pytest.raises(ValueError):
-            ep.data[0, 0] = 9.0
-        # 副本独立：改源数组不影响已构造的 Epoch
-        src[0, 0] = 7.0
-        assert ep.data[0, 0] == 1.0
-
-
-# ---------------------------------------------------------------------------
-# P2-10: is_high_confidence 阈值提为常量
-# ---------------------------------------------------------------------------
-
-class TestHighConfidenceThreshold:
-    def test_threshold_boundary(self):
-        from omnibci.domain.classification import (
-            Classification, HIGH_CONFIDENCE_THRESHOLD)
-        assert HIGH_CONFIDENCE_THRESHOLD == 0.7
-        at = Classification(target_id=0, event_id=1, confidence=HIGH_CONFIDENCE_THRESHOLD)
-        below = Classification(target_id=0, event_id=1,
-                               confidence=HIGH_CONFIDENCE_THRESHOLD - 0.01)
-        none = Classification(target_id=0, event_id=1, confidence=None)
-        assert at.is_high_confidence is True
-        assert below.is_high_confidence is False
-        assert none.is_high_confidence is False

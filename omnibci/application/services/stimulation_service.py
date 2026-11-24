@@ -16,8 +16,7 @@ from omnibci.application.commands.stimulation_commands import (
     StopStimulationCommand,
     StartStimTrialCommand,
 )
-from omnibci.application.ports.engine_port import EnginePort
-from omnibci.application.ports.engine_port import STIMULATION_PEER
+from omnibci.application.ports.engine_port import EnginePort, STIMULATION_PEER
 from omnibci.application.ports.output_process import StimulationProcess
 from omnibci.application.services.command_result_service import CommandDeliveryError, CommandTimeoutError
 

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from omnibci.presentation.routers.runtime_config import get_runtime_configuration
+from omnibci.presentation.dependencies import get_runtime_configuration
 
 
 @pytest.fixture(autouse=True)

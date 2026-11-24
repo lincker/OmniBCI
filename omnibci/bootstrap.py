@@ -4,10 +4,12 @@ import logging
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Iterable, Tuple
+from typing import Callable, Iterable
 
 from omnibci.shared.events import EventType
 from omnibci.application.configuration.definitions import ENGINE_SETTING_DEFAULTS
+from omnibci.application.configuration.models import MODULE_KINDS
+from omnibci.application.processing_source import binding_for
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
@@ -17,6 +19,7 @@ from omnibci.application.services.results_service import ResultsService
 from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
 from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 from omnibci.application.services.node_configuration_service import NodeConfigurationService
+from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.application.configuration.accepted import accepted_runtime_settings
 from omnibci.application.plugin_management.package_service import PluginPackageService
 from omnibci.application.plugin_management.market_service import PluginMarketService
@@ -33,9 +36,6 @@ from omnibci.infrastructure.stimulation.process_manager import StimulationProces
 from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
 
 logger = logging.getLogger(__name__)
-
-# A single EventBus subscription: (event type, handler callable).
-Subscription = Tuple[EventType, Callable]
 
 
 def load_host_settings() -> dict:
@@ -74,16 +74,16 @@ class AppContainer:
     stimulation_process_manager: StimulationProcessManager
     results_service: ResultsService
     # The composition root supplies the manager; lightweight service fixtures may omit it.
-    actuation_process_manager: "ActuationProcessManager | None" = None
+    actuation_process_manager: ActuationProcessManager | None = None
     # Shared correlation rendezvous for commands that must report actual worker
     # execution before REST returns success.
-    command_results: "CommandResultBroker | None" = None
-    configuration_service: "ConfigurationService | None" = None
-    runtime_configuration: "RuntimeConfigurationService | None" = None
-    node_configuration: "NodeConfigurationService | None" = None
-    plugin_package_service: "PluginPackageService | None" = None
-    plugin_market_service: "PluginMarketService | None" = None
-    signal_setup_service: object | None = None
+    command_results: CommandResultBroker | None = None
+    configuration_service: ConfigurationService | None = None
+    runtime_configuration: RuntimeConfigurationService | None = None
+    node_configuration: NodeConfigurationService | None = None
+    plugin_package_service: PluginPackageService | None = None
+    plugin_market_service: PluginMarketService | None = None
+    signal_setup_service: SignalSetupService | None = None
     package_owner: PluginStoreOwner | None = None
 
 
@@ -96,8 +96,8 @@ def assemble(
     *,
     settings=None,
     acquisition_settings=None,
-    actuation_process_manager: "ActuationProcessManager | None" = None,
-    stimulation_process_manager: "StimulationProcessManager | None" = None,
+    actuation_process_manager: ActuationProcessManager | None = None,
+    stimulation_process_manager: StimulationProcessManager | None = None,
     admission=None,
 ) -> AppContainer:
     """Wire services around an existing engine without I/O."""
@@ -206,13 +206,11 @@ async def _build_container_services(host_settings, allow_process_termination, pa
                          admission=engine_service.admission)
     container.configuration_service = configuration
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine_service))
-    from omnibci.application.services.signal_setup_service import SignalSetupService
     container.signal_setup_service = SignalSetupService(
         configuration, engine_service, container.acquisition_service,
         container.command_results,
     )
     container.acquisition_service.set_signal_preparer(container.signal_setup_service.try_prepare)
-    from omnibci.application.configuration.models import MODULE_KINDS
     engine_service.configure_modules(
         container.acquisition_service, container.command_results, container.signal_setup_service,
         lambda module: accepted_runtime_settings(profiles=configuration, active_kinds=MODULE_KINDS[module]),
@@ -245,9 +243,7 @@ async def _build_container_services(host_settings, allow_process_termination, pa
 
 def _acquisition_binding(engine):
     """Resolve the running source, never a saved selection awaiting Apply."""
-    snapshot = engine.applied_snapshot or {}
-    return next((binding for binding in snapshot.get("PLUGINS.bindings", ())
-                 if binding.get("slot") == "acquisition.source"), None)
+    return binding_for(engine.applied_snapshot, "acquisition.source")
 
 
 class _RuntimeSettings:
@@ -274,7 +270,7 @@ class _RuntimeSettings:
 
 def register_engine_listeners(
     container: AppContainer,
-    extra_subscriptions: Iterable[Subscription] = (),
+    extra_subscriptions: Iterable[tuple[EventType, Callable]] = (),
 ) -> int:
     """
     Subscribe read-model and any extra (e.g. presentation) listeners to the
@@ -285,14 +281,14 @@ def register_engine_listeners(
     supplies presentation-level ones (e.g. WebSocket broadcaster) via
     ``extra_subscriptions`` so this module need not import the presentation layer.
 
-    Returns the number of subscriptions registered (0 if no graph exists yet).
+    Returns the number of subscriptions registered (0 if the service is not initialised).
     """
     engine = container.engine_service
     if not engine.is_initialized:
         logger.warning("register_engine_listeners: engine not initialised — skipped")
         return 0
 
-    subscriptions: list[Subscription] = [
+    subscriptions: list[tuple[EventType, Callable]] = [
         *(
             ((EventType.CommandResult, container.command_results.on_result),)
             if container.command_results is not None

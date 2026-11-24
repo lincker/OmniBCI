@@ -37,11 +37,8 @@ def stimulation_peer_config(host: str, port: int, *, identity: PeerIdentity | No
 
     Outbound (engine → stimulation): the three events the old
     ServerMessageManagement pushed — result feedback + stim control.
-    Inbound (stimulation → engine): StimulationAck (consumed downstream by the
-    results broadcaster). MessageFromStimulation is allowed for forward-compat.
-
-    Behaviour is identical to the previous single-server push, now expressed as
-    one routed channel.
+    Inbound (stimulation → engine): CommandResult and StimulationAck
+    (consumed downstream by the results broadcaster).
     """
     return PeerConfig(
         name=STIMULATION,
@@ -58,7 +55,6 @@ def stimulation_peer_config(host: str, port: int, *, identity: PeerIdentity | No
             inbound=frozenset({
                 EventType.CommandResult,
                 EventType.StimulationAck,
-                EventType.MessageFromStimulation,
             }),
         ),
     )

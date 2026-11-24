@@ -247,7 +247,7 @@ async def test_idle_owned_resources_reject_review_or_resolve_before_submission(h
         h.runtime.submit(plan.plan_id, str(uuid4()))
 
     assert all(operation is None for operation in h.runtime.status()["operations"].values())
-    assert h.profiles.repository.get_activation_set() == h.previous
+    assert h.profiles.selected_configuration() == h.previous
     assert h.log == []
     assert h.engine.starts == []
 
@@ -266,7 +266,7 @@ async def test_idle_selection_rechecks_unreleased_resources_before_persistence(h
     with pytest.raises(ProfileRevisionConflict, match="still owns resources"):
         await h.runtime.executor.execute(stored, lambda stage: None, operation_id=str(uuid4()))
 
-    assert h.profiles.repository.get_activation_set() == h.previous
+    assert h.profiles.selected_configuration() == h.previous
     assert h.log == []
     assert h.engine.starts == []
 
@@ -377,7 +377,7 @@ async def test_inactive_selection_acknowledgement_failure_restores_or_quarantine
     operation = await apply(h)
     assert operation["status"] == ("recovery_required" if restoration_fails else "failed")
     assert operation["rolled_back"] is not restoration_fails
-    assert h.profiles.repository.get_activation_set() == h.previous
+    assert h.profiles.selected_configuration() == h.previous
     assert h.profiles.repository.list_module_history("acquisition") == []
     assert not h.engine.is_module_running("acquisition")
     assert h.log == []

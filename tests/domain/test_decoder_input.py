@@ -1,5 +1,5 @@
 """Decoder requirements describe and validate the final mapped channel set."""
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, asdict
 
 import pytest
 
@@ -22,7 +22,7 @@ def test_requirements_normalize_names_preserve_default_order_and_round_trip():
     assert requirements.required_names == ("Oz",)
     assert requirements.description == "Occipital input"
     assert requirements.signal_type == "eeg"
-    assert DecoderChannelRequirements.from_dict(requirements.to_dict()) == requirements
+    assert DecoderChannelRequirements.from_dict(asdict(requirements)) == requirements
     with pytest.raises(FrozenInstanceError):
         requirements.min_count = 3
 

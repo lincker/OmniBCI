@@ -1,17 +1,19 @@
 """
 /api/v1/acquisition — Data acquisition control endpoints.
 """
-from omnibci.application.configuration.errors import ProfileRevisionConflict
-from fastapi import APIRouter, Depends, Path, Query, status
+from dataclasses import asdict
+from fastapi import APIRouter, Depends, Path, Query
 from starlette.concurrency import run_in_threadpool
 
-from omnibci.presentation.dependencies import get_acquisition_service, get_engine_service
-from omnibci.presentation.routers.runtime_config import get_runtime_configuration
+from omnibci.presentation.dependencies import (
+    get_acquisition_service, get_engine_service, get_runtime_configuration,
+)
 from omnibci.presentation.schemas.runtime_config import ModuleActionRequest, RuntimeOperationResponse
 from omnibci.presentation.errors import (
     ApiError,
     COMMAND_EXECUTION_RESPONSES,
-    command_error_to_api_error, configuration_errors,
+    command_errors,
+    configuration_errors,
 )
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.acquisition import (
@@ -27,11 +29,6 @@ from omnibci.application.commands.acquisition_commands import (
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 from omnibci.application.services.acquisition_service import AcquisitionAppService
 from omnibci.application.services.engine_service import NeuroEngineService
-from omnibci.application.services.command_result_service import (
-    CommandExecutionError,
-    CommandRejectedError,
-    CommandTimeoutError,
-)
 
 router = APIRouter(prefix="/acquisition", tags=["Acquisition"])
 
@@ -56,7 +53,7 @@ async def connect(body: ModuleActionRequest, runtime=Depends(get_runtime_configu
 )
 async def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_service),
                      engine: NeuroEngineService = Depends(get_engine_service)):
-    try:
+    with command_errors():
         try:
             if engine.is_module_running("acquisition"):
                 await run_in_threadpool(svc.handle_disconnect, DisconnectDataProviderCommand())
@@ -64,12 +61,6 @@ async def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_servic
             await engine.stop_module("acquisition")
             svc.reset()
         return ApiResponse(message="Data provider disconnected")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
-        raise command_error_to_api_error(e)
-    except ProfileRevisionConflict:
-        raise
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
 @router.post(
@@ -79,15 +70,9 @@ async def disconnect(svc: AcquisitionAppService = Depends(get_acquisition_servic
     summary="Start EEG data stream and wait for execution",
 )
 async def start_stream(body: StartReadingRequest, engine: NeuroEngineService = Depends(get_engine_service)):
-    try:
+    with command_errors():
         await engine.start_reading(**body.model_dump())
         return ApiResponse(message="Stream started")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
-        raise command_error_to_api_error(e)
-    except ProfileRevisionConflict:
-        raise
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
 @router.post(
@@ -97,15 +82,9 @@ async def start_stream(body: StartReadingRequest, engine: NeuroEngineService = D
     summary="Stop EEG data stream and wait for execution",
 )
 def stop_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
-    try:
+    with command_errors():
         svc.handle_stop_stream(StopStreamCommand())
         return ApiResponse(message="Stream stopped")
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
-        raise command_error_to_api_error(e)
-    except ProfileRevisionConflict:
-        raise
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
 @router.get(
@@ -115,29 +94,12 @@ def stop_stream(svc: AcquisitionAppService = Depends(get_acquisition_service)):
 )
 def get_status(svc: AcquisitionAppService = Depends(get_acquisition_service)):
     result = svc.handle_get_status(GetAcquisitionStatusQuery())
-    return ApiResponse(
-        data=AcquisitionStatusResponse(
-            connected=result.connected,
-            streaming=result.streaming,
-            source=result.source,
-            sample_rate=result.sample_rate,
-            channel_count=result.channel_count,
-            metadata_available=result.metadata_available,
-            metadata_provenance=result.metadata_provenance,
-            connection_id=result.connection_id,
-        )
-    )
+    return ApiResponse(data=AcquisitionStatusResponse(**asdict(result)))
 
 
 def _metadata_response(svc: AcquisitionAppService, *, refresh: bool = False):
-    try:
+    with command_errors():
         return ApiResponse(data=svc.get_metadata(refresh=refresh))
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as e:
-        raise command_error_to_api_error(e)
-    except ProfileRevisionConflict:
-        raise
-    except RuntimeError as e:
-        raise ApiError(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorCode.ENGINE_NOT_READY, str(e))
 
 
 @router.get(
@@ -157,18 +119,13 @@ def refresh_metadata(svc: AcquisitionAppService = Depends(get_acquisition_servic
 
 
 def _preview_response(callback, *args, **kwargs):
-    try:
-        return ApiResponse(data=callback(*args, **kwargs))
-    except (CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
-        raise command_error_to_api_error(exc)
-    except ProfileRevisionConflict:
-        raise
-    except LookupError as exc:
-        raise ApiError(404, ErrorCode.NOT_FOUND, str(exc))
-    except ValueError as exc:
-        raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc))
-    except RuntimeError as exc:
-        raise ApiError(503, ErrorCode.ENGINE_NOT_READY, str(exc))
+    with command_errors():
+        try:
+            return ApiResponse(data=callback(*args, **kwargs))
+        except LookupError as exc:
+            raise ApiError(404, ErrorCode.NOT_FOUND, str(exc)) from exc
+        except ValueError as exc:
+            raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc)) from exc
 
 
 @router.post("/preview/start", response_model=ApiResponse[AcquisitionPreviewResponse],

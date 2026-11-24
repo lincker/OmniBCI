@@ -3,7 +3,7 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 # @Date     : 2025-04-21 10:16
 from enum import IntEnum, unique
-from typing import Any, Optional
+from typing import Any
 
 
 @unique
@@ -15,7 +15,6 @@ class EventType(IntEnum):
     RestoreSourceCheckpoint = 106
     GetSourceMetadata = 108
     StartStream = 111
-    StopStream = 112
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
     StartAcquisitionPreview = 114
     StopAcquisitionPreview = 115
@@ -36,7 +35,6 @@ class EventType(IntEnum):
     # stimulation
     StartStimTrial = 311
     StimulationAck = 312   # stim → engine: ack/result of a stimulation command
-    MessageFromStimulation = 9
     StopStimulation = 302
     PauseStimulation = 303  # correlated renderer stop and trigger clear
     # actuation (external-device control; the actuation subsystem loads
@@ -52,24 +50,12 @@ class EventType(IntEnum):
 
 
 class Event:
-    """EventBus envelope containing an event type and its payload.
-
-    Payload contracts:
-
-      TrialCompleted   application.events.TrialOutcome
-      EpochProcessed   application.events.EpochProcessed
-      StartStimTrial   dict {"n_trials": int, "trial_params": list[dict]}
-      AcquisitionState application.events.AcquisitionSnapshot
-      CommandResult    application.events.CommandResult
-      StimulationAck   dict produced by make_stimulation_ack
-      Actuation*       dict containing device commands or feedback
-      Other commands   None
-    """
+    """EventBus envelope containing an event type and its payload."""
 
     __slots__ = ("type", "data")
 
-    def __init__(self, event_type: Optional[EventType] = None, data: Any = None) -> None:
-        self.type: Optional[EventType] = event_type
+    def __init__(self, event_type: EventType, data: Any = None) -> None:
+        self.type: EventType = event_type
         self.data: Any = data
 
     def __repr__(self) -> str:

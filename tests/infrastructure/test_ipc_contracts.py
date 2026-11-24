@@ -16,7 +16,6 @@ import pytest
 from omnibci.infrastructure.ipc import contracts
 from omnibci.infrastructure.ipc.contracts import (
     InvalidEventBody,
-    MAX_FRAME_BODY_BYTES,
     PROTOCOL_VERSION,
     SUPPORTED_VERSIONS,
     UnsupportedProtocolVersion,
@@ -29,6 +28,7 @@ from omnibci.infrastructure.ipc.protocol import (
     Frame,
     FrameBodyTooLarge,
     InvalidFrameHeader,
+    MAX_FRAME_BODY_BYTES,
 )
 from omnibci.shared.events import Event, EventType
 from omnibci.application.events import TrialOutcome
@@ -38,8 +38,8 @@ from omnibci.domain.classification import Classification
 class TestWireShape:
     def test_stream_control_commands_have_distinct_wire_values(self):
         assert int(EventType.StartStream) == 111
-        assert int(EventType.StopStream) == 112
-        for name in ("StartStream", "StopStream"):
+        assert int(EventType.StopAndDrain) == 113
+        for name in ("StartStream", "StopAndDrain"):
             original = Event(EventType[name])
             restored = decode_event_body(event_to_body(original).encode(), PROTOCOL_VERSION)
             assert restored.type.name == name

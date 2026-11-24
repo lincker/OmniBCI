@@ -21,13 +21,13 @@ let window: BrowserWindow;
 let server: LocalServer | undefined;
 let quitAllowed = false;
 let transition = false;
-let editor = { dirty: false, busy: false };
+let editor = { dirty: false };
 let logDirectory: string;
 let preferencesPath: string;
 let writeLog: (message: string) => void = () => {};
 let devOrigin: string | undefined;
 let language: "en" | "zh" = "en";
-const t = (message: Parameters<typeof desktopText>[1], params?: Record<string, string | number>) => desktopText(language, message, params);
+const t = (message: Parameters<typeof desktopText>[1]) => desktopText(language, message);
 
 function trusted(event: IpcMainEvent | IpcMainInvokeEvent): void {
   const frame = event.senderFrame;
@@ -132,7 +132,7 @@ async function disconnect(): Promise<boolean> {
 async function connect(target: ConnectionTarget): Promise<void> {
   if (!target || !["owned", "existing"].includes(target.kind)) throw new Error(t("Choose a connection mode."));
   if (!await disconnect()) return;
-  editor = { dirty: false, busy: false };
+  editor = { dirty: false };
   if (target.kind === "existing") {
     await connection.connect("existing", target.url, target.token);
   } else {
@@ -249,12 +249,11 @@ async function start(): Promise<void> {
     return result.canceled ? null : result.filePaths[0];
   });
   subscribe("logs:open", async () => { const error = await shell.openPath(logDirectory); if (error) throw new Error(error); });
-  subscribe("app:quit", requestQuit);
   ipcMain.on("app:language", (event, value) => {
     try { trusted(event); if (value === "en" || value === "zh") language = value; } catch { /* Reject untrusted sender. */ }
   });
   ipcMain.on("editor:state", (event, value) => {
-    try { trusted(event); editor = { dirty: value?.dirty === true, busy: value?.busy === true }; } catch { /* Reject untrusted sender. */ }
+    try { trusted(event); editor = { dirty: value?.dirty === true }; } catch { /* Reject untrusted sender. */ }
   });
   ipcMain.on("results:subscribe", (event, value) => {
     try {

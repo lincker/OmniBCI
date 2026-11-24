@@ -52,8 +52,6 @@ async def test_scan45_restart_requests_live_delivery_without_resetting_sample_st
     source = Scan45DataReader(parameters={}, resource_root=Path(__file__).parent)
     source.writer = SimpleNamespace(write=MagicMock(), drain=AsyncMock())
     source._is_connected = True
-    source._packets_counter = 12
-    source._previous_event = 7
     await source.start_stream()
     await source.stop_stream()
     await source.start_stream()
@@ -62,7 +60,6 @@ async def test_scan45_restart_requests_live_delivery_without_resetting_sample_st
         scan45_message_manager.stopSendingDataCommand,
         scan45_message_manager.startSendingDataCommand,
     ]
-    assert source._packets_counter == 12 and source._previous_event == 7
 
 
 @pytest.mark.asyncio

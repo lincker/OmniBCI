@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type EpochList } from "./api/client";
+import { api, errorMessage, type EpochList } from "./api/client";
 import { useI18n } from "./i18n";
 import { resultTime } from "./result-format";
 import "./EpochProcessing.css";
@@ -27,7 +27,7 @@ export function EpochProcessing({ onResults, disabled = false }: { onResults?: (
         setSnapshot(value); setError(null);
         if (changed && offset !== 0) { setOffset(0); return; }
       } catch (cause) {
-        if (alive) setError(cause instanceof Error ? cause.message : String(cause));
+        if (alive) setError(errorMessage(cause));
       }
       if (alive) timer = setTimeout(() => { void refresh(); }, 1000);
     };

@@ -5,6 +5,7 @@
 from pathlib import Path
 from collections.abc import Mapping
 import asyncio
+import logging
 import sys
 import time
 from enum import IntEnum
@@ -13,6 +14,8 @@ import numpy as np
 
 from omnibci.sdk import SignalSource, SourceObservation, TriggerEmitter
 from omnibci.infrastructure.acquisition.metadata import signal_info
+
+logger = logging.getLogger(__name__)
 
 
 class Scan45Message:
@@ -49,7 +52,7 @@ class Scan45Message:
         @classmethod
         def create_from_bytes(cls, header_bytes: bytes):
             if len(header_bytes) != 12:
-                print('error! the header length is not 12, header =', header_bytes)
+                logger.warning("Scan45 header length is not 12: %r", header_bytes)
             ID = header_bytes[0:4].decode('ascii')
             code = int.from_bytes(header_bytes[4:6], byteorder='big')
             request = int.from_bytes(header_bytes[6:8], byteorder='big')
@@ -67,7 +70,6 @@ class Scan45Message:
     def __init__(self) -> None:
         self.startSendingDataCommand = self._build_start_send_data_header()
         self.stopSendingDataCommand = self._build_stop_send_data_header()
-        self.getEDFHeaderInfoCommand = self._build_get_EDF_header()
         self.closingUpConnectionCommand = self._build_closing_up_connection_header()
 
     def _build_start_send_data_header(self):
@@ -88,16 +90,6 @@ class Scan45Message:
             size_body=0
         )
         # header bytes = b'CTRL\x00\x03\x00\x04\x00\x00\x00\x00'
-        return header.to_bytes()
-
-    def _build_get_EDF_header(self):
-        header = self.Header(
-            ID='CTRL',
-            code=self.ControlCode.CTRL_FromClient,
-            request=self.Request.RequestEDFHeader,
-            size_body=0
-        )
-        # header bytes = b'CTRL\x00\x03\x00\x01\x00\x00\x00\x00'
         return header.to_bytes()
 
     def _build_closing_up_connection_header(self):
@@ -132,8 +124,6 @@ class Scan45DataReader(SignalSource):
         self.reader = None
         self.writer = None
         self._pending_header = None
-        self._previous_event = 0 # the integer events position
-        self._packets_counter = 0
 
     async def connect(self) -> None:
         # TODO: if any connections to scan4.5, disconnect it
@@ -143,10 +133,10 @@ class Scan45DataReader(SignalSource):
 
     # TODO: refactor the return values
     async def _connect(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        print("connect to ", self.data_provider_ip, self.data_provider_port)
+        logger.info("Connecting to Scan45 at %s:%s", self.data_provider_ip, self.data_provider_port)
         self._pending_header = None
         self.reader, self.writer = await asyncio.open_connection(self.data_provider_ip, self.data_provider_port)
-        print("connected")
+        logger.info("Connected to Scan45")
         return self.reader, self.writer
 
     async def disconnect(self) -> None:
@@ -177,13 +167,6 @@ class Scan45DataReader(SignalSource):
                                      provenance="user-declared", layout_error=str(exc)[:4096])
         return SourceObservation(native_text=text, signal_info=info,
                                  native_event="final-row", provenance="user-declared")
-
-    async def request_basic_info(self):
-        self.writer.write(scan45_message_manager.getEDFHeaderInfoCommand)
-        self.writer.drain()
-        header, body = await self._load_package()
-        # TODO:
-        self.info = str(header)
 
     async def start_stream(self) -> None:
         if not self._is_connected:
@@ -221,10 +204,10 @@ class Scan45DataReader(SignalSource):
         else:
             header = self._pending_header[1]
         if header.size_body == 0:
-            print("body size is 0")
+            logger.debug("Scan45 packet body size is 0")
         body = await reader.readexactly(header.size_body)
         self._pending_header = None
-        # TODO； check body data type
+        # TODO: check body data type
         return header, body
 
     def _parse_body_data(self, header: Scan45Message.Header, body: bytes):
@@ -250,17 +233,6 @@ class Scan45DataReader(SignalSource):
         int_data = np.fromiter(iterable, int)
         n_samples = len(int_data) // n_channels
         packet = np.reshape(int_data, (n_channels, n_samples), order='F')
-        # Disabled: keep only the first event in each nonzero run across packets.
-        # packet_event = packet[-1, :]
-        # for index, event in enumerate(packet_event):
-        #     if self._previous_event == 0 and event != 0:
-        #         self._previous_event = event
-        #         print(f'neuroscan scan4.5 index = {index}-----------event = {event}')
-        #     elif self._previous_event != 0:
-        #         if event != 0:
-        #             packet_event[index] = 0
-        #         else:
-        #             self._previous_event = event
         return packet
 
 

@@ -194,7 +194,7 @@ async def test_simulated_curry_decodes_selected_eeg_without_lifecycle_commands(m
         assert processor._signal_plan.source_indices == (3, 1, 2)
         assert [channel.signal_type for channel in processor._signal_plan.output_channels] == ["eeg"] * 3
 
-        await acquisition_command(AcquisitionCommand.stop_stream, "stop")
+        await acquisition_command(AcquisitionCommand.stop_and_drain, "stop")
         assert [chunk.sequence_id for chunk in received] == list(range(len(blocks)))
         for chunk, expected in zip(received, normalized_blocks, strict=True):
             np.testing.assert_array_equal(chunk.raw_data, expected)

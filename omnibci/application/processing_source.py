@@ -5,11 +5,6 @@ from omnibci.domain.channel_mapping import ProcessingInput
 from omnibci.application.source_metadata import descriptor_layout
 
 
-def materialize_processing_binding(binding):
-    """Carry pinned module inputs without validating or migrating another module."""
-    return binding.to_dict()
-
-
 def binding_for(snapshot, slot):
     if snapshot is None:
         return None

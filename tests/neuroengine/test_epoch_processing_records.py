@@ -264,19 +264,16 @@ async def test_metadata_stays_bound_to_open_epoch():
 
 
 @pytest.mark.asyncio
-async def test_terminal_record_never_builds_or_retains_signal_snapshot(monkeypatch):
+async def test_terminal_record_never_builds_or_retains_signal_snapshot():
     value, events = processor()
     await feed(value, [1, 2], [7, 0])
-
-    build_epoch = Mock(side_effect=AssertionError("Signal snapshot must not be constructed"))
-    monkeypatch.setattr(value.current_epoch, "build_epoch", build_epoch)
     await feed(value, [3], [255], sequence=1)
 
     captured = records(events)[0]
     assert captured.status == "no_result"
     assert captured.sample_count == 2
     assert captured.error is None
-    build_epoch.assert_not_called()
+    assert not hasattr(value.current_epoch, "build_epoch")
     assert set(asdict(captured)) == {
         "generation", "epoch_number", "event_id", "processing_revision", "acquisition_revision", "sample_rate",
         "channel_count", "sample_count", "pre_trigger_samples", "started_at", "completed_at",

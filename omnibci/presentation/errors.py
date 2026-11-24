@@ -1,17 +1,10 @@
 """
 Unified error handling for the presentation layer.
 
-Goal
-----
-Before this, success responses used ``ApiResponse{success,message,data}`` but
-errors fell through to FastAPI's default ``{"detail": ...}``.  Clients had to
-handle two shapes and guess meaning from the HTTP status.
-
-Here we install global exception handlers so *every* error returns the unified
+Global exception handlers and scoped router helpers render every error as
 ``ErrorResponse{success:false, code, message, detail?}`` with a stable
-``ErrorCode``.  Existing routers need no change: their ``HTTPException``s are
-re-wrapped here.  New code can raise :class:`ApiError` to attach a semantic
-code directly.
+``ErrorCode``. Routers raise :class:`ApiError` (or let domain/application
+exceptions map through the helpers below) rather than raw HTTP exceptions.
 """
 
 import logging
@@ -26,6 +19,9 @@ from omnibci.presentation.schemas.common import ErrorCode, ErrorResponse
 from omnibci.application.configuration.errors import (
     ConfigProfileConflictError, ConfigProfileValidationError, PluginProfileNotFoundError,
     PluginProfileValidationError, ProfileRevisionConflict,
+)
+from omnibci.application.plugin_management.packages import (
+    PluginPackageConflictError, PluginPackageError, PluginPackageNotFoundError, PluginPackageStorageError,
 )
 from omnibci.application.plugin_management.schema import PluginSchemaError
 from omnibci.application.services.command_result_service import (
@@ -90,14 +86,38 @@ class ApiError(Exception):
 def configuration_errors():
     try:
         yield
-    except (PluginSchemaError, PluginProfileValidationError, ConfigProfileValidationError) as exc:
+    except (PluginSchemaError, PluginProfileValidationError) as exc:
         raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc)) from exc
-    except (ProfileRevisionConflict, ConfigProfileConflictError) as exc:
-        raise ApiError(409, ErrorCode.CONFLICT, str(exc)) from exc
     except PluginProfileNotFoundError as exc:
         raise ApiError(404, ErrorCode.CONFIG_PROFILE_NOT_FOUND, f"Profile not found: {exc}") from exc
     except OSError as exc:
         raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, str(exc)) from exc
+
+
+@contextmanager
+def package_errors():
+    try:
+        yield
+    except PluginPackageNotFoundError as exc:
+        raise ApiError(404, ErrorCode.NOT_FOUND, str(exc)) from exc
+    except PluginPackageConflictError as exc:
+        raise ApiError(409, ErrorCode.CONFLICT, str(exc)) from exc
+    except PluginPackageStorageError as exc:
+        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, str(exc)) from exc
+    except PluginPackageError as exc:
+        raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+
+
+@contextmanager
+def command_errors(*, runtime_status: int = 503):
+    try:
+        yield
+    except (CommandDeliveryError, CommandRejectedError, CommandExecutionError, CommandTimeoutError) as exc:
+        raise command_error_to_api_error(exc) from exc
+    except (ProfileRevisionConflict, ConfigProfileConflictError):
+        raise
+    except RuntimeError as exc:
+        raise ApiError(runtime_status, ErrorCode.ENGINE_NOT_READY, str(exc)) from exc
 
 
 def command_error_to_api_error(exc: Exception) -> ApiError:
@@ -159,7 +179,7 @@ def _json_error(status_code: int, code: ErrorCode, message: str, detail=None) ->
 def register_exception_handlers(app: FastAPI) -> None:
     """Install handlers that render every error as a unified ErrorResponse."""
     @app.exception_handler(ProfileRevisionConflict)
-    async def runtime_conflict_handler(request, exc):
+    async def _handle_runtime_conflict(_: Request, exc: ProfileRevisionConflict) -> JSONResponse:
         return _json_error(409, ErrorCode.CONFLICT, str(exc))
 
     @app.exception_handler(ConfigProfileValidationError)

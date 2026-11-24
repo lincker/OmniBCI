@@ -107,12 +107,6 @@ _COMMAND_ROUTES = [
         None,
     ),
     (
-        EventType.StopStream,
-        "acquisition_command_queue",
-        AcquisitionCommand.stop_stream,
-        None,
-    ),
-    (
         EventType.StopAndDrain,
         "acquisition_command_queue",
         AcquisitionCommand.stop_and_drain,

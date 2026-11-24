@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from omnibci.application.events import CommandFailureKind, CommandResult
 from omnibci.application.services.command_result_service import (
+    CommandDeliveryError,
     CommandExecutionError,
     CommandRejectedError,
     CommandTimeoutError,
@@ -192,6 +193,22 @@ class TestAcquisitionStream:
         assert resp.status_code == 500
         assert resp.json()["code"] == "COMMAND_EXECUTION_FAILED"
         assert resp.json()["detail"]["error_code"] == "OSError"
+
+    def test_delivery_failure_returns_503_peer_delivery_failed(
+        self, api_client, acquisition_service
+    ):
+        acquisition_service.handle_start_stream = MagicMock(
+            side_effect=CommandDeliveryError(
+                "cmd-delivery", "StartStream", "acquisition worker disconnected",
+                execution_unknown=False,
+            )
+        )
+
+        resp = api_client.post("/api/v1/acquisition/stream/start", json=READ_IDENTITY)
+
+        assert resp.status_code == 503
+        assert resp.json()["code"] == "PEER_DELIVERY_FAILED"
+        assert "acquisition worker disconnected" in resp.json()["message"]
 
 
 class TestAcquisitionStatus:

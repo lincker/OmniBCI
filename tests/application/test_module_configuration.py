@@ -126,7 +126,7 @@ def test_each_module_can_be_configured_first(profiles, module, slot, kind, alias
     assert not plan.errors
     accept_plan(profiles, runtime, plan)
     assert [b.slot for b in profiles.repository.get_module(module).bindings] == [slot]
-    assert all(value is None for key, value in profiles.repository.get_activation_set().modules.items() if key != module)
+    assert all(value is None for key, value in profiles.selected_configuration().modules.items() if key != module)
 
 
 def test_module_request_cannot_change_another_modules_slots(profiles):

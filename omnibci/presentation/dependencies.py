@@ -11,10 +11,21 @@ from omnibci.application.services.acquisition_service import AcquisitionAppServi
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.plugin_management.market_service import PluginMarketService
 from omnibci.application.plugin_management.package_service import PluginPackageService
+from omnibci.application.services.node_configuration_service import NodeConfigurationService
+from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
+from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.results_service import ResultsService
 from omnibci.presentation.errors import ApiError
 from omnibci.presentation.schemas.common import ErrorCode
+
+
+def _container_service(request: Request, attr: str, message: str):
+    container = getattr(request.app.state, "container", None)
+    service = getattr(container, attr, None)
+    if service is None:
+        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, message)
+    return service
 
 
 def get_engine_service(request: Request) -> NeuroEngineService:
@@ -34,11 +45,19 @@ def get_results_service(request: Request) -> ResultsService:
 
 
 def get_configuration_service(request: Request) -> ConfigurationService:
-    container = getattr(request.app.state, "container", None)
-    service = getattr(container, "configuration_service", None)
-    if service is None:
-        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Configuration is unavailable")
-    return service
+    return _container_service(request, "configuration_service", "Configuration is unavailable")
+
+
+def get_runtime_configuration(request: Request) -> RuntimeConfigurationService:
+    return _container_service(request, "runtime_configuration", "Runtime configuration is unavailable")
+
+
+def get_node_configuration_service(request: Request) -> NodeConfigurationService:
+    return _container_service(request, "node_configuration", "Node configuration is unavailable")
+
+
+def get_signal_setup_service(request: Request) -> SignalSetupService:
+    return _container_service(request, "signal_setup_service", "Signal setup is unavailable")
 
 
 def get_plugin_package_service(request: Request) -> PluginPackageService:

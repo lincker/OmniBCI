@@ -265,7 +265,7 @@ repository permissions and does not create GitHub releases.
 macOS installer jobs also mount the DMG read-only, verify its code signature and
 compare every app entry against the smoke-tested payload, then detach the image.
 
-To update Python or PBS, update `runtime/versions.json` only after checking all
+To update Python or PBS, update `desktop/runtime/versions.json` only after checking all
 four official assets and their hashes. Update the vendored PBS license notices
 and `SOURCES.json` to that release commit. With the pinned uv resolver and the matching
 native Python 3.14.8 interpreter available, refresh the four dependency locks:

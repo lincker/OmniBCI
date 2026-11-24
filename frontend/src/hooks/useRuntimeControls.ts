@@ -5,9 +5,9 @@ import { signalConfigApi } from "../api/signal-config";
 import { useI18n, type TranslationKey } from "../i18n";
 import { usePoll } from "./usePoll";
 import type { AcquisitionController } from "./useAcquisition";
-import { currentBindings, type ConfigurationModule, type CurrentConfigurationController } from "./useCurrentConfiguration";
+import { currentBindings, type CurrentConfigurationController } from "./useCurrentConfiguration";
 import type { ConfigurationSection, RuntimeConfiguration } from "./useRuntimeConfiguration";
-import type { ModuleActivation } from "../api/plugin-config";
+import type { ConfigurationModule, ModuleActivation } from "../api/plugin-config";
 import { runtimeBlockReason } from "../RuntimeConfiguration";
 import { schemaErrors } from "../SchemaForm";
 import { processingInputErrors } from "../ProcessingInput";
@@ -155,7 +155,7 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     };
     const source = bindings.find((binding) => binding.slot === "acquisition.source");
     const sourceReason = currentReason(name) ?? (!has("source") ? t("run.reason.selectSource")
-      : recordingPathMissing(source && "selection" in source ? source : undefined) ? t("run.missingRecording") : validation());
+      : recordingPathMissing(source) ? t("run.missingRecording") : validation());
     let startReason = operationReason(name, recover) ?? availabilityReason;
     let stopReason: string | null = null;
     let startLabel: TranslationKey;
@@ -213,7 +213,7 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
         : changed ? t("run.reason.reconnectCurrentSource") : null) : null;
     const stopReadReason = controls.stopRead.pending || acquisition.stopRead.pending ? t("feedback.busy") : availabilityReason
       ?? (!acquisition.data?.streaming && !acquisition.read.pending && !controls.readCurrent.pending ? t("run.reason.notReading") : null);
-    return { status, parameters, active, changed, available, external, connected,
+    return { status, parameters, active, available, connected,
       start: { ...startAction, label: t(startLabel), reason: startReason }, stop: { ...stopAction, label: t(stopLabel), reason: stopReason },
       read: { ...controls.readCurrent, error: controls.readCurrent.error ?? acquisition.read.error, label: t("run.startReading"), reason: readReason },
       stopRead: { ...controls.stopRead, error: controls.stopRead.error ?? acquisition.stopRead.error, label: t("run.stopReading"), reason: stopReadReason },
@@ -221,9 +221,7 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
       reading: running && !!acquisition.data?.streaming, readingLabel: t(running && acquisition.data?.streaming ? "run.reading" : "run.notReading"),
       progress: runtimeState.uncertain ? t("feedback.confirming") : runtimeState.inProgress ? t("feedback.applying")
         : pending(name) || controls.enginePending ? t("feedback.busy") : null,
-      heading: t("runtime.moduleStatus"), engineStart: { ...controls.start, label: t("run.startEngine"),
-        reason: operationReason("engine", true) ?? engineReason ?? (running ? t("run.reason.alreadyRunning") : null) },
-      needsEngine: engineAvailable && !running && (name === "stimulation" || name === "actuation"),
+      heading: t("runtime.moduleStatus"),
     };
   };
   return { ...controls, module, operationReason, currentReason, readyFor, matches };

@@ -188,12 +188,11 @@ def test_explicit_settings_are_shared_by_source_and_runtime():
 def test_historical_decoder_projection_requires_preparation():
     from omnibci.application.plugin_management.identity import PluginSelection
     from omnibci.application.configuration.models import ProfileBinding
-    from omnibci.application.processing_source import materialize_processing_binding
 
     binding = ProfileBinding("processing.decoder", "decoder", None,
                              PluginSelection("test.decoder", "default", "1"), {})
     worker = AcquisitionWorker(command_queue=MagicMock(), settings_snapshot={
-        "PLUGINS.bindings": [_source_binding(), materialize_processing_binding(binding)],
+        "PLUGINS.bindings": [_source_binding(), binding.to_dict()],
     })
     worker.data_source = MagicMock(spec=SignalSource, trigger_mode="events", resume_mode="restart-only")
     with patch("omnibci.infrastructure.acquisition.worker.AcquisitionRuntime") as runtime_class:

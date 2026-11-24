@@ -4,7 +4,6 @@ import asyncio
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from enum import StrEnum
 from threading import RLock
 from time import monotonic
 from uuid import UUID, uuid4
@@ -48,12 +47,7 @@ def validate_external_peers(engine, activation_set, candidates, strategy):
             raise PluginSchemaError(f"{role.title()} is externally managed; disconnect its node before changing configuration")
 
 
-class ApplyStrategy(StrEnum):
-    SELECT_ON_START = "select_on_start"
-    NO_CHANGE = "no_change"
-    REBUILD = "rebuild"
-    TRIAL_BOUNDARY = "trial_boundary"
-    MODULE = "module"
+_APPLY_STRATEGIES = frozenset({"select_on_start", "no_change", "rebuild", "trial_boundary", "module"})
 
 
 @dataclass(frozen=True)
@@ -66,14 +60,15 @@ class ConfigurationPlan:
     applied_revisions: dict[str, str | None] | None
     generation: str | None
     running: bool
-    strategy: ApplyStrategy
+    strategy: str
     changed_slots: tuple[str, ...]
     changed_settings: tuple[str, ...]
     errors: tuple[str, ...]
     signal_summary: str | None = None
 
     def __post_init__(self):
-        object.__setattr__(self, "strategy", ApplyStrategy(self.strategy))
+        if self.strategy not in _APPLY_STRATEGIES:
+            raise ValueError(f"Unsupported apply strategy: {self.strategy!r}")
 
     def to_dict(self):
         return asdict(self)

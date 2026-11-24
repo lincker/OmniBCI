@@ -12,14 +12,22 @@ exceptions are not guaranteed to be pickleable.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
 import logging
 import math
+import sys
+from threading import RLock
 import time
-from typing import Any
+from typing import Any, Callable
 
+from omnibci.application.configuration.definitions import (
+    MODULE_SETTING_DEFAULTS,
+    module_runtime_settings,
+)
 from omnibci.application.plugin_management.execution import PluginExecutionReceipt
+from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -286,3 +294,405 @@ def wait_for_startup_report(
                 f"{component} subprocess exited before reporting ready "
                 f"(exitcode={process.exitcode})"
             )
+
+
+def run_managed_child(
+    app_factory: Callable[..., Any],
+    *,
+    component: str,
+    module: str,
+    stop_event: Any = None,
+    startup_connection: Any = None,
+    settings_snapshot: dict,
+) -> None:
+    """Run a spawned output-host application with structured startup reporting."""
+    reporter = (
+        StartupReporter(
+            startup_connection,
+            component=component,
+            module_revisions={module: settings_snapshot.get("CONFIG.module_revisions", {}).get(module)},
+            engine_revision=settings_snapshot.get("CONFIG.engine_revision"),
+            generation=settings_snapshot.get("CONFIG.generation"),
+        )
+        if startup_connection is not None
+        else None
+    )
+    try:
+        kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
+        if reporter is not None:
+            kwargs["startup_reporter"] = reporter
+        app_factory(**kwargs).run()
+    except BaseException as exc:
+        if reporter is not None:
+            reporter.failed("entrypoint", exc)
+        raise
+    finally:
+        if reporter is not None:
+            reporter.close()
+
+
+class ManagedOutputProcessManager:
+    """Shared OS-process lifecycle for managed output hosts (Stimulation, Actuation).
+
+    Each start uses the pinned snapshot's managed or external mode. Desktop
+    hosts disable automatic termination and retain unresponsive children so an
+    operator can confirm device settlement explicitly.
+    """
+
+    _COMPONENT_NAME: str
+    _MODULE_NAME: str
+    _AUTO_SPAWN_KEY: str
+    _PROCESS_NAME: str
+    _SELECTION_LABEL: str
+    _RESOURCE_NOUN: str
+
+    _GRACEFUL_TIMEOUT_S = 3.0
+    _TERMINATE_TIMEOUT_S = 3.0
+    _KILL_TIMEOUT_S = 3.0
+    _STARTUP_TIMEOUT_S = 10.0
+
+    def __init__(
+        self,
+        *,
+        startup_timeout_s: float | None = None,
+        allow_process_termination: bool = True,
+        record_execution=None,
+    ) -> None:
+        timeout = self._STARTUP_TIMEOUT_S if startup_timeout_s is None else startup_timeout_s
+        if timeout <= 0:
+            raise ValueError("startup_timeout_s must be greater than zero")
+        self._record_execution = record_execution
+        self._auto_spawn = True
+        self._settings_snapshot: dict | None = None
+        self._startup_timeout_s = float(timeout)
+        self._allow_process_termination = allow_process_termination
+        self._process: Any = None
+        self._stop_event: Any = None
+        self._startup_receiver: Any = None
+        self._selection: str | None = None
+        self._state = ChildProcessState.STOPPED
+        self._cleanup_error: str | None = None
+        # Synchronous API routes may run concurrently in a thread pool. The
+        # re-entrant lock also permits start() to reuse the single stop path
+        # when a plugin change requires a restart.
+        self._lifecycle_lock = RLock()
+
+    def _configured_selection(self, snapshot: dict) -> str | None:
+        raise NotImplementedError
+
+    def _process_target(self) -> Callable[..., None]:
+        raise NotImplementedError
+
+    def _runtime_module(self):
+        return sys.modules[type(self).__module__]
+
+    def start(self, *, settings_snapshot: dict) -> None:
+        """Start a managed child or release it when external mode is selected."""
+        with self._lifecycle_lock:
+            self._start_locked(settings_snapshot)
+
+    def _start_locked(self, settings_snapshot: dict) -> None:
+        if self._process is None and self._cleanup_error is not None:
+            raise RuntimeError(self._cleanup_error)
+        snapshot = deepcopy(settings_snapshot)
+        auto_spawn = snapshot.get(
+            self._AUTO_SPAWN_KEY,
+            MODULE_SETTING_DEFAULTS[self._MODULE_NAME][self._AUTO_SPAWN_KEY],
+        )
+        if not auto_spawn:
+            self._stop_locked()
+            self._auto_spawn = False
+            logger.debug(
+                "auto_spawn=False — %s process must be started manually",
+                self._COMPONENT_NAME,
+            )
+            return
+        selection = self._configured_selection(snapshot)
+        self._auto_spawn = True
+        self._refresh_state_locked()
+        if self._process is not None:
+            process_alive = self._process.is_alive()
+            if (
+                process_alive
+                and self._state is ChildProcessState.READY
+                and selection == self._selection
+                and module_runtime_identity(snapshot, self._MODULE_NAME)
+                == module_runtime_identity(self._settings_snapshot, self._MODULE_NAME)
+            ):
+                logger.debug(
+                    "%s process already running requested %s (pid=%s, %s=%s)",
+                    self._COMPONENT_NAME,
+                    self._SELECTION_LABEL,
+                    self._process.pid,
+                    self._SELECTION_LABEL,
+                    selection or "<config>",
+                )
+                return
+            if process_alive:
+                logger.info(
+                    "%s %s change %s → %s; restarting subprocess",
+                    self._COMPONENT_NAME,
+                    self._SELECTION_LABEL,
+                    self._selection or "<config>",
+                    selection or "<config>",
+                )
+            else:
+                logger.info(
+                    "Reaping exited %s subprocess before restart (pid=%s, exitcode=%s)",
+                    self._COMPONENT_NAME,
+                    self._process.pid,
+                    self._process.exitcode,
+                )
+            # stop() only clears the old handle after confirming exit. If it
+            # cannot stop the process it raises and this method must not spawn a
+            # duplicate output host.
+            self._stop_locked()
+
+        runtime_module = self._runtime_module()
+        mp_ctx = runtime_module.mp
+        snapshot["CONFIG.operation_id"] = runtime_module.uuid4().hex
+        expected_execution = execution_receipt(
+            snapshot, self._MODULE_NAME, snapshot["CONFIG.operation_id"],
+        )
+        stop_event = mp_ctx.Event()
+        startup_receiver, startup_sender = mp_ctx.Pipe(duplex=False)
+        process = mp_ctx.Process(
+            target=self._process_target(),
+            args=(stop_event, startup_sender),
+            kwargs={"settings_snapshot": module_runtime_settings(snapshot, self._MODULE_NAME)},
+            name=self._PROCESS_NAME,
+            daemon=self._allow_process_termination,
+        )
+        self._state = ChildProcessState.STARTING
+        try:
+            process.start()
+        except BaseException:
+            self._state = ChildProcessState.FAILED
+            for connection in (startup_receiver, startup_sender):
+                try:
+                    connection.close()
+                except OSError:
+                    pass
+            close = getattr(process, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            raise
+
+        self._process = process
+        self._stop_event = stop_event
+        self._startup_receiver = startup_receiver
+        self._selection = selection
+        self._settings_snapshot = snapshot
+        # The parent must not retain the write end; otherwise a child that exits
+        # before sending a report can leave the receive end looking live.
+        try:
+            startup_sender.close()
+        except OSError as exc:
+            logger.warning(
+                "Failed to close parent copy of %s startup sender: %s",
+                self._COMPONENT_NAME,
+                exc,
+            )
+        logger.info(
+            "%s subprocess spawned; waiting for readiness (pid=%s, %s=%s)",
+            self._COMPONENT_NAME,
+            process.pid,
+            self._SELECTION_LABEL,
+            selection or "<config>",
+        )
+        try:
+            report = wait_for_startup_report(
+                startup_receiver,
+                process,
+                component=self._COMPONENT_NAME,
+                timeout_s=self._startup_timeout_s,
+                expected_module_revisions={
+                    self._MODULE_NAME: snapshot.get("CONFIG.module_revisions", {}).get(self._MODULE_NAME),
+                },
+                expected_engine_revision=snapshot.get("CONFIG.engine_revision"),
+                expected_generation=snapshot.get("CONFIG.generation"),
+                expected_execution=expected_execution,
+            )
+            if self._record_execution is not None:
+                self._record_execution(report.execution)
+        except BaseException as startup_exc:
+            self._state = ChildProcessState.FAILED
+            try:
+                self._stop_locked(final_state=ChildProcessState.FAILED)
+            except BaseException as cleanup_exc:
+                raise startup_exc from cleanup_exc
+            raise
+        finally:
+            self._close_startup_receiver()
+
+        self._state = ChildProcessState.READY
+        logger.info(
+            "%s subprocess ready (pid=%s, %s=%s)",
+            self._COMPONENT_NAME,
+            process.pid,
+            self._SELECTION_LABEL,
+            selection or "<config>",
+        )
+
+    def stop(self) -> None:
+        """Apply the host stop policy without ever losing a live handle."""
+        with self._lifecycle_lock:
+            self._stop_locked()
+
+    def _stop_locked(
+        self,
+        *,
+        final_state: ChildProcessState = ChildProcessState.STOPPED,
+    ) -> None:
+        process = self._process
+        if process is None:
+            self._close_startup_receiver()
+            if self._cleanup_error is not None:
+                raise RuntimeError(self._cleanup_error)
+            self._state = final_state
+            return
+
+        self._state = ChildProcessState.STOPPING
+        pid = process.pid
+        if process.is_alive():
+            if self._stop_event is not None:
+                self._stop_event.set()
+            process.join(timeout=self._GRACEFUL_TIMEOUT_S)
+
+        if process.is_alive():
+            if not self._allow_process_termination:
+                self._state = ChildProcessState.FAILED
+                raise RuntimeError(
+                    f"{self._COMPONENT_NAME} subprocess did not stop gracefully (pid={pid}); "
+                    "process retained for an explicit force-exit decision"
+                )
+            logger.warning(
+                "%s subprocess did not stop gracefully; terminating (pid=%s)",
+                self._COMPONENT_NAME,
+                pid,
+            )
+            self._cleanup_error = (
+                f"{self._COMPONENT_NAME} cleanup was not confirmed after forced termination "
+                f"(pid={pid}); replacement is blocked"
+            )
+            process.terminate()
+            process.join(timeout=self._TERMINATE_TIMEOUT_S)
+
+        if process.is_alive():
+            kill = getattr(process, "kill", None)
+            if callable(kill):
+                logger.warning(
+                    "%s subprocess ignored terminate; killing (pid=%s)",
+                    self._COMPONENT_NAME,
+                    pid,
+                )
+                kill()
+                process.join(timeout=self._KILL_TIMEOUT_S)
+
+        if process.is_alive():
+            message = (
+                f"{self._COMPONENT_NAME} subprocess is still alive after graceful stop, "
+                f"terminate, and kill escalation (pid={pid}); refusing to "
+                f"discard its handle or start another {self._RESOURCE_NOUN}"
+            )
+            logger.error(message)
+            self._state = ChildProcessState.FAILED
+            raise RuntimeError(message)
+
+        exitcode = process.exitcode
+        if exitcode != 0:
+            self._cleanup_error = (
+                f"{self._COMPONENT_NAME} cleanup was not confirmed "
+                f"(pid={pid}, exitcode={exitcode}); replacement is blocked"
+            )
+        logger.info(
+            "%s subprocess stopped (pid=%s, exitcode=%s)",
+            self._COMPONENT_NAME,
+            pid,
+            exitcode,
+        )
+        close = getattr(process, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:  # pragma: no cover - platform defensive
+                logger.warning(
+                    "Failed to close stopped %s process handle (pid=%s): %s",
+                    self._COMPONENT_NAME,
+                    pid,
+                    exc,
+                )
+        self._process = None
+        self._stop_event = None
+        self._close_startup_receiver()
+        if self._cleanup_error is not None:
+            self._state = ChildProcessState.FAILED
+            raise RuntimeError(self._cleanup_error)
+        self._selection = None
+        self._settings_snapshot = None
+        self._state = final_state
+
+    def _close_startup_receiver(self) -> None:
+        receiver = self._startup_receiver
+        self._startup_receiver = None
+        if receiver is None:
+            return
+        try:
+            receiver.close()
+        except OSError:
+            pass
+
+    def _refresh_state_locked(self) -> None:
+        if (
+            self._process is not None
+            and self._state in (
+                ChildProcessState.STARTING,
+                ChildProcessState.READY,
+            )
+            and not self._process.is_alive()
+        ):
+            self._state = ChildProcessState.FAILED
+
+    def _current_selection(self) -> str | None:
+        with self._lifecycle_lock:
+            self._refresh_state_locked()
+            return (
+                self._selection
+                if (
+                    self._state is ChildProcessState.READY
+                    and self._process is not None
+                    and self._process.is_alive()
+                )
+                else None
+            )
+
+    @property
+    def auto_spawn(self) -> bool:
+        """Whether the selected configuration requests a managed subprocess."""
+        with self._lifecycle_lock:
+            return self._auto_spawn
+
+    @property
+    def is_alive(self) -> bool:
+        with self._lifecycle_lock:
+            self._refresh_state_locked()
+            return self._process is not None and self._process.is_alive()
+
+    @property
+    def is_ready(self) -> bool:
+        with self._lifecycle_lock:
+            self._refresh_state_locked()
+            return (
+                self._state is ChildProcessState.READY
+                and self._process is not None
+                and self._process.is_alive()
+            )
+
+    @property
+    def state(self) -> ChildProcessState:
+        with self._lifecycle_lock:
+            self._refresh_state_locked()
+            return self._state

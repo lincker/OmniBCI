@@ -36,7 +36,7 @@ export function apiPath(value: string): string {
   return url.pathname + url.search;
 }
 
-export function proxyError(status: number, message: string): Response {
+function proxyError(status: number, message: string): Response {
   return Response.json({ success: false, code: "DESKTOP_CONNECTION_ERROR", message }, { status });
 }
 
@@ -162,7 +162,7 @@ export class ServerConnection extends EventEmitter {
         },
         async cancel() { controllers.delete(controller); controller.abort(); await reader.cancel().catch(() => {}); },
       }), { status: response.status, headers: responseHeaders });
-    } catch (error) {
+    } catch {
       this.controllers.delete(controller);
       if (!signal.aborted && this.info.id === connectionId) this.failed("Connection lost; server state is unknown.");
       return proxyError(503, signal.aborted ? "Request canceled; check server state before retrying." : "Server request failed.");

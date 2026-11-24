@@ -4,7 +4,7 @@ The server keeps four independent accepted configurations: Acquisition,
 Processing, Stimulation, and Actuation. Each owns its settings, pinned
 plugin bindings, content revision, file, lock, and application history.
 Named saved Profiles remain independent for each Contribution. These names follow
-the [plugin terminology and module names](plugin-marketplace-design.md#3-concepts-and-architectural-boundaries);
+the [canonical plugin terminology](plugin-manifest.md);
 the current console also labels Processing as **Signal Processing**. A binding
 describes the selected Contribution and parameters, not a live Instance.
 
@@ -281,11 +281,11 @@ settings revision or read the Server settings file.
 ## Runtime identity
 
 Runtime settings contain `CONFIG.module_revisions`, `CONFIG.engine_revision`,
-and `CONFIG.generation`. Node configuration uses a revision map: the engine
-receives Acquisition and Processing, and each external output node receives its
-own module. Handshakes check the relevant module, engine, and generation.
+and `CONFIG.generation`. External output nodes (`stimulation` and `actuation`)
+receive a role-scoped `NodeConfiguration` with `format_version: 1`,
+`engine_revision`, `module_revisions` for their own module, and an optional
+`operation_id`. Handshakes check the relevant module, engine, and generation.
 
-Node configuration has `format_version: 1` and an `engine_revision` field.
 External-node IPC uses protocol version 1. The desktop handshake calls
 `/server/info` and requires `desktop_api_version: 1`. These unreleased contracts
 accept only the current fields and version 1. Removed routes return 404;
@@ -341,8 +341,8 @@ All routes use the normal `/api/v1` prefix and response envelope.
 | `GET /config/engine` | Accepted shared settings |
 | `GET /config` | Server saved values, startup values, restart flags, and Server save revision |
 | `PATCH /config` | Save Server startup values with `expected_revision`; does not apply Engine settings |
-| `GET /config/plugin-profiles/{id}/history` | Saved Profile revisions |
-| `POST /config/plugin-profiles/{id}/revert` | Copy a historical Profile into a new revision |
+| `GET /config/plugin-profiles/{profile_id}/history` | Saved Profile revisions |
+| `POST /config/plugin-profiles/{profile_id}/revert` | Copy a historical Profile into a new revision |
 
 See [Plugin profiles](plugin-profiles.md) for current-value workflows, storage,
 A → B → A history semantics and independent Profile restoration. There is no

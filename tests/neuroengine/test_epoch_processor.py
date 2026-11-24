@@ -160,9 +160,8 @@ class TestEpochBuffering:
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=8), start_idx=2, event_id=5)
         # data has 3 channels, sliced from index 2 → 6 samples remain
-        epoch = mgr.build_epoch()
-        assert epoch.data.shape == (3, 6)
-        assert epoch.event_id == 5
+        assert mgr._epoch_data.shape == (3, 6)
+        assert mgr._event_id == 5
 
     def test_initialize_rejects_negative_start_index(self):
         mgr = _manager()
@@ -173,65 +172,19 @@ class TestEpochBuffering:
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=4), start_idx=0, event_id=1)
         mgr.append_chunk(_chunk(channels=3, samples=6))
-        assert mgr.build_epoch().data.shape == (3, 10)
+        assert mgr._epoch_data.shape == (3, 10)
 
     def test_append_until_index_truncates(self):
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=4), start_idx=0, event_id=1)
         mgr.append_until_index(_chunk(channels=3, samples=6), index=2)
-        assert mgr.build_epoch().data.shape == (3, 6)
+        assert mgr._epoch_data.shape == (3, 6)
 
     def test_append_until_negative_index_rejected(self):
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=4), start_idx=0, event_id=1)
         with pytest.raises(ValueError):
             mgr.append_until_index(_chunk(), index=-1)
-
-
-# ---------------------------------------------------------------------------
-# Epoch value-object construction
-# ---------------------------------------------------------------------------
-
-class TestBuildEpoch:
-    def test_completed_epoch_owns_pretrigger_and_window_across_growth_and_reinitialization(self):
-        mgr = _manager()
-        pre_trigger = np.full((2, 2), -1.0)
-        first = _data_chunk(np.arange(8, dtype=np.float64).reshape(2, 4))
-        mgr.initialize_epoch(first, start_idx=1, event_id=7, pre_trigger_data=pre_trigger)
-        mgr.append_chunk(_data_chunk(np.full((2, 2), 8.0)))
-        retained = mgr._epoch_data
-        before = retained.copy()
-        epoch = mgr.build_epoch()
-        expected = np.concatenate((pre_trigger, before), axis=1)
-
-        mgr.append_chunk(_data_chunk(np.full((2, 20), 9.0)))
-        mgr.initialize_epoch(_chunk(channels=3, samples=3), start_idx=0, event_id=8)
-        mgr.append_chunk(_chunk(channels=3, samples=2))
-        pre_trigger[:] = 100
-
-        np.testing.assert_array_equal(retained, before)
-        np.testing.assert_array_equal(epoch.data, expected)
-        assert epoch.trigger_offset == 2
-        assert not epoch.data.flags.writeable
-        assert not np.shares_memory(epoch.data, retained)
-        assert not np.shares_memory(epoch.data, pre_trigger)
-        assert mgr.build_epoch().window.shape == (3, 5)
-
-    def test_build_requires_active_epoch(self):
-        with pytest.raises(RuntimeError):
-            _manager().build_epoch()
-
-    def test_built_epoch_is_immutable(self):
-        mgr = _manager()
-        mgr.initialize_epoch(_chunk(channels=2, samples=5), start_idx=0, event_id=1)
-        epoch = mgr.build_epoch()
-        with pytest.raises(ValueError):
-            epoch.data[0, 0] = 9.0  # read-only array
-
-    def test_built_epoch_carries_sample_rate(self):
-        mgr = _manager(sample_rate=250)
-        mgr.initialize_epoch(_chunk(channels=2, samples=5), start_idx=0, event_id=1)
-        assert mgr.build_epoch().sample_rate == 250
 
 
 # ---------------------------------------------------------------------------

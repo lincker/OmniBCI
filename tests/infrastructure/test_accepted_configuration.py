@@ -29,7 +29,7 @@ def profiles(tmp_path, monkeypatch):
 
 
 def test_standalone_and_managed_projection_match_after_saved_profile_edit(profiles):
-    accepted = profiles.repository.get_activation_set()
+    accepted = profiles.selected_configuration()
     source = next(binding for binding in accepted.bindings() if binding.kind == "acquisition")
     profile = profiles.repository.get_profile(source.profile_id)
     profiles.update(profile.profile_id, name=profile.name,
@@ -67,7 +67,7 @@ def test_corrupt_activation_is_not_replaced(profiles):
 
 
 def test_actuation_requires_its_own_effector_selection(profiles):
-    accepted = profiles.repository.get_activation_set()
+    accepted = profiles.selected_configuration()
     current = accepted.modules["actuation"]
     unselected = ModuleActivation("actuation", current.settings, ())
     profiles.repository.save_module(unselected, expected_revision=current.revision)
@@ -76,13 +76,13 @@ def test_actuation_requires_its_own_effector_selection(profiles):
 
 
 def test_stimulation_accepts_an_explicit_configuration_without_trigger(profiles):
-    accepted = profiles.repository.get_activation_set()
+    accepted = profiles.selected_configuration()
     snapshot = accepted_runtime_settings(profiles=profiles, active_kinds={"paradigm", "trigger"})
     assert snapshot == profiles.materialize(ActivationSet(
         {"stimulation": accepted.modules["stimulation"]}, accepted.engine,
     ))
     assert not any(binding["slot"] == "stimulation.trigger" for binding in snapshot["PLUGINS.bindings"])
-    assert profiles.repository.get_activation_set() == accepted
+    assert profiles.selected_configuration() == accepted
 
 
 @pytest.mark.parametrize("module,kind", [("stimulation", "paradigm"), ("actuation", "effector")])
@@ -96,7 +96,7 @@ def test_output_configuration_ignores_corrupt_acquisition(profiles, module, kind
 
 
 def test_missing_selected_version_cannot_use_legacy_alias(profiles):
-    accepted = profiles.repository.get_activation_set()
+    accepted = profiles.selected_configuration()
     current = accepted.modules["acquisition"]
     source, = current.bindings
     invalid = replace(source, selection=replace(source.selection, version="99.0.0"))
@@ -108,7 +108,7 @@ def test_missing_selected_version_cannot_use_legacy_alias(profiles):
 
 @pytest.mark.parametrize("kind", ["effector", "paradigm", "trigger"])
 def test_unavailable_active_output_is_rejected_before_launch(profiles, monkeypatch, kind):
-    accepted = profiles.repository.get_activation_set()
+    accepted = profiles.selected_configuration()
     if kind == "trigger":
         selection = builtin_selection("trigger", "neuroscan_scan45_trigger")
         binding = ProfileBinding("stimulation.trigger", "trigger", None, selection,
@@ -116,7 +116,7 @@ def test_unavailable_active_output_is_rejected_before_launch(profiles, monkeypat
         current = accepted.modules["stimulation"]
         profiles.repository.save_module(ModuleActivation("stimulation", current.settings, (*current.bindings, binding)),
                                        expected_revision=current.revision)
-        accepted = profiles.repository.get_activation_set()
+        accepted = profiles.selected_configuration()
     get = profiles.catalog.get
 
     def unavailable(active_kind, selection):
@@ -126,7 +126,7 @@ def test_unavailable_active_output_is_rejected_before_launch(profiles, monkeypat
     monkeypatch.setattr(profiles.catalog, "get", unavailable)
     with pytest.raises(RuntimeError, match="unavailable on this platform"):
         accepted_runtime_settings(profiles=profiles, active_kinds={kind})
-    assert profiles.repository.get_activation_set() == accepted
+    assert profiles.selected_configuration() == accepted
 
 
 @pytest.mark.parametrize("role,class_name", [

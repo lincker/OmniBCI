@@ -10,7 +10,7 @@ Effector, receives them over the actuation peer
 channel and drives the concrete device through this interface.
 """
 from abc import ABC, abstractmethod
-from typing import Mapping
+from collections.abc import Mapping
 
 
 class Effector(ABC):

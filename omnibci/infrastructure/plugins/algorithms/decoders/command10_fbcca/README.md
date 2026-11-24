@@ -2,7 +2,7 @@
 
 This standalone package provides one training-free `decoder` contribution for
 `OmniBCI.command10SSVEP` / `default` / `0.1.0`. It implements Plugin API v1 with
-manifest version 2. Its own selection is
+manifest version 1. Its own selection is
 `OmniBCI.command10_fbcca` / `default` / `0.1.0`.
 
 The package contains its own protocol table and imports only the public

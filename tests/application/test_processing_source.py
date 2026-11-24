@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from omnibci.application.processing_source import (
-    acquisition_binding_key, binding_for, materialize_processing_binding, processing_binding_key,
+    acquisition_binding_key, binding_for, processing_binding_key,
     processing_input, requires_signal_preparation, validate_plan_binding, validate_source_binding,
 )
 from omnibci.application.source_metadata import source_descriptor
@@ -163,7 +163,7 @@ def test_binding_projection_does_not_create_processing_configuration():
     from omnibci.application.configuration.models import ProfileBinding
     binding = ProfileBinding("processing.decoder", "decoder", None,
                              PluginSelection("test.decoder", "default", "1"), {})
-    result = materialize_processing_binding(binding)
+    result = binding.to_dict()
     assert "processing_input" not in result
     assert binding.processing_input is None
 

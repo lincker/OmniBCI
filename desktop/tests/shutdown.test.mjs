@@ -44,7 +44,7 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.
         export const fixture = { connection, disconnect, requestQuit,
           setDirty(value) { editor.dirty = value; },
           setLanguage(value) { language = value; },
-          reset(owned) { language = "en"; server = owned; window = {}; editor = { dirty: false, busy: false }; },
+          reset(owned) { language = "en"; server = owned; window = {}; editor = { dirty: false }; },
           getServer() { return server; },
         };
       `, loader: "ts",

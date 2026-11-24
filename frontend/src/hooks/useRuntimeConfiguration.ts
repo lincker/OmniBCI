@@ -1,7 +1,7 @@
 /** Configuration operations remain owned by the application across navigation. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConfigurationModule } from "../api/plugin-config";
-import { ApiError } from "../api/client";
+import { ApiError, errorMessage } from "../api/client";
 import { useI18n, type TranslationKey, type TranslationParams } from "../i18n";
 import { runtimeConfigApi as api, type RuntimePlanRequest, type RuntimePlan,
   type RuntimeStatus, type RuntimeOperation, type ModuleConfigurationRequest, type ModuleActionRequest } from "../api/runtime-config";
@@ -9,8 +9,7 @@ import type { ModuleRestoration } from "./useCurrentConfiguration";
 
 export type ConfigurationSection = RuntimePlanRequest["module"];
 export const configurationSections: ConfigurationSection[] = ["acquisition", "processing", "stimulation", "actuation", "engine"];
-export const operationActive = (operation: RuntimeOperation | null | undefined) => operation?.status === "queued" || operation?.status === "applying";
-const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
+const operationActive = (operation: RuntimeOperation | null | undefined) => operation?.status === "queued" || operation?.status === "applying";
 type RequestError = string | { key: TranslationKey; params?: TranslationParams } | null;
 type Attempt = {
   reviewing?: boolean; submitting?: boolean; uncertain?: boolean; requestError?: RequestError;
@@ -20,7 +19,7 @@ type Attempt = {
   onApplied?: (operation: RuntimeOperation) => void;
 };
 
-export function operationAffects(operation: RuntimeOperation, module: ConfigurationSection) {
+function operationAffects(operation: RuntimeOperation, module: ConfigurationSection) {
   return module === "engine" || operation.module === "engine"
     || operation.affected_modules.includes("engine") || operation.affected_modules.includes(module);
 }
@@ -74,7 +73,7 @@ export function useRuntimeConfiguration() {
       if (!alive.current || sequence !== refreshSequence.current) return;
       statusRef.current = current; setStatus(current); setError(null);
     } catch (cause) {
-      if (alive.current && sequence === refreshSequence.current) setError(message(cause));
+      if (alive.current && sequence === refreshSequence.current) setError(errorMessage(cause));
     }
   }, [recordCompletion, update]);
   useEffect(() => {
@@ -116,7 +115,7 @@ export function useRuntimeConfiguration() {
     update(module, { reviewing: true, requestError: null, submission: undefined, restoration: undefined });
     setPlan(null);
     try { const target = await api.plan(body); setPlan(target); return target; }
-    catch (cause) { update(module, { requestError: message(cause) }); await refresh(); return null; }
+    catch (cause) { update(module, { requestError: errorMessage(cause) }); await refresh(); return null; }
     finally { update(module, { reviewing: false }); }
   };
   const apply = async (target = plan): Promise<boolean> => {
@@ -135,7 +134,7 @@ export function useRuntimeConfiguration() {
       await refresh(); return result.status === "succeeded";
     } catch (cause) {
       if (cause instanceof ApiError && cause.status >= 400 && cause.status < 500) {
-        update(module, { tracked: null, uncertain: false, requestError: { key: "runtime.reloadSelection", params: { error: message(cause) } } });
+        update(module, { tracked: null, uncertain: false, requestError: { key: "runtime.reloadSelection", params: { error: errorMessage(cause) } } });
       } else update(module, { uncertain: true, requestError: { key: "runtime.applyInterrupted" } });
       setPlan((current) => current?.plan_id === target.plan_id ? null : current);
       await refresh(); return false;
@@ -158,7 +157,7 @@ export function useRuntimeConfiguration() {
       return result;
     } catch (cause) {
       if (cause instanceof ApiError && cause.status >= 400 && cause.status < 500) {
-        update(module, { tracked: null, uncertain: false, requestError: message(cause) });
+        update(module, { tracked: null, uncertain: false, requestError: errorMessage(cause) });
       } else update(module, { requestError: { key: "runtime.applyInterrupted" } });
       throw cause;
     } finally { update(module, { submitting: false }); }
@@ -180,9 +179,9 @@ export function useRuntimeConfiguration() {
       recordCompletion(result); await refresh();
     } catch (cause) {
       if (cause instanceof ApiError && cause.status >= 400 && cause.status < 500) {
-        update(module, { tracked: null, uncertain: false, requestError: { key: "runtime.reloadSelection", params: { error: message(cause) } } });
+        update(module, { tracked: null, uncertain: false, requestError: { key: "runtime.reloadSelection", params: { error: errorMessage(cause) } } });
         await refresh();
-      } else update(module, { requestError: message(cause) });
+      } else update(module, { requestError: errorMessage(cause) });
     } finally { update(module, { submitting: false }); }
   };
   return { status, plan, error, state, completedRestorations, inProgress: state("engine").inProgress,

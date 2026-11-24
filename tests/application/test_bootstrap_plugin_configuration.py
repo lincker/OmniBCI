@@ -65,13 +65,13 @@ async def test_fresh_installation_does_not_select_plugins():
     container = await build_container()
 
     profiles = container.configuration_service
-    assert all(value is None for value in profiles.repository.get_activation_set().revisions().values())
+    assert all(value is None for value in profiles.selected_configuration().revisions().values())
     assert profiles.repository.list_profiles() == []
     assert container.acquisition_service._device_metadata() == (None, None, None)
     snapshot = container.engine_service._snapshot_provider()
     assert snapshot["PLUGINS.bindings"] == []
     assert profiles.repository.get_engine() is not None
-    assert all(module is None for module in profiles.repository.get_activation_set().modules.values())
+    assert all(module is None for module in profiles.selected_configuration().modules.values())
 
 
 def test_status_reads_applied_values_while_engine_running():
@@ -201,7 +201,7 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     first.package_owner.close()
     restarted = await build_container()
 
-    assert restarted.configuration_service.repository.get_activation_set() == historical
+    assert restarted.configuration_service.selected_configuration() == historical
     runtime = restarted.engine_service._module_snapshot_provider("acquisition")
     assert runtime["CONFIG.module_revisions"]["acquisition"] == historical.modules["acquisition"].revision
     assert runtime["ACQUISITION.sample_rate"] == 256
@@ -230,7 +230,7 @@ async def test_retired_settings_cannot_be_saved(bootstrap_settings, key, value):
     assert _toml_files(bootstrap_settings.root) == original_files
     container = await build_container()
 
-    assert all(value is None for value in container.configuration_service.repository.get_activation_set().revisions().values())
+    assert all(value is None for value in container.configuration_service.selected_configuration().revisions().values())
     assert container.configuration_service.repository.list_profiles() == []
     assert container.acquisition_service._device_metadata() == (None, None, None)
     assert container.configuration_service.read_server()[0][0]

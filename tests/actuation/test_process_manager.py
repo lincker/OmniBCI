@@ -281,7 +281,7 @@ class TestSpawnMode:
 
         assert m._process is proc
         assert m._stop_event is stop_event
-        assert m._effector == "test.effector/logger@1.0.0"
+        assert m._selection == "test.effector/logger@1.0.0"
         assert m.state is ChildProcessState.FAILED
         proc.close.assert_not_called()
 

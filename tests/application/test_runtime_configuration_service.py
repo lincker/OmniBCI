@@ -67,7 +67,7 @@ def request(runtime, module="processing", *, selections=None, **options):
 def install(service, candidate):
     current = service.profiles.repository.get_module(candidate.module)
     service.profiles.repository.save_module(candidate, expected_revision=current.revision if current else None)
-    accepted = service.profiles.repository.get_activation_set()
+    accepted = service.profiles.selected_configuration()
     service.engine.applied_revisions = accepted.revisions()
     service.engine.applied_snapshot = service.profiles.materialize(accepted, service.engine.generation)
 
@@ -80,7 +80,7 @@ def test_plan_is_pinned_and_does_not_apply_saved_values(runtime):
     edit(runtime, "processing.decoder", {"window_duration": 1.5})
     pinned = service.resolve_plan(plan.plan_id).candidates["processing"]
     assert pinned.bindings[0].parameters["window_duration"] == 2.5
-    assert service.profiles.repository.get_activation_set() == before
+    assert service.profiles.selected_configuration() == before
     assert service.status()["applied"] == before.revisions()
 
 
@@ -105,12 +105,12 @@ def test_source_draft_is_pinned_without_saving_or_changing_profiles(runtime):
     assert binding.parameters["data_file_path"] == "/tmp/experiment.fif"
     assert not {"sample_rate", "channel_count"} & binding.parameters.keys()
     assert service.profiles.repository.list_profiles() == profiles
-    assert service.profiles.repository.get_activation_set() == before
+    assert service.profiles.selected_configuration() == before
     install(service, candidate)
     edit(runtime, "processing.decoder", {"window_duration": 2.5})
     following = request(runtime)
     assert following.changed_slots == ("processing.decoder",)
-    assert service.resolve_plan(following.plan_id).activation_set(service.profiles.repository.get_activation_set()).modules["acquisition"] == candidate
+    assert service.resolve_plan(following.plan_id).activation_set(service.profiles.selected_configuration()).modules["acquisition"] == candidate
 
 
 @pytest.mark.parametrize("first_source,summary", [
@@ -199,7 +199,7 @@ def test_changed_server_startup_settings_do_not_block_engine_plan(runtime, runni
     plan = request(runtime, "engine")
     assert not plan.errors
     assert key not in service.resolve_plan(plan.plan_id).engine.settings
-    assert service.profiles.repository.get_activation_set() == before
+    assert service.profiles.selected_configuration() == before
 
 
 def test_saved_other_section_host_changes_are_excluded_from_module_plan(runtime):

@@ -5,7 +5,7 @@ import "./AcquisitionMetadata.css";
 
 const displayValue = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value);
 
-export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, canUseObserved = false, onUseObserved, onSaveObservedProfile, showComparison = true }: {
+export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, canUseObserved = false, onUseObserved, showComparison = true }: {
   value: DataSourceMetadata | null;
   busy: boolean;
   canRead: boolean;
@@ -13,7 +13,6 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, ca
   onRead: () => void;
   canUseObserved?: boolean;
   onUseObserved?: () => void;
-  onSaveObservedProfile?: () => void;
   showComparison?: boolean;
 }) {
   const { t } = useI18n();
@@ -44,11 +43,10 @@ export function AcquisitionMetadata({ value, busy, canRead, readHint, onRead, ca
             <tr key={key} className={mismatched && comparison[key].expected != null && comparison[key].expected !== comparison[key].actual ? "source-mismatch" : undefined}><th scope="row">{t(label)}</th>
               <td>{comparison[key].expected ?? t("metadata.notConfirmed")}</td><td>{comparison[key].actual}</td></tr>)}</tbody>
         </table>
-        {comparison.status !== "unverified" && (onUseObserved || onSaveObservedProfile) && <>
+        {comparison.status !== "unverified" && onUseObserved && <>
           <p className="setting-description">{t("metadata.correctHint")}</p>
           <div className="actions">
-            {onSaveObservedProfile && <button className="primary" disabled={busy || !canUseObserved} onClick={onSaveObservedProfile}>{t("metadata.saveObservedProfile")}</button>}
-            {onUseObserved && <button disabled={busy || !canUseObserved} onClick={onUseObserved}>{t("metadata.useObserved")}</button>}
+            <button disabled={busy || !canUseObserved} onClick={onUseObserved}>{t("metadata.useObserved")}</button>
           </div>
         </>}
       </div>}

@@ -149,8 +149,10 @@ class RuntimeApplyCoordinator:
                 result = await self._apply_pipeline(stored, previous, progress)
             elif plan.strategy == "module":
                 result = await self._apply_output(stored, previous, progress)
-            elif plan.module in ("acquisition", "processing"):
-                result = await self._rebuild_module(stored, previous, progress)
+            elif plan.module == "processing":
+                result = await self._rebuild_processing(stored, previous, progress)
+            elif plan.module == "acquisition":
+                result = await self._rebuild_acquisition(stored, previous, progress)
             else:
                 result = await self._rebuild(stored, previous, progress)
             if plan.strategy != "no_change":
@@ -491,10 +493,8 @@ class RuntimeApplyCoordinator:
         if state.streaming:
             await asyncio.to_thread(self.acquisition.handle_start_stream, StartStreamCommand())
 
-    async def _rebuild_module(self, stored, previous, progress):
-        module = stored.plan.module
-        if module == "processing":
-            return await self._rebuild_processing(stored, previous, progress)
+    async def _rebuild_acquisition(self, stored, previous, progress):
+        module = "acquisition"
         before = self.engine.applied_snapshot
         target = self.engine.prepare_plugins(self._runtime_target(stored), (module,))
         source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
@@ -509,16 +509,14 @@ class RuntimeApplyCoordinator:
             progress("starting")
             await self.engine.start_module_for_configuration(module, target)
             self.engine.acknowledge_configuration(target, modules=(module,))
-            replay_resumed = False
-            if module == "acquisition":
-                old_source = previous.modules[module].bindings[0].selection
-                new_source = stored.candidates[module].bindings[0].selection
-                same_source = (old_source.package_id, old_source.contribution_id) == (new_source.package_id, new_source.contribution_id)
-                replay_resumed = await self._restore_source(
-                    target, state, state.checkpoint if same_source else None,
-                    require_live_resume=state.streaming and same_source and state.checkpoint is None)
-                if state.streaming and self.signal_preparer is not None:
-                    await asyncio.to_thread(self.signal_preparer)
+            old_source = previous.modules[module].bindings[0].selection
+            new_source = stored.candidates[module].bindings[0].selection
+            same_source = (old_source.package_id, old_source.contribution_id) == (new_source.package_id, new_source.contribution_id)
+            replay_resumed = await self._restore_source(
+                target, state, state.checkpoint if same_source else None,
+                require_live_resume=state.streaming and same_source and state.checkpoint is None)
+            if state.streaming and self.signal_preparer is not None:
+                await asyncio.to_thread(self.signal_preparer)
             progress("persisting")
             written = self._persist(stored, previous)
             progress("restoring")
@@ -537,12 +535,11 @@ class RuntimeApplyCoordinator:
                 self._check_selected(previous, stored.plan.expected_revisions)
                 await self.engine.start_module_for_configuration(module, before)
                 self.engine.acknowledge_configuration(before, modules=(module,))
-                if module == "acquisition":
-                    await self._restore_source(before, state, state.checkpoint,
-                                               require_live_resume=state.streaming and state.checkpoint is None)
-                    if state.streaming and self.signal_preparer is not None:
-                        await asyncio.to_thread(self.signal_preparer)
-                    await self._resume_stream(state)
+                await self._restore_source(before, state, state.checkpoint,
+                                           require_live_resume=state.streaming and state.checkpoint is None)
+                if state.streaming and self.signal_preparer is not None:
+                    await asyncio.to_thread(self.signal_preparer)
+                await self._resume_stream(state)
             except BaseException as recovery:
                 raise RuntimeApplyFailure(f"Module update failed: {exc}; recovery failed: {recovery}",
                                           recovery_required=True) from recovery

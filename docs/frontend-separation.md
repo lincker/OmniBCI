@@ -139,13 +139,14 @@ clients must use Acquisition stream controls and `/results`.
 | Event | Fields |
 | --- | --- |
 | `TrialCompleted` | `generation`, `trial_number`, classification fields, optional `processing_revision` and `acquisition_revision` |
-| `StimulationAck` | `command`, `target_index`, `status`, `message` |
+| `StimulationAck` | `command`, `trial_params`, `status`, `message` |
 | `Ping` | No additional fields |
 
 The Python schema is `presentation/schemas/ws.py`; the manually maintained
 TypeScript mirror is `frontend/src/api/ws-types.ts`. Heavy epoch arrays are not
-included. The shared outbound mapper supplies the same classification fields to
-WebSocket and socket consumers.
+included. `TrialOutcome.to_dict()` supplies the classification fields, and
+`event_to_wire()` in `presentation/websockets/results.py` maps outbound events
+against those WebSocket schemas.
 
 The console opens its socket before requesting the REST snapshot. It reconciles
 snapshots and increments by `(generation, trial_number)`, preserving increments

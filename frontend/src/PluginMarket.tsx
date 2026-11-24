@@ -1,7 +1,7 @@
 /** Managed package lifecycle, signed repository browsing, and checked profile copies. */
 import { useI18n, type TranslationKey, type TranslationParams } from "./i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError } from "./api/client";
+import { ApiError, errorMessage } from "./api/client";
 import { pluginConfigApi, configurationModules, type ConfigurationModule, type PluginProfile } from "./api/plugin-config";
 import { pluginMarketApi as api, type InstalledPackage, type MarketPackage,
   type ProfileVersionProposal, type ProfileVersionRequest } from "./api/plugin-market";
@@ -12,7 +12,6 @@ import "./PluginMarket.css";
 
 type VersionDraft = { target: InstalledPackage; sourceId: string; name: string; custom: boolean;
   parameters: string; proposal: ProfileVersionProposal | null };
-const messageOf = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 const identity = (item: { package_id: string; version: string }) => `${item.package_id}@${item.version}`;
 
 export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange, onOpenSetup }: {
@@ -57,7 +56,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
     try {
       const [packages, saved] = await Promise.all([api.installed(), pluginConfigApi.profiles()]);
       if (alive.current) { setInstalled(packages); setProfiles(saved); setInventoryError(""); }
-    } catch (cause) { if (alive.current) setInventoryError(messageOf(cause)); }
+    } catch (cause) { if (alive.current) setInventoryError(errorMessage(cause)); }
     finally { if (alive.current) setLoading(false); }
   }, []);
   const loadCatalog = useCallback(async () => {
@@ -67,7 +66,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
       if (alive.current) {
         setCatalog([]);
         setRepositoryDisabled(cause instanceof ApiError && cause.status === 503);
-        setRepositoryError(messageOf(cause));
+        setRepositoryError(errorMessage(cause));
       }
     } finally { if (alive.current) { setCatalogLoading(false); setCatalogLoaded(true); } }
   }, []);
@@ -82,7 +81,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
       await action(); await reload();
       if (alive.current) setNotice(success);
       return true;
-    } catch (cause) { if (alive.current) { setError(messageOf(cause)); await reload(); } return false; }
+    } catch (cause) { if (alive.current) { setError(errorMessage(cause)); await reload(); } return false; }
     finally { if (alive.current) setPending(null); }
   };
   const sourcesFor = (target: InstalledPackage) => profiles.filter((profile) =>
@@ -107,7 +106,7 @@ export function PluginMarket({ runtimeBusy = false, onBusyChange, onDirtyChange,
     if (!draft || locked) return;
     setPending({ key: "market.checking" }); setError("");
     try { const proposal = await api.propose(requestFor(draft)); if (alive.current) setDraft({ ...draft, proposal }); }
-    catch (cause) { if (alive.current) setError(messageOf(cause)); }
+    catch (cause) { if (alive.current) setError(errorMessage(cause)); }
     finally { if (alive.current) setPending(null); }
   };
   const saveVersion = async () => {

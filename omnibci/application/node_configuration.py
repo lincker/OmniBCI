@@ -5,35 +5,26 @@ from dataclasses import dataclass, field
 import json
 import re
 
-from omnibci.application.configuration.definitions import SECTION_SETTING_KEYS
+from omnibci.application.configuration.definitions import SECTION_SETTING_KEYS, validate_module_settings
+from omnibci.application.configuration.errors import PluginProfileValidationError
 from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.plugin_management.schema import PluginSchemaError, validate_parameters
 from omnibci.application.plugin_management.catalog import PluginConfigurationCatalog
-from omnibci.application.processing_source import materialize_processing_binding, processing_input
 
 
 _ROLE_KINDS = {
-    "engine": frozenset({"acquisition", "decoder", "epoch_detector", "filter"}),
     "stimulation": frozenset({"paradigm", "trigger"}),
     "actuation": frozenset({"effector"}),
 }
 _ROLE_MODULES = {
-    "engine": frozenset({"acquisition", "processing"}),
     "stimulation": frozenset({"stimulation"}),
     "actuation": frozenset({"actuation"}),
 }
 _REQUIRED_SLOTS = {
-    "engine": frozenset({"acquisition.source", "processing.decoder", "processing.epoch_detector"}),
     "stimulation": frozenset({"stimulation.paradigm"}),
     "actuation": frozenset({"actuation.effector"}),
 }
-_CONTEXT_KEYS = frozenset({
-    "ACQUISITION.sample_rate", "ACQUISITION.channel_count",
-    "ACQUISITION.channel_labels",
-})
 _ROLE_SETTING_KEYS = {
-    "engine": (SECTION_SETTING_KEYS["engine"] | SECTION_SETTING_KEYS["acquisition"]
-               | SECTION_SETTING_KEYS["processing"] | _CONTEXT_KEYS),
     "stimulation": SECTION_SETTING_KEYS["stimulation"] | {"debug"},
     "actuation": SECTION_SETTING_KEYS["actuation"] | {"debug"},
 }
@@ -54,31 +45,13 @@ def _validate_role(role: str) -> None:
 def _validate_settings(role: str, settings: dict) -> None:
     if not isinstance(settings, dict) or set(settings) - _ROLE_SETTING_KEYS[role]:
         raise PluginSchemaError("Node settings contain unsupported fields for this role")
-    for key in ("ACQUISITION.sample_rate", "ACQUISITION.channel_count"):
-        if key not in settings:
-            continue
-        value = settings.get(key)
-        if type(value) is not int or value <= 0:
-            raise PluginSchemaError(f"{key} must be a positive integer")
-    labels = settings.get("ACQUISITION.channel_labels", [])
-    if not isinstance(labels, list) or any(not isinstance(label, str) for label in labels):
-        raise PluginSchemaError("ACQUISITION.channel_labels must be a list of strings")
-    for key, value in settings.items():
-        if key in _CONTEXT_KEYS:
-            continue
-        if key == "debug" or key.endswith(".auto_spawn"):
-            valid = type(value) is bool
-        elif key.endswith(("_ip", ".renderer")):
-            valid = isinstance(value, str) and bool(value.strip())
-        elif key.endswith("_port"):
-            valid = type(value) is int and 1 <= value <= 65535
-        elif key == "NEUROENGINE.queue_size":
-            valid = type(value) is int and value > 0
-        else:
-            minimum_inclusive = key in {"ALGORITHM.baseline_duration", "ACTUATION.max_command_age_s"}
-            valid = type(value) in (int, float) and (value >= 0 if minimum_inclusive else value > 0)
-        if not valid:
-            raise PluginSchemaError(f"{key} has an invalid node setting value")
+    if "debug" in settings and type(settings["debug"]) is not bool:
+        raise PluginSchemaError("debug has an invalid node setting value")
+    module_settings = {key: value for key, value in settings.items() if key != "debug"}
+    try:
+        validate_module_settings(role, module_settings)
+    except PluginProfileValidationError as exc:
+        raise PluginSchemaError(f"{exc} (invalid node setting value)") from exc
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -114,7 +87,7 @@ class NodeConfiguration:
             not isinstance(operation_id, str) or not operation_id or operation_id != operation_id.strip()
         ):
             raise PluginSchemaError("Node operation_id must be non-empty text or null")
-        if role != "engine" and (generation is None) != (operation_id is None):
+        if (generation is None) != (operation_id is None):
             raise PluginSchemaError("Running node configuration requires a preparation operation_id")
         _validate_settings(role, settings)
         if not isinstance(bindings, (tuple, list)) or any(
@@ -168,24 +141,11 @@ def project_node_configuration(runtime_snapshot: dict, role: str) -> NodeConfigu
     _validate_role(role)
     if not isinstance(runtime_snapshot, dict) or not isinstance(runtime_snapshot.get("PLUGINS.bindings"), list):
         raise PluginSchemaError("Node projection requires pinned runtime bindings")
-    if role == "engine":
-        processing_input(runtime_snapshot)
     bindings = tuple(ProfileBinding.from_dict(item) for item in runtime_snapshot["PLUGINS.bindings"]
                      if item.get("kind") in _ROLE_KINDS[role])
     if len({binding.slot for binding in bindings}) != len(bindings):
         raise PluginSchemaError("Duplicate activation slot")
     settings = {key: value for key, value in runtime_snapshot.items() if key in _ROLE_SETTING_KEYS[role]}
-    if role == "engine":
-        source = next((binding for binding in bindings if binding.slot == "acquisition.source"), None)
-        if source is None:
-            raise PluginSchemaError("Engine projection requires an acquisition source")
-        for name in ("sample_rate", "channel_count", "channel_labels"):
-            key = f"ACQUISITION.{name}"
-            value = source.parameters.get(name)
-            if key in settings and _canonical(settings[key]) != _canonical(value):
-                raise PluginSchemaError(f"{key} disagrees with the pinned source")
-            if name in source.parameters:
-                settings[key] = value
     return NodeConfiguration(
         role=role, module_revisions={module: runtime_snapshot.get("CONFIG.module_revisions", {}).get(module)
                                      for module in _ROLE_MODULES[role]},
@@ -214,12 +174,7 @@ def materialize_node_configuration(configuration: NodeConfiguration,
         parameters = validate_parameters(definition.schema, binding.parameters)
         if _canonical(parameters) != _canonical(binding.parameters):
             raise PluginSchemaError(f"{binding.slot}: snapshot must include resolved defaults")
-        bindings.append(materialize_processing_binding(binding))
-        if binding.kind == "acquisition":
-            for key in ("sample_rate", "channel_count", "channel_labels"):
-                if _canonical(parameters.get(key)) != _canonical(result.get(f"ACQUISITION.{key}")):
-                    raise PluginSchemaError(f"ACQUISITION.{key} disagrees with the pinned source")
-            result.update({f"ACQUISITION.{key}": value for key, value in parameters.items()})
+        bindings.append(binding.to_dict())
     result["PLUGINS.bindings"] = bindings
     result["CONFIG.module_revisions"] = configuration.module_revisions
     result["CONFIG.engine_revision"] = configuration.engine_revision

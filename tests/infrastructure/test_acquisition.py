@@ -270,7 +270,7 @@ class TestAcquisitionCommandDispatch:
             await a.execute((AcquisitionCommand.connect, None))
             await a.execute((AcquisitionCommand.start_stream, None))
             task = a.fetch_task
-            await a.execute((AcquisitionCommand.stop_stream, None))
+            await a._on_stop_stream()
             await asyncio.sleep(0)  # let the cancellation propagate one loop turn
             assert "stop_stream" in a.data_source.calls
             assert a.data_source.is_connected is True
@@ -285,7 +285,7 @@ class TestAcquisitionCommandDispatch:
             a.fetch_task = asyncio.create_task(asyncio.Event().wait())
             task = a.fetch_task
 
-            await a.execute((AcquisitionCommand.stop_stream, None))
+            await a._on_stop_stream()
 
             assert task.done()
             assert a.fetch_task is None

@@ -73,7 +73,7 @@ def test_idle_status_reads_configuration_queries(profiles):
 
 
 def test_planner_uses_queries_for_revision_and_plugin_apply_hints(profiles):
-    selected = profiles.repository.get_activation_set()
+    selected = profiles.selected_configuration()
     engine = NeuroEngineService(lambda _: pytest.fail("Planning must not start the engine"))
     engine._running = engine._accepting_commands = True
     engine._engine = SimpleNamespace()

@@ -3,20 +3,19 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ConfigDialog, type ConfigDialogProps } from "./ConfigDialog";
 import { SchemaForm, initialSchemaValue, schemaErrors, sameParameters, normalizedParameters, type ConfigurationSchema } from "./SchemaForm";
 import { pluginConfigApi as api, selectionId, selectionKey,
-  type PluginDefinition, type PluginKind, type PluginProfile } from "./api/plugin-config";
+  type ConfigurationModule as Module, type PluginDefinition, type PluginKind, type PluginProfile } from "./api/plugin-config";
 import { useI18n, translatePluginName, type TranslationKey } from "./i18n";
 import "./PluginProfiles.css";
 import type { RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import { ConfigurationHistory } from "./ConfigurationHistory";
 import { AcquisitionMetadata } from "./AcquisitionMetadata";
 import { ProcessingInput, emptyProcessingInput, processingInputErrors } from "./ProcessingInput";
-import { api as controlApi, type DataSourceMetadata } from "./api/client";
+import { api as controlApi, errorMessage, type DataSourceMetadata } from "./api/client";
 import { ModuleRuntime } from "./ModuleRuntime";
 import type { RuntimeControls } from "./hooks/useRuntimeControls";
 import type { AcquisitionController } from "./hooks/useAcquisition";
 import { currentFromBinding, emptyCurrentConfiguration, type CurrentConfigurationController, type CurrentPluginConfiguration } from "./hooks/useCurrentConfiguration";
 
-type Module = "acquisition" | "processing" | "stimulation" | "actuation";
 type Slot = { slot: string; kind: PluginKind; label: TranslationKey };
 const slots: Record<Module, Slot[]> = {
   acquisition: [{ slot: "acquisition.source", kind: "acquisition", label: "profiles.slotSource" }],
@@ -162,11 +161,10 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
   const missingDecoderInput = slot.kind === "decoder" && (editor.requiresProcessingInputReview || !editor.processingInput);
   const moduleValidation = current.validationError(module);
   const reportedSource = isReportedSourceSchema(definition?.schema);
-  const sourceParameters = editor.parameters;
-  const sourceParameterKey = JSON.stringify(sourceParameters);
+  const sourceParameterKey = JSON.stringify(editor.parameters);
   const sourceSelected = !!selectedBinding && runtime.status?.accepted[module] === activation?.revision
     && selectionKey(selectedBinding.selection) === editor.plugin
-    && sameParameters(selectedBinding.parameters, normalizedParameters(sourceParameters, definition?.schema));
+    && sameParameters(selectedBinding.parameters, normalizedParameters(editor.parameters, definition?.schema));
   const sourceMatches = sourceSelected && runtime.status?.running === true
     && runtime.status.applied?.[module] === activation?.revision
     && runtime.status.applied?.engine === runtime.status.accepted.engine;
@@ -248,8 +246,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
       cancelLabel: t("profiles.keepEditing"), confirmLabel: t("profiles.discardChanges"),
       onConfirm: () => { setDialog(null); action(); } });
   };
-  const choosePlugin = (plugin: string) => changeEditor(() => resetEditor(editorFor(undefined, definitions, plugin, profiles)));
-  const newProfile = (plugin = editor.plugin) => changeEditor(() => resetEditor(editorFor(undefined, definitions, plugin, profiles)));
+  const resetPlugin = (plugin = editor.plugin) => changeEditor(() => resetEditor(editorFor(undefined, definitions, plugin, profiles)));
   const openProcessingStep = (target: string, section: string) => {
     if (busy) return;
     if (target === slot.slot) {
@@ -267,7 +264,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
       setProfiles((current) => [...current, saved]);
       if (current.get(editorSlot) === editor) resetEditor(editorFor(saved, definitions));
       setNotice("profiles.saved");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    } catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
   };
   const readSourceMetadata = async () => {
@@ -281,7 +278,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
       setSourceMetadata(metadata);
     } catch (cause) {
       if (generation === metadataGeneration.current) setError(t("profiles.inspectFailed", {
-        error: cause instanceof Error ? cause.message : String(cause) }));
+        error: errorMessage(cause) }));
     }
     finally {
       await acquisition.refresh();
@@ -324,6 +321,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
     onConfirm: (name) => { setDialog(null); void save(name); } });
   const moduleSettings = current.settings[module] ?? {};
   const modulePrefix = module.toUpperCase();
+  const moduleActive = module !== "acquisition" && runtimeControls.module(module).active;
 
   return <section className={`settings-workspace plugin-profiles module-${module}`} onKeyDown={(event) => {
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "s" && !event.defaultPrevented) {
@@ -378,8 +376,8 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
       {module === "acquisition"
         ? <ModuleRuntime module={module} controls={runtimeControls} disabled={busy} actions="connection" />
         : <div className="setup-runtime-status" role="status">
-          <span className={`status-tag${runtimeControls.module(module).active ? " success" : ""}`}><span className="status-dot" />
-            {t(runtimeControls.module(module).active ? "profiles.runtimeActive" : "profiles.runtimeIdle")}</span>
+          <span className={`status-tag${moduleActive ? " success" : ""}`}><span className="status-dot" />
+            {t(moduleActive ? "profiles.runtimeActive" : "profiles.runtimeIdle")}</span>
           <p className="meta">{t("profiles.runtimeHint")}</p>
           {onRun && <button className="text-button" onClick={onRun}>{t("profiles.operateInRun")}</button>}
         </div>}
@@ -406,7 +404,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
       {moduleValidation && <p className="inline-message error" role="alert">{moduleValidation}</p>}
         <div className="setting-group profile-selectors"><h2>{t("profiles.pluginAndProfile")}</h2>
           <label className="setting-row"><span className="setting-label">{t("profiles.pluginAndVersion")}</span>
-            <select value={editor.plugin} disabled={busy} onChange={(event) => choosePlugin(event.target.value)}>{pluginOptions}</select></label>
+            <select value={editor.plugin} disabled={busy} onChange={(event) => resetPlugin(event.target.value)}>{pluginOptions}</select></label>
           {!noTrigger && <><label className="setting-row"><span className="setting-label">{t("profiles.profile")}</span>
             <select value={editor.profile?.profile_id ?? ""} disabled={busy || !editor.plugin}
               onChange={(event) => { const profile = pluginProfiles.find((item) => item.profile_id === event.target.value);
@@ -415,7 +413,7 @@ export function PluginProfiles({ module, engineAvailable = true, navigation,
               {pluginProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.name}</option>)}
             </select></label>
           <div className="profile-tools actions">
-            <button disabled={busy || !definition?.schema} onClick={() => newProfile()}>{t("profiles.newProfile")}</button>
+            <button disabled={busy || !definition?.schema} onClick={() => resetPlugin()}>{t("profiles.newProfile")}</button>
           </div></>}
           {noTrigger && <p className="setting-description">{t("profiles.noTriggerHint")}</p>}
           {slot.kind === "acquisition" && <p className="setting-description">{t(sourceMode === "new"

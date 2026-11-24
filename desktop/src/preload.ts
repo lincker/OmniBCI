@@ -27,6 +27,5 @@ const api: DesktopApi = {
   setEditorState: state => ipcRenderer.send("editor:state", state),
   setLanguage: language => ipcRenderer.send("app:language", language),
   openLogs: () => ipcRenderer.invoke("logs:open"),
-  requestQuit: () => ipcRenderer.invoke("app:quit"),
 };
 contextBridge.exposeInMainWorld("omnibciDesktop", api);

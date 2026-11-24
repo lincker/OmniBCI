@@ -78,7 +78,6 @@ class LocalCatalog:
 @pytest.mark.parametrize(("role", "kinds"), [
     ("stimulation", {"paradigm", "trigger"}),
     ("actuation", {"effector"}),
-    ("engine", {"acquisition", "decoder", "epoch_detector"}),
 ])
 def test_node_needs_only_owned_plugins(runtime, role, kinds):
     catalog = LocalCatalog(kinds)
@@ -97,19 +96,13 @@ def test_node_needs_only_owned_plugins(runtime, role, kinds):
     assert result["CONFIG.engine_revision"] == runtime["CONFIG.engine_revision"]
     assert result["CONFIG.generation"] == runtime["CONFIG.generation"]
     assert result["CONFIG.node_role"] == role
-    if role == "engine":
-        assert result["ACQUISITION.sample_rate"] == 1000
-        assert result["ACQUISITION.channel_count"] == 2
-        assert not any(key.startswith(("STIMULATION.", "ACTUATION.")) for key in result)
-    else:
-        assert "ACQUISITION.sample_rate" not in result
-        assert "ACQUISITION.channel_count" not in result
+    assert "ACQUISITION.sample_rate" not in result
+    assert "ACQUISITION.channel_count" not in result
     assert "ACQUISITION.channel_names" not in result
     assert "LOGGING.file_path" not in result
     assert "custom.private_key" not in result
-    if role != "engine":
-        assert "ACQUISITION.data_file_path" not in result
-        assert "NEUROENGINE.queue_size" not in result
+    assert "ACQUISITION.data_file_path" not in result
+    assert "NEUROENGINE.queue_size" not in result
     if role == "stimulation":
         assert result["STIMULATION.server_ip"] == "192.0.2.1"
         assert result["STIMULATION.server_port"] == 8765
@@ -173,31 +166,11 @@ def test_projection_requires_no_installed_catalog_and_preserves_parent_identity(
 
 
 
-@pytest.mark.parametrize("processing_input", [
-    ProcessingInput(),
-    ProcessingInput(outputs=(ChannelBinding("O2", "channel-1"), ChannelBinding("O1", "channel-0"))),
-])
-def test_decoder_input_overrides_legacy_setup_using_pinned_source(runtime, processing_input):
-    runtime["SIGNAL.setup"] = {"source_id": "old-device", "outputs": ["obsolete"]}
-    decoder = ProfileBinding.from_dict(runtime["PLUGINS.bindings"][1])
-    runtime["PLUGINS.bindings"][1] = replace(decoder, processing_input=processing_input).to_dict()
-    dto = NodeConfiguration.from_dict(project_node_configuration(runtime, "engine").to_dict())
-    result = materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
-    assert selected_processing_input(result) == processing_input
-    assert "SIGNAL.setup" not in result
-    assert "ACQUISITION.signal_source" not in result
-    assert dto.bindings[1].processing_input == processing_input
-    assert "SIGNAL.setup" not in project_node_configuration(runtime, "stimulation").settings
-
-
 def test_projected_dto_is_independent_of_input_and_export_mutation(runtime):
-    runtime["PLUGINS.bindings"][0]["parameters"]["channel_labels"] = ["C3", "Trigger"]
-    runtime["ACQUISITION.channel_labels"] = ["C3", "Trigger"]
-    dto = project_node_configuration(runtime, "engine")
+    dto = project_node_configuration(runtime, "stimulation")
     expected = dto.to_dict()
-    runtime["ACQUISITION.channel_labels"].clear()
     exported = dto.to_dict()
-    exported["settings"]["ACQUISITION.channel_labels"].clear()
+    exported["settings"]["STIMULATION.server_ip"] = "127.0.0.1"
     exported["bindings"][0]["parameters"]["injected"] = True
     dto.settings.clear()
     assert dto.to_dict() == expected
@@ -225,21 +198,7 @@ def test_local_validation_rejects_unusable_owned_configuration(runtime, change):
         materialize_node_configuration(project_node_configuration(runtime, "stimulation"), catalog)
 
 
-@pytest.mark.parametrize("value", [0, -1, True, 1000.0, "1000"])
-def test_engine_rejects_invalid_sampling_context(runtime, value):
-    runtime["ACQUISITION.sample_rate"] = value
-    runtime["PLUGINS.bindings"][0]["parameters"]["sample_rate"] = value
-    with pytest.raises(PluginSchemaError, match="sample_rate"):
-        project_node_configuration(runtime, "engine")
-
-
-def test_flat_context_cannot_disagree_with_pinned_source(runtime):
-    runtime["ACQUISITION.sample_rate"] = 250
-    with pytest.raises(PluginSchemaError, match="sample_rate"):
-        project_node_configuration(runtime, "engine")
-
-
-@pytest.mark.parametrize("role", ["engine", "stimulation", "actuation"])
+@pytest.mark.parametrize("role", ["stimulation", "actuation"])
 @pytest.mark.parametrize("names", [["obsolete", "names"], None])
 def test_node_projection_ignores_retired_flat_channel_names(runtime, role, names):
     expected = project_node_configuration(runtime, role).to_dict()
@@ -248,7 +207,7 @@ def test_node_projection_ignores_retired_flat_channel_names(runtime, role, names
     assert project_node_configuration(runtime, role).to_dict() == expected
 
 
-@pytest.mark.parametrize("role", ["engine", "stimulation", "actuation"])
+@pytest.mark.parametrize("role", ["stimulation", "actuation"])
 def test_received_node_settings_reject_retired_flat_channel_names(runtime, role):
     data = project_node_configuration(runtime, role).to_dict()
     data["settings"]["ACQUISITION.channel_names"] = ["obsolete", "names"]
@@ -258,44 +217,21 @@ def test_received_node_settings_reject_retired_flat_channel_names(runtime, role)
 
 
 @pytest.mark.parametrize(("role", "kinds"), [
-    ("engine", {"acquisition", "decoder", "epoch_detector"}),
     ("stimulation", {"paradigm", "trigger"}),
     ("actuation", {"effector"}),
 ])
-def test_only_engine_receives_native_channel_labels(runtime, role, kinds):
+def test_output_nodes_never_receive_native_channel_labels(runtime, role, kinds):
     labels = ["C3", "Trigger"]
     runtime["PLUGINS.bindings"][0]["parameters"]["channel_labels"] = labels
     dto = NodeConfiguration.from_dict(project_node_configuration(runtime, role).to_dict())
     result = materialize_node_configuration(dto, LocalCatalog(kinds))
-    if role == "engine":
-        assert dto.settings["ACQUISITION.channel_labels"] == labels
-        assert result["ACQUISITION.channel_labels"] == labels
-    else:
-        assert "ACQUISITION.channel_labels" not in dto.settings
-        assert "ACQUISITION.channel_labels" not in result
+    assert "ACQUISITION.channel_labels" not in dto.settings
+    assert "ACQUISITION.channel_labels" not in result
 
 
-@pytest.mark.parametrize("stage", ["projection", "materialization"])
-def test_channel_labels_cannot_disagree_with_pinned_source(runtime, stage):
-    runtime["PLUGINS.bindings"][0]["parameters"]["channel_labels"] = ["C3", "Trigger"]
-    if stage == "projection":
-        runtime["ACQUISITION.channel_labels"] = ["C4", "Trigger"]
-        with pytest.raises(PluginSchemaError, match="channel_labels.*disagrees"):
-            project_node_configuration(runtime, "engine")
-    else:
-        data = project_node_configuration(runtime, "engine").to_dict()
-        data["settings"]["ACQUISITION.channel_labels"] = ["C4", "Trigger"]
-        dto = NodeConfiguration.from_dict(data)
-        with pytest.raises(PluginSchemaError, match="channel_labels.*disagrees"):
-            materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
-
-
-@pytest.mark.parametrize("labels", ["C3,Trigger", None, ["C3", 1]])
-def test_node_channel_labels_must_be_a_list_of_strings(runtime, labels):
-    data = project_node_configuration(runtime, "engine").to_dict()
-    data["settings"]["ACQUISITION.channel_labels"] = labels
-    with pytest.raises(PluginSchemaError, match="channel_labels.*list of strings"):
-        NodeConfiguration.from_dict(data)
+def test_engine_role_is_rejected_as_unsupported(runtime):
+    with pytest.raises(PluginSchemaError, match="Unsupported node role"):
+        project_node_configuration(runtime, "engine")
 
 
 @pytest.mark.parametrize("change", ["foreign_binding", "foreign_setting", "unknown_field", "version", "unsupported_version", "legacy_identity", "legacy_identity_extra", "revision", "generation", "role", "context", "missing_binding", "duplicate_binding"])
@@ -338,17 +274,7 @@ def test_actuation_configuration_does_not_require_a_separate_enable_flag(runtime
     assert dto.bindings[0].slot == "actuation.effector"
 
 
-def test_source_metadata_can_be_derived_without_flat_aliases(runtime):
-    runtime.pop("ACQUISITION.sample_rate")
-    runtime.pop("ACQUISITION.channel_count")
-    dto = project_node_configuration(runtime, "engine")
-    assert dto.settings["ACQUISITION.sample_rate"] == 1000
-    assert dto.settings["ACQUISITION.channel_count"] == 2
-    assert "ACQUISITION.channel_names" not in dto.settings
-
-
 @pytest.mark.parametrize(("role", "kinds"), [
-    ("engine", {"acquisition", "decoder", "epoch_detector"}),
     ("stimulation", {"paradigm", "trigger"}),
     ("actuation", {"effector"}),
 ])
@@ -407,14 +333,6 @@ def test_owned_plugin_must_be_installed_with_a_schema(runtime, change):
         materialize_node_configuration(project_node_configuration(runtime, "actuation"), catalog)
 
 
-def test_received_engine_source_must_match_declared_context(runtime):
-    data = project_node_configuration(runtime, "engine").to_dict()
-    data["settings"]["ACQUISITION.sample_rate"] = 250
-    dto = NodeConfiguration.from_dict(data)
-    with pytest.raises(PluginSchemaError, match="sample_rate"):
-        materialize_node_configuration(dto, LocalCatalog({"acquisition", "decoder", "epoch_detector"}))
-
-
 @pytest.mark.parametrize(("key", "value"), [
     ("ACTUATION.server_port", True), ("ACTUATION.server_port", 0),
     ("ACTUATION.server_ip", ""), ("ACTUATION.watchdog_timeout_s", float("inf")),
@@ -430,7 +348,6 @@ def test_node_transport_and_timing_settings_are_validated(runtime, key, value):
 
 def test_legacy_global_setup_is_not_projected_to_nodes(runtime):
     runtime["SIGNAL.setup"] = {"source_id": "test-source", "outputs": ["O1"]}
-    assert "SIGNAL.setup" not in project_node_configuration(runtime, "engine").settings
     assert "SIGNAL.setup" not in project_node_configuration(runtime, "stimulation").settings
 
 

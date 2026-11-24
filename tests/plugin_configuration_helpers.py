@@ -94,7 +94,7 @@ def accept_profiles(service, selections, *, module_settings=None, engine_setting
             settings = {**service.default_module_settings(module), **(module_settings or {}).get(module, {})}
             service.repository.save_module(service.propose(module, by_module[module], settings=settings),
                                   expected_revision=current.revision if current else None)
-    return service.repository.get_activation_set()
+    return service.selected_configuration()
 
 
 def output_payload_files(document):

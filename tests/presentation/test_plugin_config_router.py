@@ -171,7 +171,7 @@ def test_runtime_plan_accepts_current_values_for_every_plugin_role(client, slot,
     if kind == "decoder":
         assert binding.processing_input.to_dict() == current["processing_input"]
     assert service.repository.list_profiles() == []
-    assert all(value is None for value in service.repository.get_activation_set().modules.values())
+    assert all(value is None for value in service.selected_configuration().modules.values())
 
 
 @pytest.mark.parametrize("changes", [
@@ -197,7 +197,7 @@ def test_runtime_plan_rejects_invalid_current_values_without_writes(client, chan
     response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "processing", "bindings": [current]})
     assert response.status_code == 422, response.text
     assert service.repository.list_profiles() == []
-    assert all(value is None for value in service.repository.get_activation_set().modules.values())
+    assert all(value is None for value in service.selected_configuration().modules.values())
 
 
 def test_runtime_plan_requires_explicit_current_decoder_mapping(client):
@@ -208,7 +208,7 @@ def test_runtime_plan_requires_explicit_current_decoder_mapping(client):
     }]})
     assert response.status_code == 422, response.text
     assert "processing_input" in response.json()["message"]
-    assert all(value is None for value in service.repository.get_activation_set().modules.values())
+    assert all(value is None for value in service.selected_configuration().modules.values())
 
 
 def test_acquisition_configuration_does_not_require_processing(client):
@@ -273,7 +273,7 @@ def test_catalog_lists_each_plugin_kind_without_applying_configuration(client, k
     assert isinstance(plugin["available"], bool)
     assert not {"id", "name", "display_name", "params", "plugin_type", "location", "entrypoint"}.intersection(plugin)
     assert service.repository.list_profiles() == []
-    assert all(module is None for module in service.repository.get_activation_set().modules.values())
+    assert all(module is None for module in service.selected_configuration().modules.values())
 
 
 def test_catalog_exposes_stimulation_trial_controls(client):
@@ -348,7 +348,7 @@ def test_decoder_profile_saves_and_pins_processing_input(client, sources):
     selected = accept(http, "processing", [("processing.decoder", configured)])
     decoder = selected["bindings"][0]
     assert decoder["processing_input"] == configured["processing_input"]
-    runtime = service.materialize(service.repository.get_activation_set())
+    runtime = service.materialize(service.selected_configuration())
     assert "SIGNAL.setup" not in runtime
     assert next(binding for binding in runtime["PLUGINS.bindings"]
                 if binding["slot"] == "processing.decoder")["processing_input"] == configured["processing_input"]
@@ -356,7 +356,7 @@ def test_decoder_profile_saves_and_pins_processing_input(client, sources):
         "expected_revision": configured["revision"], "processing_input": None})
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["data"]["processing_input"] == profile["processing_input"]
-    assert service.materialize(service.repository.get_activation_set()) == runtime
+    assert service.materialize(service.selected_configuration()) == runtime
 
 
 

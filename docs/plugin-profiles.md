@@ -4,7 +4,7 @@ Each configured plugin slot has editable **Current parameters** for its selected
 Contribution. A saved Profile is a named reusable copy for one exact package,
 contribution, and version. Applying
 current values never requires saving a Profile first. Follow the
-[canonical plugin terminology](plugin-marketplace-design.md#31-canonical-plugin-terminology):
+[canonical plugin terminology](plugin-manifest.md):
 Configuration owns Profiles and accepted bindings; the owning Module Host
 constructs and runs Instances. Saving or loading a Profile does not install a
 Package or create an Instance. The workflows below describe the current implementation.
@@ -18,10 +18,14 @@ Package or create an Instance. The workflows below describe the current implemen
   age limits. Saving or loading a plugin Profile leaves these module settings intact.
 - Save current values as a new Profile when they should be reusable. Load a
   Profile to copy its values into the editor. Neither action applies a module.
-- Each Setup page has the same module status and actions as Run. Its current
-  parameter editor remains separate from the running instance. Loading a Profile
-  is labeled **Loaded**; editing it changes the feedback to **Modified**. Neither
-  label means the module is using those values. Saving remains optional.
+- Setup / Acquisition keeps a compact **Connect / Disconnect** runtime panel so
+  source metadata can be inspected live; starting and stopping reading happen on
+  Run. Setup / Signal Processing, Stimulation, and Actuation show a read-only
+  module status strip with an **Operate in Run** link. In all Setup pages, the
+  current parameter editor remains separate from the running instance. Loading a
+  Profile is labeled **Loaded**; editing it changes the feedback to
+  **Modified**. Neither label means the module is using those values. Saving
+  remains optional.
 - **Connect** applies the current Acquisition values, starts the engine when
   needed, and connects. Metadata inspection is a separate action.
 - **Start reading** requires a source connection and starts Acquisition data flow.

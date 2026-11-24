@@ -72,7 +72,7 @@ def test_upgrade_preview_then_save_new_profile_with_revision_guard(client):
     assert saved.json()["data"]["selection"]["version"] == "2.0.0"
     body["expected_source_revision"] = 99
     assert http.post("/plugin-packages/version-profiles", json=body).status_code == 409
-    assert all(module is None for module in profiles.repository.get_activation_set().modules.values())
+    assert all(module is None for module in profiles.selected_configuration().modules.values())
 
 
 @pytest.mark.parametrize("kind", ["decoder", "acquisition"])

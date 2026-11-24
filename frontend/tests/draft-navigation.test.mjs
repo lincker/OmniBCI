@@ -229,10 +229,10 @@ test("browser refresh stays protected until an in-flight runtime application set
   }, { applying: true });
 });
 
-test("desktop delegates dirty and in-flight protection to its existing native connection and close guard", async () => {
+test("desktop delegates dirty protection to its existing native connection and close guard", async () => {
   await withApp(async ({ h, listeners, editorStates }) => {
     component(h, "PluginProfiles").props.current.set("acquisition.source", currentSource); await h.settle();
-    assert.deepEqual(editorStates.at(-1), { dirty: true, busy: true });
+    assert.deepEqual(editorStates.at(-1), { dirty: true });
     assert.equal(listeners.has("beforeunload"), false);
   }, { desktopMode: true, applying: true });
 });

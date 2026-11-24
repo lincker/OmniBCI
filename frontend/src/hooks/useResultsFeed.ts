@@ -1,10 +1,10 @@
 /** Live results: REST snapshots reconcile WebSocket increments by engine generation. */
 import { useEffect, useState } from "react";
-import { api, type Trial } from "../api/client";
+import { api, errorMessage, type Trial } from "../api/client";
 import { isWsMessage, type StimulationAckMessage } from "../api/ws-types";
 import { openResultsSocket, type ResultsSocket } from "../api/results-socket";
 
-export type ConnectionState = "connecting" | "open" | "closed";
+type ConnectionState = "connecting" | "open" | "closed";
 
 export interface ResultsFeed {
   connection: ConnectionState;
@@ -61,7 +61,7 @@ export function useResultsFeed(enabled = true): ResultsFeed {
         publish();
         setError(null);
       } catch (cause) {
-        if (alive && request === snapshotGeneration) setError(cause instanceof Error ? cause.message : String(cause));
+        if (alive && request === snapshotGeneration) setError(errorMessage(cause));
       }
     };
 

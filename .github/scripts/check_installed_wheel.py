@@ -11,10 +11,10 @@ import numpy as np
 import omnibci
 from omnibci import sdk
 
-from omnibci.application.plugin_schema import validate_parameters
-from omnibci.application.plugin_identity import PluginSelection
-from omnibci.infrastructure.plugins.loader import PluginLoader
-from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot, vendor_plugins_dir
+from omnibci.application.plugin_management.schema import validate_parameters
+from omnibci.application.plugin_management.identity import PluginSelection
+from omnibci.infrastructure.plugin_management.loader import PluginLoader
+from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot, vendor_plugins_dir
 from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.frame_pack import FramePack
 
 

@@ -102,7 +102,7 @@ def test_mismatched_command_name_is_execution_failure():
             EventType.CommandResult,
             CommandResult(
                 command_id=request.command_id,
-                command="StopStream",
+                command="StopAndDrain",
                 ok=True,
             ),
         ))
@@ -157,7 +157,7 @@ def test_timeout_removes_waiter_and_late_result_is_ignored(caplog):
     broker = CommandResultBroker(engine, timeout_s=0.01)
 
     with pytest.raises(CommandTimeoutError):
-        broker.request(EventType.StopStream)
+        broker.request(EventType.StartStream)
 
     assert broker.pending_count == 0
     broker.on_result(_result(engine.dispatched[0], ok=True))
@@ -191,7 +191,7 @@ def test_received_result_wins_when_engine_stops_at_the_same_time():
         engine.is_engine_ready = False
 
     engine.on_dispatch = respond_and_stop
-    assert broker.request(EventType.StopStream).ok
+    assert broker.request(EventType.StartStream).ok
     assert broker.pending_count == 0
 
 
@@ -205,7 +205,7 @@ def test_result_arriving_during_engine_failure_check_wins():
     engine = StoppingEngine()
     broker = CommandResultBroker(engine, timeout_s=0.5)
 
-    assert broker.request(EventType.StopStream).ok
+    assert broker.request(EventType.StartStream).ok
     assert broker.pending_count == 0
 
 

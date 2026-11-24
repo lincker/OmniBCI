@@ -69,7 +69,6 @@ class TestFileReaderLifecycle:
         file_path.touch()
 
         r = FileReader(parameters={'data_file_path': str(file_path)}, resource_root=Path(__file__).parent)
-        r.set_file_path(str(file_path))
 
         assert _run(r.connect()) is None
         assert r.reader_adapter is not None

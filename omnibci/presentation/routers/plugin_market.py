@@ -6,7 +6,7 @@ from starlette.concurrency import run_in_threadpool
 
 from omnibci.application.plugin_management.market_service import PluginMarketService
 from omnibci.presentation.dependencies import get_plugin_market_service
-from omnibci.presentation.routers.plugin_packages import package_errors
+from omnibci.presentation.errors import package_errors
 from omnibci.presentation.schemas.common import ApiResponse
 from omnibci.presentation.schemas.plugin_market import InstallMarketPackageRequest, MarketPackageResponse
 from omnibci.presentation.schemas.plugin_packages import PackageInstallationResponse

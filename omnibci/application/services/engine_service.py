@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.configuration.definitions import merge_module_settings
-from omnibci.application.configuration.errors import ProfileRevisionConflict
+from omnibci.application.configuration.errors import ConfigProfileConflictError, ProfileRevisionConflict
 from omnibci.application.command_contracts import command_contract, command_event
 from omnibci.application.services.actuation_service import ActuationAppService
 from omnibci.application.ports.output_process import OutputProcess
@@ -23,8 +23,7 @@ from omnibci.application.commands.stimulation_commands import StopStimulationCom
 from omnibci.application.commands.acquisition_commands import StartStreamCommand
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 
-from omnibci.shared.events import EventType, Event
-from omnibci.application.configuration.errors import ConfigProfileConflictError
+from omnibci.shared.events import Event
 from omnibci.application.ports.engine_port import (
     EngineFactory,
     EngineHandle,
@@ -45,14 +44,12 @@ logger = logging.getLogger(__name__)
 
 class NeuroEngineService(EnginePort):
     """
-    Thin application-service shell around NeuroEngine.
+    Application service coordinating NeuroEngine lifecycle, independent modules,
+    admission control, and runtime snapshots.
 
     Lifecycle:
         startup()  — called once during API server startup
         shutdown() — called once during API server shutdown
-
-    All public methods correspond 1-to-1 with domain commands / queries so
-    that routers stay free of business logic.
     """
 
     _STARTUP_TIMEOUT_S = 10.0
@@ -542,7 +539,6 @@ class NeuroEngineService(EnginePort):
         """
         event = command_event(event)
         with self._admission.command(command_contract(event.type).scopes):
-            self._require_engine()
             if not self.is_engine_ready:
                 raise RuntimeError("NeuroEngine is not running")
             self._engine.dispatch(event)
@@ -745,10 +741,6 @@ class NeuroEngineService(EnginePort):
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
-
-    def _require_engine(self) -> None:
-        if self._engine is None:
-            raise RuntimeError("NeuroEngineService not initialised")
 
     def _run_engine(self):
         try:

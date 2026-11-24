@@ -8,7 +8,6 @@ import pytest
 
 from tests.processing_helpers import make_processor, marker_boundaries
 from omnibci.domain.classification import Classification
-from omnibci.domain.epoch import Epoch
 from omnibci.shared.events import EventType
 from omnibci.domain.signal import SignalChunk
 from omnibci.infrastructure.signal_processing.processing_state import (
@@ -32,15 +31,6 @@ def _chunk(samples: int = 6, *, start=None, end=None) -> SignalChunk:
     )
 
 
-def _epoch(event_id: int = 7) -> Epoch:
-    return Epoch(
-        data=np.ones((2, 5)),
-        event_id=event_id,
-        sample_rate=1000,
-        channel_count=2,
-    )
-
-
 def _classification(event_id: int = 7) -> Classification:
     return Classification(target_id=3, event_id=event_id, confidence=0.9)
 
@@ -61,9 +51,7 @@ def _processor():
         generation="run", processing_revision="processor-revision",
     )
     processor.detector.detect.side_effect = marker_boundaries
-    processor.current_epoch = MagicMock(
-        build_epoch=MagicMock(return_value=_epoch()), processing_revision="epoch-revision",
-    )
+    processor.current_epoch = MagicMock(processing_revision="epoch-revision")
     processor.transition_to_assembling()
     return processor
 
@@ -277,7 +265,6 @@ class TestCompleteTrial:
         assert completion.generation == "run"
         assert completion.trial_number == 1
         assert completion.processing_revision == "epoch-revision"
-        processor.current_epoch.build_epoch.assert_not_called()
 
     def test_trial_numbers_increase_without_retaining_trial_history(self):
         processor = _processor()

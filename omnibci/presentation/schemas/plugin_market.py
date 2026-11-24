@@ -1,7 +1,8 @@
 """Data-only market catalog and exact installation requests."""
 from pydantic import BaseModel, ConfigDict, Field
 
-from omnibci.presentation.schemas.plugin_config import PluginKind, PluginSelectionResponse
+from omnibci.presentation.schemas.plugin_config import PluginKind
+from omnibci.presentation.schemas.plugin_selection import PluginSelectionResponse
 
 
 class MarketContributionResponse(BaseModel):

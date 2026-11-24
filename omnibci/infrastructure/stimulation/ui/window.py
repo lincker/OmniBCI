@@ -1,15 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # @Author   : lincker <haolin.d.wu@gmail.com>
-# from UIview import UIView
-from OpenGL.GL import glGetString, GL_RENDERER, GL_VERSION,glClearColor, glClear, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
-import glfw
+import logging
 from sys import platform
+
+from OpenGL.GL import glGetString, GL_RENDERER, GL_VERSION, glClearColor, glClear, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
+import glfw
+
+logger = logging.getLogger(__name__)
 
 
 class UIWindow:
-    root_view_controller = None
-
     def __init__(self, window_name, width, height):
         self.window = None
         self._closed = False
@@ -32,8 +33,8 @@ class UIWindow:
             # Clear the framebuffer after establishing the owner context.
             glClearColor(0.0, 0.0, 0.0, 0.0)
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            print('Renderer:', glGetString(GL_RENDERER))
-            print('OpenGL version supported:', glGetString(GL_VERSION))
+            logger.debug("Renderer: %s", glGetString(GL_RENDERER))
+            logger.debug("OpenGL version supported: %s", glGetString(GL_VERSION))
         except BaseException as failure:
             try:
                 self.teardown()

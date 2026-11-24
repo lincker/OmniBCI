@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # @Author   : lincker
 # @Date     : 2025-04-13 02:04
-from abc import ABC, abstractmethod
+import logging
 
 import mne
 import numpy as np
@@ -10,28 +10,14 @@ import numpy as np
 from omnibci.sdk import SignalInfo
 from omnibci.infrastructure.acquisition.metadata import signal_info
 
-
-class ReaderAdapter(ABC):
-    """File reader interface."""
-
-    def __init__(self, file_path):
-        super().__init__()
-        self.file_path = file_path
-
-    @abstractmethod
-    async def read_chunk(self, start: int, end: int):
-        raise NotImplementedError("read_data() must be implemented in subclasses")
-
-    @abstractmethod
-    async def close(self):
-        pass
+logger = logging.getLogger(__name__)
 
 
-class CNTReaderAdapter(ReaderAdapter):
+class CNTReaderAdapter:
     """CNT file reader."""
 
     def __init__(self, file_path):
-        super().__init__(file_path)
+        self.file_path = file_path
         self.file = mne.io.read_raw_cnt(input_fname=self.file_path, data_format='auto', preload=True, date_format='mm/dd/yy')
         self._metadata = (f"{self.file.info}\n\nChannel labels: {', '.join(self.file.ch_names)}"
                           f"\n\n{self.file.annotations}")
@@ -41,14 +27,13 @@ class CNTReaderAdapter(ReaderAdapter):
 
     def _set_event(self):
         self.data = self.file['data'][0]
-        events, event_dict = mne.events_from_annotations(self.file)
+        events, _ = mne.events_from_annotations(self.file)
         event_channel_length = self.data.shape[1]
         event_channel = np.zeros(event_channel_length)
         for position, _, value in events:
             event_channel[position] = value
-            print(f'CNTReaderAdapter: set event: position = {position}, event = {value}')
-        arr = np.vstack((self.data, event_channel))
-        self.data = arr
+            logger.debug("CNTReaderAdapter: set event position=%s value=%s", position, value)
+        self.data = np.vstack((self.data, event_channel))
 
     def get_metadata(self) -> str:
         """Return file information captured before selecting output channels."""

@@ -113,7 +113,7 @@ def test_invalid_current_binding_cannot_change_configuration(runtime, changes):
     decoder = draft(runtime, "processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA")
     with pytest.raises((ValueError, KeyError)):
         runtime.plan("processing", [{**decoder, **changes}], settings={}, expected_revision=None)
-    assert all(item is None for item in runtime.profiles.repository.get_activation_set().revisions().values())
+    assert all(item is None for item in runtime.profiles.selected_configuration().revisions().values())
     assert runtime.profiles.repository.list_profiles() == []
 
 
@@ -122,7 +122,7 @@ def test_current_decoder_requires_an_explicit_mapping(runtime):
     decoder.pop("processing_input")
     with pytest.raises(ValueError, match="processing_input"):
         runtime.plan("processing", [decoder], settings={}, expected_revision=None)
-    assert all(item is None for item in runtime.profiles.repository.get_activation_set().revisions().values())
+    assert all(item is None for item in runtime.profiles.selected_configuration().revisions().values())
 
 
 def test_non_decoder_current_binding_rejects_processing_input(runtime):

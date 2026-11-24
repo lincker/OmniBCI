@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
 
 export interface ControlResult { ok: boolean; errors?: string[]; forced?: boolean }
-export interface ServerReady { url: string; instance_id: string }
+interface ServerReady { url: string; instance_id: string }
 const shutdownStages = {
   waiting_for_requests: "Waiting for active requests",
   waiting_for_configuration: "Waiting for configuration changes",

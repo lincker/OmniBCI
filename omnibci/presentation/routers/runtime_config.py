@@ -1,8 +1,10 @@
 """Runtime configuration planning; no profile save implicitly applies changes."""
 from typing import Literal
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
-from omnibci.application.services.runtime_configuration_service import RuntimeConfigurationService
+from omnibci.presentation.dependencies import (
+    get_node_configuration_service, get_runtime_configuration,
+)
 from omnibci.presentation.errors import ApiError, configuration_errors
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.plugin_config import ConfigurationModule, RevertModuleRequest
@@ -15,18 +17,11 @@ from omnibci.presentation.schemas.runtime_config import (
 router = APIRouter(prefix="/config", tags=["Runtime configuration"])
 
 
-def get_runtime_configuration(request: Request) -> RuntimeConfigurationService:
-    service = getattr(getattr(request.app.state, "container", None), "runtime_configuration", None)
-    if service is None:
-        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Runtime configuration is unavailable")
-    return service
-
-
 @router.get("/nodes/{role}", response_model=ApiResponse[NodeConfigurationPublicationResponse])
-def node_configuration(role: Literal["stimulation", "actuation"], request: Request):
-    service = getattr(getattr(request.app.state, "container", None), "node_configuration", None)
-    if service is None:
-        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, "Node configuration is unavailable")
+def node_configuration(
+    role: Literal["stimulation", "actuation"],
+    service=Depends(get_node_configuration_service),
+):
     with configuration_errors():
         return ApiResponse(data=service.configuration(role))
 

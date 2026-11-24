@@ -862,7 +862,6 @@ test("Scan45 retains editable declarations and cannot adopt them as verified obs
     assert.equal(metadata(harness).props.value.comparison.status, "unverified");
     assert.equal(metadata(harness).props.canUseObserved, false);
     assert.equal(metadata(harness).props.onUseObserved, undefined);
-    assert.equal(metadata(harness).props.onSaveObservedProfile, undefined);
     assert.equal(calls.create.length, 0);
   }, { engineRunning: true, configure: (data) => {
     observedSource(data, { sample_rate: 500, channel_count: 3 }, "user-declared");

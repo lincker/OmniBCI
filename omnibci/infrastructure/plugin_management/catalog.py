@@ -5,7 +5,7 @@ trusted user/builtin roots, parses manifest.toml without importing plugin
 Python code, applies precedence and identity rules, and exposes exact package
 contributions for configuration and runtime resolution.
 
-Executable loading remains isolated in :mod:`plugins.loader`.
+Executable loading remains isolated in :mod:`omnibci.infrastructure.plugin_management.loader`.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Literal, Optional
 
@@ -94,52 +93,7 @@ def user_plugins_dir(*, host_settings: dict | None = None) -> Optional[Path]:
         return None
 
 
-def _plugin_roots(subpath: str, plugin_dir: Path | None = None) -> list[PluginRoot]:
-    """Return trusted root descriptors in deterministic priority order."""
-    roots: list[PluginRoot] = []
-    user = plugin_dir if plugin_dir is not None else user_plugins_dir()
-    if user is not None:
-        roots.extend(PluginRoot(path, "user", 0) for path in enabled_package_directories(user))
-    vp = vendor_plugins_dir() / subpath
-    if vp.is_dir():
-        roots.append(PluginRoot(vp.resolve(), "builtin", 100))
-    return roots
-
-
-def paradigm_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
-    return _plugin_roots("paradigms", plugin_dir)
-
-
-def decoder_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
-    return _plugin_roots("algorithms/decoders", plugin_dir)
-
-
-def acquisition_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
-    return _plugin_roots("acquisition", plugin_dir)
-
-
-def effector_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
-    return _plugin_roots("effectors", plugin_dir)
-
-
-def filter_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
-    return _plugin_roots("algorithms/filters", plugin_dir)
-
-
-def epoch_detector_plugin_roots(plugin_dir: Path | None = None) -> list[PluginRoot]:
-    return _plugin_roots("algorithms/epoch", plugin_dir)
-
-
 RootProvider = Callable[[], list[PluginRoot]]
-
-_ROOT_PROVIDERS: dict[str, RootProvider] = {
-    "paradigm": paradigm_plugin_roots,
-    "decoder": decoder_plugin_roots,
-    "acquisition": acquisition_plugin_roots,
-    "effector": effector_plugin_roots,
-    "filter": filter_plugin_roots,
-    "epoch_detector": epoch_detector_plugin_roots,
-}
 
 
 class PluginNotFoundError(PluginResolutionError):
@@ -148,17 +102,6 @@ class PluginNotFoundError(PluginResolutionError):
 
 class AmbiguousPluginError(PluginResolutionError):
     """More than one plugin has the same key at the winning precedence."""
-
-
-class MissingEntrypointError(PluginResolutionError):
-    """The selected contribution does not declare executable code."""
-
-
-@dataclass(frozen=True, slots=True)
-class _ScanFailure:
-    error: PluginManifestError
-    precedence: int
-    location: Path
 
 
 def _parse_package(
@@ -262,31 +205,23 @@ class PluginCatalog:
             raise ValueError("Choose explicit root providers or a plugin directory, not both")
         self.host_version = host_version if host_version is not None else installed_host_version()
         self._plugin_dir = Path(plugin_dir).resolve() if plugin_dir is not None else None
-        self._custom_providers = root_providers is not None
-        self._root_providers = (
-            root_providers if root_providers is not None else _ROOT_PROVIDERS
-        )
-        if self._plugin_dir is not None:
-            self._root_providers = {
-                kind: partial(provider, plugin_dir=self._plugin_dir)
-                for kind, provider in _ROOT_PROVIDERS.items()
-            }
+        self._root_providers = root_providers
         self._package_cache: dict[
             tuple[Path, str, int, str | None],
             tuple[tuple[tuple[str, int, int, int, int], ...], tuple[PluginDescriptor, ...]],
         ] = {}
 
     def _collect_roots(self) -> list[PluginRoot]:
-        if not self._custom_providers:
+        if self._root_providers is None:
             return _default_roots(self._plugin_dir)
         roots: list[PluginRoot] = []
         for provider in self._root_providers.values():
             roots.extend(provider())
         return roots
 
-    def _scan_packages(self) -> tuple[tuple[PluginDescriptor, ...], tuple[_ScanFailure, ...]]:
+    def _scan_packages(self) -> tuple[tuple[PluginDescriptor, ...], tuple[PluginManifestError, ...]]:
         descriptors: list[PluginDescriptor] = []
-        failures: list[_ScanFailure] = []
+        failures: list[PluginManifestError] = []
 
         # A package can contribute to any category. Scan all configured roots,
         # deduplicating physical packages even when roots overlap. Retain the
@@ -325,14 +260,14 @@ class PluginCatalog:
             except PluginManifestError as exc:
                 self._package_cache.pop(cache_key, None)
                 log.error("Skipping invalid plugin: %s", exc)
-                failures.append(_ScanFailure(exc, root.precedence, package_dir))
+                failures.append(exc)
             except Exception as exc:  # defensive boundary for user data
                 self._package_cache.pop(cache_key, None)
                 error = PluginManifestError(
                     f"{package_dir / MANIFEST_NAME}: unexpected manifest validation error: {exc}"
                 )
                 log.exception("Skipping invalid plugin: %s", error)
-                failures.append(_ScanFailure(error, root.precedence, package_dir))
+                failures.append(error)
 
         for stale in set(self._package_cache) - active_keys:
             self._package_cache.pop(stale, None)
@@ -344,7 +279,7 @@ class PluginCatalog:
         category: str,
         *,
         all_categories: bool = False,
-    ) -> tuple[tuple[PluginDescriptor, ...], tuple[_ScanFailure, ...]]:
+    ) -> tuple[tuple[PluginDescriptor, ...], tuple[PluginManifestError, ...]]:
         if category not in PLUGIN_KINDS:
             raise ValueError(
                 f"Unknown plugin category: {category!r}. "
@@ -370,16 +305,16 @@ class PluginCatalog:
         category: str,
         selection: PluginSelection,
         descriptors: tuple[PluginDescriptor, ...],
-        failures: tuple[_ScanFailure, ...],
+        failures: tuple[PluginManifestError, ...],
     ) -> PluginDescriptor:
         for failure in failures:
-            if failure.error.package_id == selection.package_id and (
-                failure.error.version is None or failure.error.version == selection.version
+            if failure.package_id == selection.package_id and (
+                failure.version is None or failure.version == selection.version
             ):
                 raise PluginManifestError(
                     f"Invalid selected package {selection.package_id!r} "
-                    f"version {selection.version!r}; refusing fallback: {failure.error}"
-                ) from failure.error
+                    f"version {selection.version!r}; refusing fallback: {failure}"
+                ) from failure
 
         package = [
             item for item in descriptors
@@ -397,13 +332,7 @@ class PluginCatalog:
         ]
         if not matches:
             raise PluginNotFoundError(f"Unknown {category} selection {selection!r}")
-        descriptor = matches[0]
-        if descriptor.entrypoint is None:
-            raise MissingEntrypointError(
-                f"{descriptor.manifest_path}: selected contribution "
-                f"{selection.contribution_id!r} has no entrypoint"
-            )
-        return descriptor
+        return matches[0]
 
     def resolve_selection(self, category: str, selection: PluginSelection) -> PluginDescriptor:
         """Resolve one exact package, contribution and version without aliases.
