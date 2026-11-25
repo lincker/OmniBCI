@@ -35,14 +35,13 @@ const schemaTextKeys: Record<string, TranslationKey> = {
   "TCP port": "schema.tcpPort",
   "Total channels sent by the device, including the final event channel. Must match the Scan45 stream.": "schema.scanChannelsDescription",
 };
-export const schemaText = (value: string, t: Translate): string => {
+const schemaText = (value: string, t: Translate): string => {
   const key = Object.prototype.hasOwnProperty.call(schemaTextKeys, value) ? schemaTextKeys[value] : undefined;
   return key ? t(key) : value;
 };
 
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const clone = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
 const canonical = (value: unknown) => JSON.stringify(value, (_key, item) =>
   object(item) ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right))) : item,
 );
@@ -66,9 +65,9 @@ export function normalizedParameters(parameters: Record<string, unknown>, schema
 }
 
 export function initialSchemaValue(schema: ConfigurationSchema): unknown {
-  if (schema.enum?.length) return clone(schema.default !== undefined ? schema.default : schema.enum[0]);
+  if (schema.enum?.length) return structuredClone(schema.default !== undefined ? schema.default : schema.enum[0]);
   if (schema.type === "object") {
-    const values = object(schema.default) ? clone(schema.default) as Record<string, unknown> : {};
+    const values = object(schema.default) ? structuredClone(schema.default) : {};
     for (const [key, child] of Object.entries(schema.properties ?? {})) {
       if (key in values) values[key] = initialSchemaValue({ ...child, default: values[key] });
       else if (child.default !== undefined || schema.required?.includes(key)) values[key] = initialSchemaValue(child);
@@ -78,7 +77,7 @@ export function initialSchemaValue(schema: ConfigurationSchema): unknown {
   if (schema.type === "array" && Array.isArray(schema.default) && schema.items) {
     return schema.default.map((value) => initialSchemaValue({ ...schema.items!, default: value }));
   }
-  if (schema.default !== undefined) return clone(schema.default);
+  if (schema.default !== undefined) return structuredClone(schema.default);
   if (schema.type === "array") return [];
   if (schema.type === "boolean") return false;
   if (schema.type === "integer" || schema.type === "number") return schema.minimum ?? 0;
@@ -174,7 +173,7 @@ function SchemaField({ schema, value, onChange, disabled, label }: FieldProps) {
     <label htmlFor={id} className="setting-label">{title}</label>
     {schema.description && <span className="setting-description">{schemaText(schema.description, t)}</span>}
     {schema.enum ? <select id={id} disabled={disabled} value={schema.enum.findIndex((option) => sameParameters(option, value))}
-      onChange={(event) => onChange(clone(schema.enum![Number(event.target.value)]))}>
+      onChange={(event) => onChange(structuredClone(schema.enum![Number(event.target.value)]))}>
       <option value={-1} disabled>{t("schema.selectValue")}</option>
       {schema.enum.map((option, index) => <option value={index} key={index}>{typeof option === "string" ? option : JSON.stringify(option)}</option>)}
     </select> : schema.type === "boolean" ? <input id={id} type="checkbox" checked={value === true} disabled={disabled}

@@ -51,13 +51,11 @@ class AcquisitionCommand(Enum):
     get_metadata      = 'get metadata'
     connect           = 'connect'
     start_stream      = 'start stream'
-    stop_stream       = 'stop stream'
     stop_and_drain    = 'stop and drain'
     disconnect        = 'disconnect'
     get_checkpoint    = 'get checkpoint'
     restore_checkpoint = 'restore checkpoint'
     start_preview     = 'start preview'
-    stop_preview      = 'stop preview'
     get_preview       = 'get preview'
     attach_processing = 'attach processing input'
     detach_processing = 'detach processing input'
@@ -75,13 +73,11 @@ _COMMAND_RESULT_NAMES = {
     AcquisitionCommand.connect: EventType.ConnectDataProvider.name,
     AcquisitionCommand.disconnect: EventType.DisconnectDataProvider.name,
     AcquisitionCommand.start_stream: EventType.StartStream.name,
-    AcquisitionCommand.stop_stream: EventType.StopStream.name,
     AcquisitionCommand.stop_and_drain: EventType.StopAndDrain.name,
     AcquisitionCommand.get_checkpoint: EventType.GetSourceCheckpoint.name,
     AcquisitionCommand.restore_checkpoint: EventType.RestoreSourceCheckpoint.name,
     AcquisitionCommand.get_metadata: EventType.GetSourceMetadata.name,
     AcquisitionCommand.start_preview: EventType.StartAcquisitionPreview.name,
-    AcquisitionCommand.stop_preview: EventType.StopAcquisitionPreview.name,
     AcquisitionCommand.get_preview: EventType.GetAcquisitionPreview.name,
     AcquisitionCommand.attach_processing: EventType.AttachProcessingInput.name,
     AcquisitionCommand.detach_processing: EventType.DetachProcessingInput.name,
@@ -192,12 +188,10 @@ class AcquisitionRuntime:
             AcquisitionCommand.connect:          self._on_connect,
             AcquisitionCommand.disconnect:       self._on_disconnect,
             AcquisitionCommand.start_stream:     self._on_start_stream,
-            AcquisitionCommand.stop_stream:      self._on_stop_stream,
             AcquisitionCommand.stop_and_drain:   self._on_stop_stream,
             AcquisitionCommand.stop_acquisition: self._on_stop_acquisition,
             AcquisitionCommand.get_metadata:     self._on_get_metadata,
             AcquisitionCommand.start_preview:    self._preview_command,
-            AcquisitionCommand.stop_preview:     self._preview_command,
             AcquisitionCommand.get_preview:      self._preview_command,
         }.get(command)
         if handler is None:
@@ -220,8 +214,7 @@ class AcquisitionRuntime:
                 data = await self._on_get_metadata(request)
             elif command is AcquisitionCommand.start_stream:
                 await self._on_start_stream()
-            elif command in (AcquisitionCommand.start_preview, AcquisitionCommand.stop_preview,
-                             AcquisitionCommand.get_preview):
+            elif command in (AcquisitionCommand.start_preview, AcquisitionCommand.get_preview):
                 data = self._preview_command(command, request)
             else:
                 await handler()
@@ -313,8 +306,6 @@ class AcquisitionRuntime:
                 self.preview.start(payload.get("capture_id"),
                                    PreviewSelection.from_value(payload.get("selection", {})), self._preview_identity(),
                                    continuous=payload.get("continuous", False))
-            elif command is AcquisitionCommand.stop_preview:
-                self.preview.stop(payload.get("capture_id"))
             elif (payload.get("capture_id") is not None
                   and payload["capture_id"] != self.preview.snapshot()["capture_id"]):
                 raise ValueError("Preview capture does not match the requested capture_id")

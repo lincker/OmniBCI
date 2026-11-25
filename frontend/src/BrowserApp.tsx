@@ -15,9 +15,9 @@ export default function BrowserApp() {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
-  const editor = useRef({ dirty: false, busy: false });
+  const editor = useRef({ dirty: false });
   const alive = useRef(true);
-  const updateEditor = (state: { dirty: boolean; busy: boolean }) => { editor.current = state; };
+  const updateEditor = (state: { dirty: boolean }) => { editor.current = state; };
 
   const accept = (next: ServerInfo) => {
     if (info && next.instance_id !== info.instance_id && editor.current.dirty
@@ -69,7 +69,7 @@ export default function BrowserApp() {
     try {
       await closeBrowserSession();
       setInfo(null); setConnected(false); setNeedsToken(info?.auth_enabled ?? false); setError("");
-      editor.current = { dirty: false, busy: false };
+      editor.current = { dirty: false };
     } catch { setError(t("connection.unavailable")); }
     finally { setBusy(false); }
   };

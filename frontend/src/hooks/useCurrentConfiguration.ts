@@ -1,11 +1,11 @@
 /** Editable plugin values live independently of saved profiles and mounted pages. */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { pluginConfigApi, selectionKey, configurationModules, type ModuleActivation, type RevisionMap, type PluginProfile, type PluginSelection } from "../api/plugin-config";
+import { errorMessage } from "../api/client";
+import { pluginConfigApi, selectionKey, configurationModules, type ConfigurationModule, type ModuleActivation, type RevisionMap, type PluginProfile, type PluginSelection } from "../api/plugin-config";
 import type { ProcessingInput } from "../api/signal-config";
 import type { ModuleConfigurationRequest } from "../api/runtime-config";
 import { sameParameters, normalizedParameters, type ConfigurationSchema } from "../SchemaForm";
 
-export type ConfigurationModule = "acquisition" | "processing" | "stimulation" | "actuation";
 export type CurrentPluginConfiguration = {
   sourceOrigin?: "new" | "current" | "profile";
   profile: PluginProfile | null;
@@ -50,7 +50,7 @@ export function currentBindings(module: ConfigurationModule, entries: Record<str
   });
 }
 
-export type ModuleCurrentState = { activation: ModuleActivation | null; ready: boolean; error: string | null; conflicted?: boolean };
+type ModuleCurrentState = { activation: ModuleActivation | null; ready: boolean; error: string | null; conflicted?: boolean };
 export type ModuleRestoration = { module: ConfigurationModule; operationId: string; revision: string };
 const emptyModule = (): ModuleCurrentState => ({ activation: null, ready: false, error: null });
 
@@ -117,7 +117,7 @@ export function useCurrentConfiguration(acceptedRevisions?: RevisionMap,
       return activation;
     } catch (cause) {
       if (generation === loadGeneration.current[module]) updateModule(module, {
-        ...states.current[module], ready: false, error: cause instanceof Error ? cause.message : String(cause),
+        ...states.current[module], ready: false, error: errorMessage(cause),
       });
     }
   }, [restoreModule, updateModule]);

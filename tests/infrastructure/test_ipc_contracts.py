@@ -16,7 +16,6 @@ import pytest
 from omnibci.infrastructure.ipc import contracts
 from omnibci.infrastructure.ipc.contracts import (
     InvalidEventBody,
-    MAX_FRAME_BODY_BYTES,
     PROTOCOL_VERSION,
     SUPPORTED_VERSIONS,
     UnsupportedProtocolVersion,
@@ -29,6 +28,7 @@ from omnibci.infrastructure.ipc.protocol import (
     Frame,
     FrameBodyTooLarge,
     InvalidFrameHeader,
+    MAX_FRAME_BODY_BYTES,
 )
 from omnibci.shared.events import Event, EventType
 from omnibci.application.events import TrialOutcome
@@ -38,8 +38,8 @@ from omnibci.domain.classification import Classification
 class TestWireShape:
     def test_stream_control_commands_have_distinct_wire_values(self):
         assert int(EventType.StartStream) == 111
-        assert int(EventType.StopStream) == 112
-        for name in ("StartStream", "StopStream"):
+        assert int(EventType.StopAndDrain) == 113
+        for name in ("StartStream", "StopAndDrain"):
             original = Event(EventType[name])
             restored = decode_event_body(event_to_body(original).encode(), PROTOCOL_VERSION)
             assert restored.type.name == name
@@ -162,3 +162,17 @@ class TestRobustness:
     def test_strict_stream_decoder_rejects_invalid_event_envelopes(self, body):
         with pytest.raises(InvalidEventBody):
             decode_event_body(body, PROTOCOL_VERSION)
+
+
+@pytest.mark.parametrize("command,evidence", [
+    (EventType.PauseStimulation, {"paused": True, "renderer_stopped": True, "cancelled_trials": 2}),
+    (EventType.SettleActuation, {"paused": True, "execution_complete": True, "outputs_settled": True}),
+])
+def test_command_result_preserves_quiescence_evidence(command, evidence):
+    from omnibci.application.events import CommandResult
+
+    data = {**evidence, "module_revision": "revision", "engine_revision": "engine", "generation": "generation"}
+    result = CommandResult("correlation", command.name, ok=True, data=data)
+    received = decode_event_body(event_to_body(Event(EventType.CommandResult, result)).encode(), PROTOCOL_VERSION)
+    assert received.type is EventType.CommandResult
+    assert CommandResult.from_value(received.data) == result

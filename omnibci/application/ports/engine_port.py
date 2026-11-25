@@ -75,14 +75,6 @@ class EnginePort(ABC):
         """Whether a command's owning module can still answer it."""
         return self.is_engine_ready
 
-    def is_module_running(self, module: str) -> bool:
-        """Whether the requested business module is running on the engine."""
-        return False
-
-    async def stop_module(self, module: str) -> None:
-        """Stop one module while keeping the engine available."""
-        raise NotImplementedError
-
     def ensure_output_ready_sync(self, module: str, snapshot: dict) -> None:
         """Ensure the output transport before its local process is spawned."""
         raise NotImplementedError

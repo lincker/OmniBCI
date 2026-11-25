@@ -15,8 +15,19 @@ class ActuationAppService:
         self._snapshot = None
 
     @property
-    def process_alive(self):
+    def is_active(self) -> bool:
+        return bool(self.active and self.engine.is_engine_ready
+                    and (self.process_alive or self.engine.is_peer_connected("actuation")))
+
+    @property
+    def process_alive(self) -> bool:
         return bool(self.process_manager is not None and self.process_manager.is_alive)
+
+    @property
+    def current_effector(self) -> str | None:
+        if self.process_manager is None:
+            return None
+        return self.process_manager.current_effector
 
     @property
     def owned_snapshot(self):

@@ -4,8 +4,8 @@ engine_channel — stimulation-side peer config for the engine connection.
 The engine uses a ListenTransport (it binds a server port and waits).
 The stimulation process uses ConnectTransport (it dials out to the engine).
 Routes are the mirror image of the engine's stimulation_peer_config in peers.py:
-  outbound (stim → engine): StimulationAck, MessageFromStimulation
-  inbound  (engine → stim): TrialCompleted, StartStimTrial, StopStimulation
+  outbound (stim → engine): CommandResult, StimulationAck
+  inbound  (engine → stim): TrialCompleted, StartStimTrial, StopStimulation, PauseStimulation
 """
 
 from omnibci.shared.events import EventType
@@ -27,7 +27,6 @@ def engine_peer_config(host: str, port: int, *, receipt: PluginExecutionReceipt 
             outbound=frozenset({
                 EventType.CommandResult,
                 EventType.StimulationAck,
-                EventType.MessageFromStimulation,
             }),
             inbound=frozenset({
                 EventType.TrialCompleted,

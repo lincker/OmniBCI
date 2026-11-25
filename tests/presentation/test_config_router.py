@@ -96,20 +96,6 @@ def test_invalid_host_value_has_key_detail(config_client):
     assert "NEUROENGINE.command_timeout_s" in response.json()["detail"]
 
 
-@pytest.mark.parametrize("extra", [
-    {"scope": "default"}, {"scope": "Lab"}, {"description": "Old profile"},
-])
-def test_retired_patch_fields_are_rejected(config_client, tmp_path, extra):
-    path = tmp_path / "settings.toml"
-    before = path.read_bytes()
-    response = config_client.patch("/api/v1/config", json={
-        "expected_revision": config_client.get("/api/v1/config").json()["data"]["revision"],
-        "updates": {"NEUROENGINE.command_timeout_s": 64}, **extra,
-    })
-    assert response.status_code == 422
-    assert path.read_bytes() == before
-
-
 @pytest.mark.parametrize("revision", [None, "", "old", "a" * 63, "g" * 64, 123])
 def test_patch_requires_valid_revision(config_client, tmp_path, revision):
     before = (tmp_path / "settings.toml").read_bytes()

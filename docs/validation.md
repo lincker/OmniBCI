@@ -94,19 +94,6 @@ The authoritative runtime and configuration description is
 [the SDK contract](plugin-manifest.md#sdk-and-construction-api); REST and WebSocket payloads are documented
 in [frontend-separation.md](frontend-separation.md).
 
-## Local release acceptance (2026-11-21)
-
-The [S6 execution record](plugin-implementation-plan.md#s6-execution-client-integration-and-local-release-acceptance-2026-11-21)
-contains the final macOS test counts, immutable source manifest, installed-wheel
-digest and evidence locations. It includes the real file/Decoder/Logger closure,
-the documented installed development command, frontend production build and
-confirmed cleanup. The development example uses an explicit 60-second command
-budget for cold initialization; it is not a runtime latency guarantee.
-
-Windows/Linux CI and physical display/device checks have not been run for this
-local acceptance. Keep those release gates open; neither headless fakes nor the
-presence of a workflow file replaces execution evidence.
-
 ## Performance and physical-device checks
 
 `python scripts/benchmark_epoch_buffer.py` compares the processing buffer with

@@ -13,11 +13,6 @@ from collections.abc import Mapping
 import math
 from typing import Optional
 
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Author   : lincker <haolin.d.wu@gmail.com>
-# @Date     : 2025-09-22 10:46
-
 import numpy as np
 from numpy import typing as npt
 from sklearn.cross_decomposition import CCA as skCCA
@@ -39,7 +34,7 @@ class Classic40CCA(Decoder):
                                     8.6, 9.6, 10.6, 11.6, 12.6, 13.6, 14.6, 15.6,
                                     8.8, 9.8, 10.8, 11.8, 12.8, 13.8, 14.8, 15.8]
 
-        def generate_template(self) -> [npt.NDArray]:
+        def generate_template(self) -> list[npt.NDArray]:
             template_set = []
             sample_points = np.linspace(0, (self.SAMPLE_COUNT - 1) / self.SAMPLE_RATE, int(self.SAMPLE_COUNT),
                                         endpoint=True)

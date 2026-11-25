@@ -224,7 +224,7 @@ async def test_pipeline_engine_acknowledgement_failure_requires_recovery(narrow,
     assert h.commands.stage_targets == [h.plan.target_revisions["processing"]]
     assert h.commands.processing_revision == h.plan.target_revisions["processing"]
     assert h.engine.applied_revisions["processing"] == h.previous.modules["processing"].revision
-    assert h.profiles.repository.get_activation_set() == h.previous
+    assert h.profiles.selected_configuration() == h.previous
     assert h.profiles.repository.list_module_history("processing") == []
     assert h.commands.restores == h.acquisition.starts == h.output_restarts == []
     if strategy == "module":
@@ -533,7 +533,7 @@ def with_unavailable_windows_trigger(h, monkeypatch):
     bindings.append({"slot": "stimulation.trigger", "profile_id": trigger.profile_id})
     selected = h.profiles.propose("stimulation", bindings, refresh_slots=[], settings=h.profiles.default_module_settings("stimulation"))
     h.profiles.repository.save_module(selected, expected_revision=current.revision)
-    h.previous = h.profiles.repository.get_activation_set()
+    h.previous = h.profiles.selected_configuration()
     h.engine.applied_snapshot = {**h.profiles.materialize(h.previous), "CONFIG.generation": h.engine.generation}
     h.commands.processing_revision = h.previous.modules["processing"].revision
     h.commands.acquisition_revision = h.previous.modules["acquisition"].revision
@@ -631,7 +631,7 @@ schema_version=1
     manager = ActuationProcessManager()
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 plugin_preparer=prepare_runtime_plugins,
-                                actuation_process_manager=manager, snapshot_provider=lambda: profiles.materialize(profiles.repository.get_activation_set()))
+                                actuation_process_manager=manager, snapshot_provider=lambda: profiles.materialize(profiles.selected_configuration()))
     await engine.startup()
     container = assemble(engine, admission=engine.admission,
                          actuation_process_manager=manager)
@@ -776,7 +776,7 @@ async def test_output_address_change_is_local_and_failed_bind_restores_previous_
         settings = {**selected.settings, f"{role.upper()}.server_port": unused_tcp_port_factory()}
         h.profiles.repository.save_module(ModuleActivation(role, settings, selected.bindings),
                                          expected_revision=selected.revision)
-    h.previous = h.profiles.repository.get_activation_set()
+    h.previous = h.profiles.selected_configuration()
     h.engine.applied_snapshot = {**h.profiles.materialize(h.previous), "CONFIG.generation": h.engine.generation}
     original = h.engine.applied_snapshot
     bus = FakeBus()

@@ -1,5 +1,6 @@
 """Manage Server settings, module configuration and independent plugin profiles."""
 from contextlib import nullcontext
+from copy import deepcopy
 from dataclasses import replace
 from threading import RLock
 from uuid import uuid4
@@ -19,7 +20,6 @@ from omnibci.application.configuration.models import (
 from omnibci.application.plugin_management.packages import PackageReference, PluginPackageConflictError, PluginPackageError
 from omnibci.application.plugin_management.schema import PluginSchemaError, validate_parameters
 from omnibci.application.plugin_management.catalog import PluginConfiguration, PluginConfigurationCatalog
-from omnibci.application.processing_source import materialize_processing_binding
 from omnibci.domain.channel_mapping import ProcessingInput
 
 
@@ -58,7 +58,7 @@ class ConfigurationService:
     def get_plugin_configuration(self, kind: str, selection: PluginSelection) -> PluginConfiguration:
         return self.catalog.get(kind, selection)
 
-    def selected_configuration(self, modules) -> ActivationSet:
+    def selected_configuration(self, modules=MODULES) -> ActivationSet:
         """Read requested modules and shared Engine settings without touching other modules."""
         modules = tuple(modules)
         if set(modules) - set(MODULES):
@@ -211,7 +211,7 @@ class ConfigurationService:
 
     def default_module_settings(self, module: str) -> dict:
         """Initialize an absent module from its declared defaults without storage I/O."""
-        return ModuleActivation(module, MODULE_SETTING_DEFAULTS[module], ()).settings
+        return deepcopy(MODULE_SETTING_DEFAULTS[module])
 
     def propose(self, module: str, bindings: list[dict], *, settings: dict,
                 refresh_slots: list[str] | None = None) -> ModuleActivation:
@@ -274,19 +274,27 @@ class ConfigurationService:
                 configuration_version=profile.configuration_version, profile_revision=profile.revision,
                 processing_input=profile.processing_input,
             ))
-        candidate = ModuleActivation(module, settings, tuple(selected))
-        normalized = {key: float(value) for key, value in candidate.settings.items()
-                      if key in {"ALGORITHM.baseline_duration", "ACTUATION.watchdog_timeout_s",
-                                 "ACTUATION.max_command_age_s"} and type(value) is int}
-        return (ModuleActivation(module, {**candidate.settings, **normalized}, candidate.bindings)
-                if normalized else candidate)
+        normalized = (
+            {
+                key: float(value)
+                if key in {"ALGORITHM.baseline_duration", "ACTUATION.watchdog_timeout_s",
+                           "ACTUATION.max_command_age_s"} and type(value) is int
+                else value
+                for key, value in settings.items()
+            }
+            if isinstance(settings, dict)
+            else settings
+        )
+        return ModuleActivation(module, normalized, tuple(selected))
 
     def propose_engine(self, settings: dict) -> EngineSettings:
         """Validate submitted Engine settings without consulting server startup values."""
-        candidate = EngineSettings(settings)
-        timeout = candidate.settings.get("NEUROENGINE.startup_timeout_s")
-        return (EngineSettings({**candidate.settings, "NEUROENGINE.startup_timeout_s": float(timeout)})
-                if type(timeout) is int else candidate)
+        normalized = (
+            {**settings, "NEUROENGINE.startup_timeout_s": float(settings["NEUROENGINE.startup_timeout_s"])}
+            if isinstance(settings, dict) and type(settings.get("NEUROENGINE.startup_timeout_s")) is int
+            else settings
+        )
+        return EngineSettings(normalized)
 
     def validate_module(self, candidate: ModuleActivation, *, active_kinds: set[str] | None = None) -> None:
         """Validate pinned plugin values; completeness belongs to module startup."""
@@ -308,7 +316,7 @@ class ConfigurationService:
         result = activation_set.settings()
         bindings = []
         for binding in activation_set.bindings():
-            bindings.append(materialize_processing_binding(binding))
+            bindings.append(binding.to_dict())
             if binding.kind == "acquisition":
                 result.update({f"ACQUISITION.{key}": value for key, value in binding.parameters.items()})
         result["CONFIG.module_revisions"] = {

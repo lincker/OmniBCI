@@ -50,11 +50,6 @@ class RuntimeAdmission:
         if not recovery and self.requires_recovery(scopes):
             raise ProfileRevisionConflict("Runtime module requires recovery; stop it before resuming commands")
 
-    @property
-    def _active(self):
-        with self._lock:
-            return sum(kind == "command" for _, kind in self._owners.values())
-
     @contextmanager
     def command(self, scopes=None, *, recovery=False):
         with self._lock:

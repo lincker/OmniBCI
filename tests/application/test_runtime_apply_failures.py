@@ -247,7 +247,7 @@ async def test_idle_owned_resources_reject_review_or_resolve_before_submission(h
         h.runtime.submit(plan.plan_id, str(uuid4()))
 
     assert all(operation is None for operation in h.runtime.status()["operations"].values())
-    assert h.profiles.repository.get_activation_set() == h.previous
+    assert h.profiles.selected_configuration() == h.previous
     assert h.log == []
     assert h.engine.starts == []
 
@@ -266,7 +266,7 @@ async def test_idle_selection_rechecks_unreleased_resources_before_persistence(h
     with pytest.raises(ProfileRevisionConflict, match="still owns resources"):
         await h.runtime.executor.execute(stored, lambda stage: None, operation_id=str(uuid4()))
 
-    assert h.profiles.repository.get_activation_set() == h.previous
+    assert h.profiles.selected_configuration() == h.previous
     assert h.log == []
     assert h.engine.starts == []
 
@@ -377,7 +377,7 @@ async def test_inactive_selection_acknowledgement_failure_restores_or_quarantine
     operation = await apply(h)
     assert operation["status"] == ("recovery_required" if restoration_fails else "failed")
     assert operation["rolled_back"] is not restoration_fails
-    assert h.profiles.repository.get_activation_set() == h.previous
+    assert h.profiles.selected_configuration() == h.previous
     assert h.profiles.repository.list_module_history("acquisition") == []
     assert not h.engine.is_module_running("acquisition")
     assert h.log == []
@@ -406,6 +406,22 @@ async def test_acquisition_start_failure_rolls_back_without_recreating_active_ou
     assert h.profiles.repository.get_module(h.module).revision == h.previous.modules[h.module].revision
     assert not any(item[0] in {"SettleActuation", "PauseStimulation", "stop_graph"} for item in h.log)
     assert not h.engine.admission.recovery_required
+
+
+@pytest.mark.asyncio
+async def test_failed_artifact_preparation_preserves_the_running_source(harness, monkeypatch):
+    h = harness()
+    before = deepcopy(h.engine.applied_snapshot)
+
+    def reject(snapshot, modules):
+        raise RuntimeError("artifact integrity failed")
+
+    monkeypatch.setattr(h.engine, "prepare_plugins", reject, raising=False)
+    result = await apply(h)
+    assert result["status"] == "failed" and "artifact integrity failed" in result["error"]
+    assert h.engine.applied_snapshot == before
+    assert not any(item[0] in {"stop_module", "stop_graph"} for item in h.log)
+    assert not h.engine.admission.recovery_status
 
 
 @pytest.mark.asyncio
@@ -520,3 +536,19 @@ async def test_acquisition_persistence_failure_rolls_back_without_settling_outpu
     assert h.acquisition.starts == [(h.previous.modules[h.module].revision, 100)]
     assert not any(item[0] in {"SettleActuation", "PauseStimulation", "stop_graph"} for item in h.log)
     assert not h.engine.admission.recovery_required
+
+
+@pytest.mark.asyncio
+async def test_failed_artifact_preparation_preserves_the_running_source(harness, monkeypatch):
+    h = harness()
+    before = deepcopy(h.engine.applied_snapshot)
+
+    def reject(snapshot, modules):
+        raise RuntimeError("artifact integrity failed")
+
+    monkeypatch.setattr(h.engine, "prepare_plugins", reject, raising=False)
+    result = await apply(h)
+    assert result["status"] == "failed" and "artifact integrity failed" in result["error"]
+    assert h.engine.applied_snapshot == before
+    assert not any(item[0] in {"stop_module", "stop_graph"} for item in h.log)
+    assert not h.engine.admission.recovery_status

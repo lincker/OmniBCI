@@ -53,3 +53,18 @@ def test_repository_uses_override_and_explicit_root_precedence(tmp_path, monkeyp
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", "invalid-relative-override")
     assert TomlConfigurationRepository(explicit).root == explicit
     assert list(tmp_path.iterdir()) == []
+
+
+def test_resolve_config_path_converts_portable_relative_path(tmp_path: Path):
+    resolved = config_paths.resolve_config_path(
+        "fixtures/session/train.cnt",
+        base_dir=tmp_path,
+    )
+
+    assert resolved == (tmp_path / "fixtures" / "session" / "train.cnt").resolve()
+
+
+def test_resolve_config_path_preserves_absolute_path(tmp_path: Path):
+    absolute = tmp_path / "train.cnt"
+
+    assert config_paths.resolve_config_path(absolute) == absolute.resolve()

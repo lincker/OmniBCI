@@ -1,8 +1,8 @@
 """Plugin-owned requirements for the final ordered decoder input channels."""
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from omnibci.domain.signal_info import ChannelDescriptor
+from omnibci.domain.signal_info import ChannelDescriptor, record
 
 
 def _names(value: object, field: str) -> tuple[str, ...]:
@@ -43,21 +43,7 @@ class DecoderChannelRequirements:
 
     @classmethod
     def from_dict(cls, value: dict) -> "DecoderChannelRequirements":
-        if not isinstance(value, Mapping):
-            raise ValueError("channel_requirements must be an object")
-        unknown = set(value) - set(cls.__dataclass_fields__)
-        if unknown:
-            raise ValueError(f"Unknown channel_requirements fields: {', '.join(sorted(map(str, unknown)))}")
-        return cls(**value)
-
-    def to_dict(self) -> dict:
-        return {
-            "description": self.description,
-            "signal_type": self.signal_type,
-            "min_count": self.min_count,
-            "required_names": list(self.required_names),
-            "default_names": list(self.default_names),
-        }
+        return cls(**record(value, "channel_requirements", set(cls.__dataclass_fields__)))
 
     def validate_channels(self, channels: Sequence[ChannelDescriptor]) -> None:
         """Validate mapped outputs; the acquisition trigger row is not an output."""

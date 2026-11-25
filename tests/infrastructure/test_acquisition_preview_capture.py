@@ -78,16 +78,12 @@ def test_deadline_expires_without_observing_any_chunk_and_result_is_retained():
     assert producer.snapshot()["capture_id"] == "capture"
 
 
-def test_a_second_start_is_rejected_and_stale_stop_cannot_end_current_capture():
+def test_a_second_start_is_rejected_until_current_capture_finishes():
     producer, _ = capture()
     with pytest.raises(ValueError, match="active"):
         producer.start("other", PreviewSelection(), IDENTITY)
-    with pytest.raises(ValueError, match="capture"):
-        producer.stop("other")
     assert producer.snapshot()["status"] == "capturing"
-    producer.stop("capture")
-    producer.stop("capture")
-    assert producer.snapshot()["reason"] == "user_stop"
+    producer.finish("source_stopped")
     producer.start("other", PreviewSelection(), IDENTITY)
     assert producer.snapshot()["observed"] == 0
 
@@ -368,8 +364,6 @@ def test_continuous_capture_can_be_replaced_but_finite_capture_cannot():
     assert producer.snapshot()["continuous"] is False
     with pytest.raises(ValueError, match="active"):
         producer.start("automatic", None, IDENTITY, continuous=True)
-    with pytest.raises(ValueError, match="capture"):
-        producer.stop("selected")
     producer.offer(chunk(), IDENTITY)
     assert producer.snapshot()["reason"] == "chunk_limit"
 

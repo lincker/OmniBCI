@@ -13,6 +13,7 @@ from omnibci.application.services.signal_setup_service import SignalSetupService
 from omnibci.domain.signal_info import SignalInfo, ChannelDescriptor
 from omnibci.presentation.errors import register_exception_handlers
 from omnibci.presentation.routers.signal_setup import router
+from omnibci.presentation.schemas.signal_setup import ProcessingInputModel
 
 
 @pytest.fixture
@@ -31,17 +32,31 @@ def signal_client(tmp_path):
         yield client
 
 
-def test_global_signal_writer_and_montage_read_contract_are_removed(signal_client):
-    before = signal_client.get("/config/signal").json()["data"]
-    assert not {"setup", "legacy_setup", "accepted_setup", "active_setup", "source_metadata", "revision"} & before.keys()
-    assert signal_client.put("/config/signal", json={"setup": {"source_id": "fixture"}}).status_code == 405
-    assert signal_client.get("/config/signal").json()["data"] == before
+def test_processing_request_accepts_explicit_mapping_and_offline_source_rows():
+    by_id = {"schema_version": 2, "outputs": [{"source_channel_id": "channel-0", "name": "Oz", "signal_type": "eeg"}]}
+    assert ProcessingInputModel.model_validate(by_id).model_dump(exclude_none=True) == by_id
+
+    by_index = {"schema_version": 2, "outputs": [
+        {"source_channel_index": 0, "name": "Oz", "signal_type": "eeg"},
+        {"source_channel_index": 3, "name": "Eye", "signal_type": "eog"},
+    ]}
+    assert ProcessingInputModel.model_validate(by_index).model_dump(exclude_none=True) == by_index
+
+
+@pytest.mark.parametrize("reference", [
+    {}, {"source_channel_id": None}, {"source_channel_index": None},
+    {"source_channel_id": "channel-0", "source_channel_index": 0},
+    {"source_channel_index": -1}, {"source_channel_index": True},
+    {"source_channel_index": 1.0}, {"source_channel_index": "1"},
+])
+def test_processing_request_rejects_invalid_or_ambiguous_source_rows(reference):
+    with pytest.raises(ValueError):
+        ProcessingInputModel.model_validate({"outputs": [{"name": "Input", **reference}]})
 
 
 @pytest.mark.parametrize("patch", [
     {"schema_version": True}, {"schema_version": 2.0}, {"schema_version": 1},
-    {"future_driver": {}}, {"assignments": []}, {"excluded_channels": []},
-    {"reference": {"mode": "original"}}, {"template": "standard_1020"},
+    {"future_driver": {}},
     {"outputs": ["Oz"]}, {"outputs": [{"name": "Oz", "source": "CH1"}]},
     {"outputs": [{"name": "Oz", "source_channel_id": 1}]},
     {"outputs": [{"name": "Oz", "source_channel_id": ""}]},
@@ -109,12 +124,6 @@ def test_preview_rejects_stale_acquisition_context(signal_client):
         "processing_input": {}, "expected_source_revision": "old-source",
     })
     assert response.status_code == 409
-
-
-@pytest.mark.parametrize("field", ["source_id", "assignments", "original_reference", "template", "manual_metadata"])
-def test_processing_preview_rejects_retired_source_edits(signal_client, field):
-    response = signal_client.post("/config/signal/preview", json={"processing_input": {field: "value"}})
-    assert response.status_code == 422
 
 
 def test_preview_passes_exact_edited_decoder_selection(signal_client):

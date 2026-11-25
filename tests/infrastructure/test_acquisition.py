@@ -270,7 +270,7 @@ class TestAcquisitionCommandDispatch:
             await a.execute((AcquisitionCommand.connect, None))
             await a.execute((AcquisitionCommand.start_stream, None))
             task = a.fetch_task
-            await a.execute((AcquisitionCommand.stop_stream, None))
+            await a._on_stop_stream()
             await asyncio.sleep(0)  # let the cancellation propagate one loop turn
             assert "stop_stream" in a.data_source.calls
             assert a.data_source.is_connected is True
@@ -285,7 +285,7 @@ class TestAcquisitionCommandDispatch:
             a.fetch_task = asyncio.create_task(asyncio.Event().wait())
             task = a.fetch_task
 
-            await a.execute((AcquisitionCommand.stop_stream, None))
+            await a._on_stop_stream()
 
             assert task.done()
             assert a.fetch_task is None
@@ -460,3 +460,109 @@ class TestStateProjectionEmission:
             source_id="test-source",
         )
         _run(acq._on_connect())   # must not raise despite event_bus=None
+
+
+def _counter_runtime(chunks, sink=None):
+    from queue import Queue
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    source = SimpleNamespace(
+        trigger_mode="events", resume_mode="restart-only",
+        read_chunk=AsyncMock(side_effect=[*chunks, None]),
+        stop_stream=AsyncMock(),
+    )
+    acquisition = AcquisitionRuntime(source, Queue(), sink or SimpleNamespace(put_data=lambda _: None),
+                                     source_id="test")
+    acquisition._connected = acquisition._streaming = True
+    return acquisition
+
+
+@pytest.mark.asyncio
+async def test_stream_counts_reset_but_chunk_sequence_continues():
+    from unittest.mock import AsyncMock
+
+    acq = _counter_runtime([np.zeros((3, 4)), np.zeros((3, 1))])
+    await acq.fetch()
+    assert (acq.stream_chunk_count, acq.stream_sample_count, acq._last_sequence) == (2, 5, 1)
+    acq.data_source.read_chunk = AsyncMock(side_effect=[np.zeros((3, 2)), None])
+    await acq.fetch()
+    assert (acq.stream_chunk_count, acq.stream_sample_count, acq._last_sequence) == (1, 2, 2)
+    fresh = _counter_runtime([])
+    assert (fresh.stream_chunk_count, fresh.stream_sample_count, fresh._last_sequence) == (0, 0, -1)
+
+
+@pytest.mark.asyncio
+async def test_rejected_main_delivery_does_not_increment_counts():
+    from types import SimpleNamespace
+
+    def reject(_):
+        raise RuntimeError("main queue rejected the chunk")
+
+    acq = _counter_runtime([np.zeros((2, 7))], SimpleNamespace(put_data=reject))
+    await acq.fetch()
+    assert (acq.stream_chunk_count, acq.stream_sample_count, acq._last_sequence) == (0, 0, -1)
+    assert "main queue rejected" in acq._fetch_failure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reconnect", [False, True])
+async def test_eof_boundary_separates_reads_without_waiting_for_processing(reconnect, monkeypatch):
+    from pathlib import Path
+    from queue import Queue
+    from threading import Event as ThreadEvent
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from omnibci.application.events import ProcessingInputStart, SignalPreparationReceipt
+    from omnibci.infrastructure.ipc.data_manager import DataManager
+    from omnibci.infrastructure.plugins.acquisition.file.reader import FileReader
+    from tests.infrastructure.test_stream_drain import _Decoder, _processor
+
+    raw = np.array([[10, 11, 12, 13], [1, 0, 0, 0]])
+    source = FileReader(parameters={"data_file_path": "test.cnt", "file_reader_chunk_size": 2}, resource_root=Path(__file__).parent)
+
+    async def read_chunk(*, start, end):
+        return raw[:, start:end] if start < raw.shape[1] else None
+
+    async def connect():
+        source.reader_adapter = SimpleNamespace(read_chunk=read_chunk, close=AsyncMock())
+
+    monkeypatch.setattr(source, "connect", connect)
+    gate = ThreadEvent()
+    gate.set()
+    data = DataManager(Queue(), gate)
+    events = []
+    bus = SimpleNamespace(put_event=events.append)
+    acquisition = AcquisitionRuntime(source, Queue(), data, bus, source_id="file_reader",
+                                     generation="generation-1",
+                                     acquisition_revision="revision-1", engine_revision="engine",
+                                     processing_active=gate)
+    decoder = _Decoder(samples=10)
+    processor = _processor(decoder=decoder, bus=bus, data=data)
+    processor._signal_receipt = acquisition._processing_receipt = SignalPreparationReceipt(
+        "generation-1", "revision-1", "revision-1", "engine", "connection", "a" * 64, "b" * 64, "input-one",
+    )
+    try:
+        await acquisition._on_connect()
+        await acquisition._on_start_stream()
+        await acquisition.fetch_task
+        await processor._current_state.run()
+        assert processor.current_epoch is not None
+        assert not data.empty()
+        if reconnect:
+            await acquisition._on_disconnect()
+            await acquisition._on_connect()
+            data.put_data(ProcessingInputStart("reattach", processor._signal_receipt, acquisition._last_sequence))
+            gate.set()
+        await acquisition._on_start_stream()
+        await acquisition.fetch_task
+        while not data.empty():
+            await processor._current_state.run()
+        assert decoder.calls == 0
+        assert processor.completed_trials == 0
+        assert processor.current_epoch is None
+        records = [event.data for event in events if event.type is EventType.EpochProcessed]
+        assert len(records) == 2
+        assert all(record.status == "interrupted" and record.reason == "stream_stop" for record in records)
+    finally:
+        await acquisition.shutdown()

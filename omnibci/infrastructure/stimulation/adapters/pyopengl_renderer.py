@@ -113,9 +113,7 @@ class PyOpenGLRenderer:
         if self._started or self._closed:
             raise RuntimeError("Renderer already started or closed")
         self._started = True
-        self._width  = width
-        self._height = height
-        self._win    = UIWindow(title, width, height)
+        self._win = UIWindow(title, width, height)
 
         self._setup_programs()
         self._setup_shared_ebo()

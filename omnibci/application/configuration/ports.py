@@ -2,7 +2,7 @@
 from typing import Protocol
 
 from omnibci.application.configuration.models import (
-    ActivationSet, EngineSettings, ModuleActivation, ModuleActivationRevision,
+    EngineSettings, ModuleActivation, ModuleActivationRevision,
     PluginProfile, ProfileRevision,
 )
 from omnibci.application.plugin_management.identity import PluginSelection
@@ -34,4 +34,3 @@ class ConfigurationRepository(Protocol):
     def get_engine(self) -> EngineSettings | None: ...
     def save_engine(self, settings: EngineSettings, expected_revision: str | None) -> EngineSettings: ...
     def remove_engine(self, *, expected_revision: str) -> None: ...
-    def get_activation_set(self) -> ActivationSet: ...

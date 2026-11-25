@@ -144,3 +144,14 @@ def test_epoch_history_resets_on_new_generation_and_rejects_late_records():
 def test_epoch_page_rejects_invalid_bounds(arguments):
     with pytest.raises(ValueError, match="epoch page"):
         ResultsService(lambda: None).epochs(**arguments)
+
+
+def test_results_use_only_a_generation_provider_and_reset_on_change():
+    from unittest.mock import Mock
+
+    generation = Mock(return_value="first")
+    service = ResultsService(generation)
+    assert service.snapshot() == {"generation": "first", "trials": []}
+    generation.return_value = "second"
+    assert service.epochs()["generation"] == "second"
+    assert generation.call_count == 2

@@ -357,7 +357,6 @@ class PluginPackageInstaller:
 
     @staticmethod
     def _check_entrypoint(descriptor: PluginDescriptor) -> None:
-        assert descriptor.entrypoint is not None
         try:
             resolve_entrypoint_path(descriptor.location, descriptor.entrypoint.module)
         except ValueError as exc:

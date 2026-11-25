@@ -160,9 +160,8 @@ class TestEpochBuffering:
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=8), start_idx=2, event_id=5)
         # data has 3 channels, sliced from index 2 → 6 samples remain
-        epoch = mgr.build_epoch()
-        assert epoch.data.shape == (3, 6)
-        assert epoch.event_id == 5
+        assert mgr._epoch_data.shape == (3, 6)
+        assert mgr._event_id == 5
 
     def test_initialize_rejects_negative_start_index(self):
         mgr = _manager()
@@ -173,65 +172,19 @@ class TestEpochBuffering:
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=4), start_idx=0, event_id=1)
         mgr.append_chunk(_chunk(channels=3, samples=6))
-        assert mgr.build_epoch().data.shape == (3, 10)
+        assert mgr._epoch_data.shape == (3, 10)
 
     def test_append_until_index_truncates(self):
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=4), start_idx=0, event_id=1)
         mgr.append_until_index(_chunk(channels=3, samples=6), index=2)
-        assert mgr.build_epoch().data.shape == (3, 6)
+        assert mgr._epoch_data.shape == (3, 6)
 
     def test_append_until_negative_index_rejected(self):
         mgr = _manager()
         mgr.initialize_epoch(_chunk(channels=3, samples=4), start_idx=0, event_id=1)
         with pytest.raises(ValueError):
             mgr.append_until_index(_chunk(), index=-1)
-
-
-# ---------------------------------------------------------------------------
-# Epoch value-object construction
-# ---------------------------------------------------------------------------
-
-class TestBuildEpoch:
-    def test_completed_epoch_owns_pretrigger_and_window_across_growth_and_reinitialization(self):
-        mgr = _manager()
-        pre_trigger = np.full((2, 2), -1.0)
-        first = _data_chunk(np.arange(8, dtype=np.float64).reshape(2, 4))
-        mgr.initialize_epoch(first, start_idx=1, event_id=7, pre_trigger_data=pre_trigger)
-        mgr.append_chunk(_data_chunk(np.full((2, 2), 8.0)))
-        retained = mgr._epoch_data
-        before = retained.copy()
-        epoch = mgr.build_epoch()
-        expected = np.concatenate((pre_trigger, before), axis=1)
-
-        mgr.append_chunk(_data_chunk(np.full((2, 20), 9.0)))
-        mgr.initialize_epoch(_chunk(channels=3, samples=3), start_idx=0, event_id=8)
-        mgr.append_chunk(_chunk(channels=3, samples=2))
-        pre_trigger[:] = 100
-
-        np.testing.assert_array_equal(retained, before)
-        np.testing.assert_array_equal(epoch.data, expected)
-        assert epoch.trigger_offset == 2
-        assert not epoch.data.flags.writeable
-        assert not np.shares_memory(epoch.data, retained)
-        assert not np.shares_memory(epoch.data, pre_trigger)
-        assert mgr.build_epoch().window.shape == (3, 5)
-
-    def test_build_requires_active_epoch(self):
-        with pytest.raises(RuntimeError):
-            _manager().build_epoch()
-
-    def test_built_epoch_is_immutable(self):
-        mgr = _manager()
-        mgr.initialize_epoch(_chunk(channels=2, samples=5), start_idx=0, event_id=1)
-        epoch = mgr.build_epoch()
-        with pytest.raises(ValueError):
-            epoch.data[0, 0] = 9.0  # read-only array
-
-    def test_built_epoch_carries_sample_rate(self):
-        mgr = _manager(sample_rate=250)
-        mgr.initialize_epoch(_chunk(channels=2, samples=5), start_idx=0, event_id=1)
-        assert mgr.build_epoch().sample_rate == 250
 
 
 # ---------------------------------------------------------------------------
@@ -439,3 +392,164 @@ def test_classic40_prediction_matches_numpy_append_reference(algorithm):
     assert complete
     assert classification.target_id == expected.target_id
     assert classification.confidence == expected.confidence
+
+
+from omnibci.infrastructure.signal_processing.epoch.pretrigger_buffer import PreTriggerBuffer
+from tests.processing_helpers import make_processor
+
+
+def _window_chunk(window: np.ndarray) -> SignalChunk:
+    trigger_row = np.zeros((1, window.shape[1]))
+    raw = np.concatenate([window, trigger_row], axis=0)
+    return SignalChunk(timestamp=0, sequence_id=0, raw_data=raw)
+
+
+class _ConstDecoder(Decoder):
+    def setup(self):
+        pass
+
+    def teardown(self):
+        pass
+
+    def should_decode(self, window):
+        return window.shape[1] > 0
+
+    def decode(self, window, *, latest_raw_segment):
+        return Prediction(target_id=window.shape[1])
+
+    def begin_epoch(self):
+        pass
+
+
+class _CaptureDecoder(Decoder):
+    def setup(self):
+        pass
+
+    def teardown(self):
+        pass
+
+    def __init__(self):
+        super().__init__()
+        self.seen = None
+
+    def should_decode(self, window):
+        return window.shape[1] > 0
+
+    def decode(self, window, *, latest_raw_segment):
+        self.seen = np.asarray(window).copy()
+        return Prediction(target_id=0)
+
+    def begin_epoch(self):
+        pass
+
+
+class TestPreTriggerBuffer:
+    def test_keeps_only_trailing_capacity(self):
+        buf = PreTriggerBuffer(capacity=3)
+        buf.push(np.arange(2 * 5).reshape(2, 5).astype(float))
+        pre_trigger_data = buf.take_pre_trigger_data(extra=np.zeros((2, 0)))
+        assert pre_trigger_data.shape == (2, 3)
+        np.testing.assert_array_equal(pre_trigger_data, np.arange(2 * 5).reshape(2, 5)[:, -3:])
+
+    def test_take_pre_trigger_data_combines_buffer_and_extra(self):
+        buf = PreTriggerBuffer(capacity=4)
+        buf.push(np.ones((2, 2)))
+        extra = np.full((2, 1), 9.0)
+        pre_trigger_data = buf.take_pre_trigger_data(extra=extra)
+        assert pre_trigger_data.shape == (2, 3)
+        np.testing.assert_array_equal(pre_trigger_data[:, -1:], extra)
+
+    def test_capacity_zero_disables(self):
+        buf = PreTriggerBuffer(capacity=0)
+        buf.push(np.ones((2, 10)))
+        pre_trigger_data = buf.take_pre_trigger_data(extra=np.ones((2, 3)))
+        assert pre_trigger_data.shape == (2, 0)
+
+
+class TestEpochProcessorPreTriggerData:
+    def test_decoder_sees_window_only_pre_trigger_data_excluded(self):
+        ep = EpochProcessor(decoder=_ConstDecoder(), sample_rate=1000)
+        window = np.ones((2, 7))
+        pre_trigger_data = np.zeros((2, 3))
+        ep.initialize_epoch(_window_chunk(window), start_idx=0, event_id=5, pre_trigger_data=pre_trigger_data)
+        ok, clf = ep.force_decode_at_boundary()
+        assert ok is True
+        assert clf.target_id == 7
+
+    def test_pre_trigger_data_stored_separately_from_window(self):
+        ep = EpochProcessor(decoder=_ConstDecoder(), sample_rate=1000)
+        window = np.ones((2, 7))
+        pre_trigger_data = np.zeros((2, 3))
+        ep.initialize_epoch(_window_chunk(window), start_idx=0, event_id=5, pre_trigger_data=pre_trigger_data)
+        assert ep.pre_trigger_samples == 3
+        assert ep.sample_count == 7
+        np.testing.assert_array_equal(ep._pre_trigger_data, pre_trigger_data)
+        np.testing.assert_array_equal(ep._epoch_data, window)
+
+    def test_no_pre_trigger_data_leaves_window_unchanged(self):
+        ep = EpochProcessor(decoder=_ConstDecoder(), sample_rate=1000)
+        window = np.ones((2, 4))
+        ep.initialize_epoch(_window_chunk(window), start_idx=0, event_id=5)
+        assert ep.pre_trigger_samples == 0
+        assert ep.sample_count == 4
+
+
+class TestSignalProcessorPreTriggerSamples:
+    def _processor(self, baseline_duration, sample_rate=1000):
+        return make_processor(
+            detector=MagicMock(), decoder=MagicMock(), command_queue=MagicMock(),
+            data_manager=MagicMock(), event_bus=MagicMock(),
+            sample_rate=sample_rate, baseline_duration=baseline_duration,
+        )
+
+    def test_seconds_converted_to_samples(self):
+        proc = self._processor(baseline_duration=0.2, sample_rate=1000)
+        assert proc.pre_trigger_samples == 200
+        assert proc.pretrigger.capacity == 200
+
+    def test_zero_duration_disables(self):
+        proc = self._processor(baseline_duration=0.0)
+        assert proc.pre_trigger_samples == 0
+        assert proc.pretrigger.capacity == 0
+
+
+class TestBaselineCorrectionFilter:
+    def _filter(self):
+        from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import BaselineCorrection
+        return BaselineCorrection(resource_root=Path(__file__).parent, parameters={}, input_signal=prepared_signal(250))
+
+    def test_subtracts_per_channel_baseline_mean(self):
+        flt = self._filter()
+        baseline = np.array([[1.0, 3.0], [10.0, 20.0]])
+        window = np.array([[5.0, 7.0], [30.0, 40.0]])
+        out = flt.apply(window, pre_trigger_data=baseline)
+        np.testing.assert_array_equal(out, np.array([[3.0, 5.0], [15.0, 25.0]]))
+
+    def test_noop_when_baseline_none(self):
+        flt = self._filter()
+        window = np.ones((2, 4))
+        out = flt.apply(window, pre_trigger_data=None)
+        np.testing.assert_array_equal(out, window)
+
+    def test_noop_when_baseline_empty(self):
+        flt = self._filter()
+        window = np.ones((2, 4))
+        out = flt.apply(window, pre_trigger_data=np.zeros((2, 0)))
+        np.testing.assert_array_equal(out, window)
+
+
+class TestBaselineCorrectionInPipeline:
+    def test_decoder_receives_corrected_window(self):
+        dec = _CaptureDecoder()
+        flt = self._make_filter()
+        ep = EpochProcessor(decoder=dec, sample_rate=1000, filters=[flt])
+        window = np.full((2, 6), 5.0)
+        pre_trigger_data = np.full((2, 3), 2.0)
+        ep.initialize_epoch(_window_chunk(window), start_idx=0, event_id=1, pre_trigger_data=pre_trigger_data)
+        ep.force_decode_at_boundary()
+        np.testing.assert_array_equal(dec.seen, np.full((2, 6), 3.0))
+
+    @staticmethod
+    def _make_filter():
+        from omnibci.infrastructure.plugins.algorithms.filters.baseline_correction import BaselineCorrection
+        return BaselineCorrection(resource_root=Path(__file__).parent, parameters={}, input_signal=prepared_signal(250))

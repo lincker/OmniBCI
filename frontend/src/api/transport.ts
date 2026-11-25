@@ -46,6 +46,43 @@ export async function requestApi<T>(path: string, options: RequestInit,
   }
 }
 
+export interface ApiEnvelope<T> {
+  success: boolean;
+  message: string;
+  data: T | null;
+}
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string,
+    public readonly detail?: unknown,
+  ) {
+    super(message);
+  }
+}
+
+export const errorMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
 export function requestJson(path: string, options: RequestInit = {}) {
   return requestApi(path, options, async (response) => ({ response, body: await response.json().catch(() => null) }));
+}
+
+export async function requestEnvelope<T>(path: string, method = "GET", data?: unknown): Promise<T | null> {
+  const upload = data instanceof File;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (data !== undefined || method !== "GET") {
+    headers["Content-Type"] = upload ? "application/zip" : "application/json";
+  }
+  const { response, body } = await requestJson(path, {
+    method,
+    headers,
+    body: data === undefined ? undefined : upload ? data : JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, body?.code ?? "UNKNOWN", body?.message ?? response.statusText, body?.detail);
+  }
+  return (body as ApiEnvelope<T>).data;
 }

@@ -17,8 +17,7 @@ export interface DesktopApi {
   onConnectionChanged(listener: (state: ConnectionInfo) => void): () => void;
   subscribeResults(connectionId: string, listener: (event: ResultsEvent) => void): () => void;
   chooseRecordingFile(): Promise<string | null>;
-  setEditorState(state: { dirty: boolean; busy: boolean }): void;
+  setEditorState(state: { dirty: boolean }): void;
   setLanguage(language: "en" | "zh"): void;
   openLogs(): Promise<void>;
-  requestQuit(): Promise<void>;
 }

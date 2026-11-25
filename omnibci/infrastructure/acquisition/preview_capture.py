@@ -48,13 +48,6 @@ class PreviewCapture:
         }
         return self.snapshot()
 
-    def stop(self, capture_id: str) -> dict:
-        if not capture_id or capture_id != self._state["capture_id"]:
-            raise ValueError("Preview capture does not match the requested capture_id")
-        self.expire()
-        self.finish("user_stop")
-        return self.snapshot()
-
     def finish(self, reason: str) -> None:
         if self._state["status"] == "capturing":
             self._state.update(status="finished", reason=reason)

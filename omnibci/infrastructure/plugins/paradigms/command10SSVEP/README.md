@@ -2,7 +2,7 @@
 
 This standalone package provides one `paradigm` contribution. It presents ten
 SSVEP targets using the host's native renderer at a fixed 60 Hz refresh rate.
-It uses Plugin API v1 and manifest version 2.
+It uses Plugin API v1 and manifest version 1.
 
 Selection: `OmniBCI.command10SSVEP` / `default` / `0.1.0`.
 Constructor parameters: `{}`. A compatible decoder and device-specific Effector

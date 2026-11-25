@@ -386,13 +386,13 @@ async def test_bound_channels_enter_epoch_before_ordered_filters_and_decoder(mon
         await processor._current_state.run()
 
     assert calls == ["baseline", "scale", "decoder"]
-    epoch = processor.current_epoch.build_epoch()
-    np.testing.assert_array_equal(epoch.pre_trigger_data, [[31, 32], [11, 12]])
-    np.testing.assert_array_equal(epoch.window, [[33, 34, 35], [13, 14, 15]])
+    epoch = processor.current_epoch
+    np.testing.assert_array_equal(epoch._pre_trigger_data, [[31, 32], [11, 12]])
+    np.testing.assert_array_equal(epoch._epoch_data, [[33, 34, 35], [13, 14, 15]])
     np.testing.assert_array_equal(decoder.window, [[3, 5, 7], [3, 5, 7]])
     np.testing.assert_array_equal(decoder.latest_raw_segment, [[34, 35], [14, 15]])
-    assert epoch.event_id == 1
-    assert epoch.channel_count == 2
+    assert epoch._event_id == 1
+    assert epoch._epoch_data.shape[0] == 2
     assert epoch.sample_rate == 250
     for observed, source in zip(detector.seen, chunks, strict=True):
         np.testing.assert_array_equal(observed[-1], source.triggers)

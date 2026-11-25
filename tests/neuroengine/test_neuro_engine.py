@@ -64,8 +64,6 @@ class _BoundedCommandQueue(queue.Queue):
 _COMMAND_ROUTES = [
     (EventType.StartAcquisitionPreview, "acquisition_command_queue", AcquisitionCommand.start_preview,
      {"generation": "run", "capture_id": "capture", "selection": {}}),
-    (EventType.StopAcquisitionPreview, "acquisition_command_queue", AcquisitionCommand.stop_preview,
-     {"generation": "run", "capture_id": "capture"}),
     (EventType.GetAcquisitionPreview, "acquisition_command_queue", AcquisitionCommand.get_preview,
      {"generation": "run"}),
     (EventType.GetSourceMetadata, "acquisition_command_queue", AcquisitionCommand.get_metadata,
@@ -104,12 +102,6 @@ _COMMAND_ROUTES = [
         EventType.StartStream,
         "acquisition_command_queue",
         AcquisitionCommand.start_stream,
-        None,
-    ),
-    (
-        EventType.StopStream,
-        "acquisition_command_queue",
-        AcquisitionCommand.stop_stream,
         None,
     ),
     (
@@ -425,3 +417,226 @@ class TestServeLifecycle:
         assert elapsed < 0.5
         eng.event_bus.stop.assert_awaited_once()
         eng.peer_gateway.stop.assert_awaited_once()
+
+
+def _ack(command="StartStimTrial", status="ok", trial_params=None, message=None) -> Event:
+    return Event(EventType.StimulationAck,
+                 {"command": command, "status": status,
+                  "trial_params": {"event_id": 3} if trial_params is None else trial_params, "message": message})
+
+
+class TestStimulationFeedbackHandler:
+    def test_ok_ack_counted(self):
+        from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
+
+        h = StimulationFeedbackHandler()
+        h.on_ack(_ack(status="ok"))
+        assert h.ok_count == 1 and h.error_count == 0
+        assert h.last_ack["trial_params"] == {"event_id": 3}
+
+    def test_error_ack_counted(self):
+        from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
+
+        h = StimulationFeedbackHandler()
+        h.on_ack(_ack(status="error", message="renderer crashed"))
+        assert h.error_count == 1 and h.ok_count == 0
+        assert h.last_ack["message"] == "renderer crashed"
+
+    def test_mixed_sequence(self):
+        from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
+
+        h = StimulationFeedbackHandler()
+        for s in ("ok", "ok", "error", "ok"):
+            h.on_ack(_ack(status=s))
+        assert (h.ok_count, h.error_count) == (3, 1)
+
+    def test_missing_status_defaults_ok(self):
+        from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
+
+        h = StimulationFeedbackHandler()
+        h.on_ack(Event(EventType.StimulationAck, {"command": "X"}))
+        assert h.ok_count == 1
+
+    def test_non_dict_payload_tolerated(self):
+        from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
+
+        h = StimulationFeedbackHandler()
+        h.on_ack(Event(EventType.StimulationAck, None))
+        assert h.ok_count == 1
+        assert h.last_ack == {}
+
+
+class TestEngineStimulationFeedback:
+    def test_handler_instance_present(self):
+        from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
+
+        eng = _make_engine()
+        assert isinstance(eng.stim_feedback, StimulationFeedbackHandler)
+
+
+class _TranslatorBus:
+    def __init__(self):
+        self.put = []
+
+    def put_event(self, event):
+        self.put.append(event)
+
+
+class TestActuationCommandTranslator:
+    def test_trial_outcome_payload_emits_command(self):
+        from omnibci.application.events import TrialOutcome
+        from omnibci.domain.classification import Classification
+        from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
+
+        bus = _TranslatorBus()
+        tr = ActuationCommandTranslator(bus)
+        outcome = TrialOutcome(
+            generation="run-1",
+            trial_number=3,
+            classification=Classification(target_id=5, event_id=2, confidence=0.9),
+        )
+        tr.on_trial_completed(Event(EventType.TrialCompleted, outcome))
+        assert len(bus.put) == 1
+        cmd = bus.put[0]
+        assert cmd.type == EventType.ActuationCommand
+        assert cmd.data.parameters["target_id"] == 5
+        assert cmd.data.parameters["event_id"] == 2
+        assert cmd.data.parameters["confidence"] == 0.9
+
+    def test_bare_classification_payload_is_rejected(self):
+        from omnibci.domain.classification import Classification
+        from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
+
+        bus = _TranslatorBus()
+        tr = ActuationCommandTranslator(bus)
+        tr.on_trial_completed(Event(EventType.TrialCompleted, Classification(5, 2, 0.9)))
+        assert bus.put == []
+
+    def test_payload_without_target_id_emits_nothing(self):
+        from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
+
+        bus = _TranslatorBus()
+        tr = ActuationCommandTranslator(bus)
+        tr.on_trial_completed(Event(EventType.TrialCompleted, object()))
+        assert bus.put == []
+
+    def test_commands_carry_unique_identity_and_issued_at(self):
+        from omnibci.application.events import TrialOutcome
+        from omnibci.domain.classification import Classification
+        from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
+
+        bus = _TranslatorBus()
+        tr = ActuationCommandTranslator(bus)
+        before = time.time()
+        for tid in (1, 2, 3):
+            tr.on_trial_completed(Event(EventType.TrialCompleted,
+                TrialOutcome("run", tid, Classification(tid, 1, 0.9))))
+        after = time.time()
+        assert len({event.data.command_id for event in bus.put}) == 3
+        for event in bus.put:
+            assert before <= event.data.issued_at <= after
+
+    def test_skipped_payload_does_not_emit_an_intent(self):
+        from omnibci.application.events import TrialOutcome
+        from omnibci.domain.classification import Classification
+        from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
+
+        bus = _TranslatorBus()
+        tr = ActuationCommandTranslator(bus)
+        tr.on_trial_completed(Event(EventType.TrialCompleted, object()))
+        tr.on_trial_completed(Event(EventType.TrialCompleted, TrialOutcome("run", 1, Classification(1, 1))))
+        assert len(bus.put) == 1
+        assert bus.put[0].data.origin["trial_number"] == 1
+
+
+class TestActuationFeedbackHandler:
+    def test_ack_state_fault_accounting(self):
+        from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+
+        h = ActuationFeedbackHandler()
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "1"}))
+        h.on_feedback(Event(EventType.ActuationState, {"pos": 1.0}))
+        h.on_feedback(Event(EventType.ActuationFault, {"code": "ESTOP"}))
+        assert h.ack_count == 1
+        assert h.fault_count == 1
+        assert h.last_state == {"pos": 1.0}
+        assert h.last_fault == {"code": "ESTOP"}
+
+    def test_acks_bucketed_by_status(self):
+        from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+
+        h = ActuationFeedbackHandler()
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "1"}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "superseded", "command_id": "2"}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "stale", "command_id": "3"}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "4"}))
+        assert h.ack_count == 4
+        assert (h.ok_count, h.superseded_count, h.stale_count) == (2, 1, 1)
+        assert h.last_acked_command_id == "4"
+
+    def test_ack_without_status_and_identity_is_rejected(self):
+        from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+
+        h = ActuationFeedbackHandler()
+        h.on_feedback(Event(EventType.ActuationAck, {"ok": True}))
+        assert h.ack_count == 0 and h.last_acked_command_id is None
+
+    @pytest.mark.parametrize("status", [[], {}, None, True])
+    def test_malformed_ack_status_is_ignored(self, status):
+        from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+
+        handler = ActuationFeedbackHandler()
+        handler.on_feedback(Event(EventType.ActuationAck, {"status": status, "command_id": "1"}))
+        assert handler.ack_count == 0
+
+    def test_last_command_identity_is_retained(self):
+        from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+
+        h = ActuationFeedbackHandler()
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "1"}))
+        h.on_feedback(Event(EventType.ActuationAck, {"status": "ok", "command_id": "5"}))
+        assert h.last_acked_command_id == "5"
+
+
+class TestActuationPeerConfig:
+    def test_routes_and_transport(self):
+        from omnibci.infrastructure.ipc.peer_transport import ListenTransport
+        from omnibci.infrastructure.neuroengine.gateway.peers import ACTUATION, actuation_peer_config
+
+        cfg = actuation_peer_config(host="127.0.0.1", port=8001)
+        assert cfg.name == ACTUATION
+        assert isinstance(cfg.transport, ListenTransport)
+        assert cfg.transport._server.max_clients == 1
+        assert cfg.routes.outbound == frozenset({EventType.ActuationCommand, EventType.SettleActuation,
+                                                EventType.ResumeActuation})
+        assert cfg.routes.inbound == frozenset({
+            EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault,
+            EventType.CommandResult,
+        })
+
+
+class TestBuilderActuationFoundation:
+    def _build(self, **cfg_kwargs):
+        from unittest.mock import patch
+        from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder, NeuroEngineConfig
+        with (
+            patch("omnibci.infrastructure.neuroengine.builder.AcquisitionWorker", return_value=MagicMock()),
+            patch("omnibci.infrastructure.neuroengine.builder.SignalProcessingWorker", return_value=MagicMock()),
+        ):
+            return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs), settings_snapshot={}).build()
+
+    def test_transport_is_deferred_and_commands_disabled_by_default(self):
+        from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
+        from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
+        from omnibci.infrastructure.neuroengine.gateway.peers import ACTUATION
+
+        eng = self._build()
+        assert isinstance(eng.actuation_translator, ActuationCommandTranslator)
+        assert isinstance(eng.actuation_feedback, ActuationFeedbackHandler)
+        assert ACTUATION not in eng.peer_gateway._channels
+        assert not eng._actuation_active
+
+    def test_output_parameters_do_not_configure_foundation_listeners(self):
+        from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
+        eng = NeuroEngineBuilder(settings_snapshot={"ACTUATION.server_port": "invalid-until-prepared"}).build()
+        assert not eng.peer_gateway._channels

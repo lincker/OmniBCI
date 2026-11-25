@@ -23,7 +23,7 @@ from omnibci.application.configuration.definitions import (
 )
 from omnibci.application.plugin_management.identity import PLUGIN_KINDS
 from omnibci.application.configuration.models import (
-    ActivationSet, ModuleActivation, ModuleActivationRevision,
+    ModuleActivation, ModuleActivationRevision,
     PluginProfile, ProfileRevision,
     EngineSettings, validate_profile_id,
 )
@@ -373,11 +373,3 @@ class TomlConfigurationRepository:
             else:
                 document["engine"] = settings.settings
             self._write(self.root / "settings.toml", document)
-
-    def get_activation_set(self) -> ActivationSet:
-        if not self.root.exists():
-            return ActivationSet({}, None)
-        with ExitStack() as stack:
-            for section in MODULES:
-                stack.enter_context(self._access(section))
-            return ActivationSet({module: self._read_module(module) for module in MODULES}, self.get_engine())

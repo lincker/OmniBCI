@@ -15,13 +15,13 @@ version = "0.1.0"
 api_version = "1"
 # Optional OS restriction; omit to allow every supported OS.
 # platforms = ["darwin", "linux", "win32"]
-# Optional exact OmniBCI version requirement; ranges are not supported.
+# Optional exact OmniBCI version requirement; use [package.engines] for ranges.
 # host_version = "1.0.0"
 
-# Optional installed host-library requirements; exact distribution versions only.
+# Optional installed host-library requirements (exact version or comma-separated >=, >, <=, <, ==).
 # These are compatibility checks, not a request to install dependencies.
 # [package.requires]
-# numpy = "2.4.4"
+# numpy = ">=2.0"
 
 [[contributions]]
 # Stable identifier within this package; unique across all its contributions.

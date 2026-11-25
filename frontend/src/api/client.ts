@@ -6,102 +6,61 @@
  * Branch on `code`, never on message text.
  */
 import type { components } from "./rest-types";
-import { requestJson } from "./transport";
+import { ApiError, errorMessage, requestEnvelope } from "./transport";
 import type { ModuleActionRequest, RuntimeOperation, StartReadingRequest } from "./runtime-config";
+
+export { ApiError, errorMessage };
 
 type S = components["schemas"];
 export type EngineStatus = S["EngineStatusResponse"];
-export type AcquisitionStatus = S["AcquisitionStatusResponse"];
+type AcquisitionStatus = S["AcquisitionStatusResponse"];
 export type DataSourceMetadata = S["AcquisitionMetadataResponse"];
 export type AcquisitionPreview = S["AcquisitionPreviewResponse"];
 export type AcquisitionPreviewChunk = S["AcquisitionPreviewChunkResponse"];
 export type PreviewSelection = S["AcquisitionPreviewSelectionModel"];
 export type PreviewLimits = S["AcquisitionPreviewLimitsModel"];
 export type Trial = S["TrialResponse"];
-export type ResultsSnapshot = S["ResultsResponse"];
+type ResultsSnapshot = S["ResultsResponse"];
 export type EpochList = S["EpochListResponse"];
 export type ConfigEntry = S["ConfigEntry"];
 export type ConfigData = S["ConfigResponse"];
-export type PatchConfigResult = S["PatchConfigResponse"];
-export interface StimulationStatus {
-  active: boolean;
-  process_alive: boolean;
-  engine_connected: boolean;
-  paradigm: string | null;
-}
+type PatchConfigResult = S["PatchConfigResponse"];
+type StimulationStatus = S["StimulationStatusResponse"];
+type ActuationStatus = S["ActuationStatusResponse"];
 
-export interface ApiEnvelope<T> {
-  success: boolean;
-  message: string;
-  data: T | null;
-}
-
-export class ApiError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly code: string,
-    message: string,
-    public readonly detail?: unknown,
-  ) {
-    super(message);
-  }
-}
-
-async function get<T>(path: string): Promise<T | null> {
-  const { response: res, body } = await requestJson(path, { headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    const code = body?.code ?? "UNKNOWN";
-    throw new ApiError(res.status, code, body?.message ?? res.statusText, body?.detail);
-  }
-  return (body as ApiEnvelope<T>).data;
-}
-
-async function send<T>(method: "POST" | "DELETE" | "PATCH" | "PUT", path: string, body?: unknown): Promise<T | null> {
-  const { response: res, body: resBody } = await requestJson(path, {
-    method,
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const code = resBody?.code ?? "UNKNOWN";
-    throw new ApiError(res.status, code, resBody?.message ?? res.statusText, resBody?.detail);
-  }
-  return (resBody as ApiEnvelope<T>).data;
-}
-
-const post = <T = unknown,>(path: string, body?: unknown) => send<T>("POST", path, body);
+const get = <T>(path: string) => requestEnvelope<T>(path);
+const post = <T = unknown>(path: string, body?: unknown) => requestEnvelope<T>(path, "POST", body);
 
 export const api = {
   serverLogs: () => get<S["ServerLogsResponse"]>("/api/v1/server/logs"),
   engineStatus: () => get<EngineStatus>("/api/v1/engine/status"),
   acquisitionStatus: () => get<AcquisitionStatus>("/api/v1/acquisition/status"),
   stimulationStatus: () => get<StimulationStatus>("/api/v1/stimulation/status"),
+  actuationStatus: () => get<ActuationStatus>("/api/v1/actuation/status"),
 
   results: () => get<ResultsSnapshot>("/api/v1/results"),
   epochs: (offset = 0, limit = 25) =>
     get<EpochList>(`/api/v1/results/epochs?${new URLSearchParams({ offset: String(offset), limit: String(limit) })}`),
 
-  // ---- control actions (stage 2, lock-free) ------------------------------
+  // ---- control actions ---------------------------------------------------
   engineStart: () => post("/api/v1/engine/start"),
   engineStop: () => post("/api/v1/engine/stop"),
-  moduleStart: (module: "processing" | "actuation", body: ModuleActionRequest) => post<RuntimeOperation>(`/api/v1/engine/modules/${module}/start`, body),
-  modulePrepare: (module: "stimulation" | "actuation") => post(`/api/v1/engine/modules/${module}/prepare`),
-  moduleStop: (module: "acquisition" | "processing" | "actuation") => post(`/api/v1/engine/modules/${module}/stop`),
+  moduleStart: (module: "processing" | "stimulation" | "actuation", body: ModuleActionRequest) =>
+    post<RuntimeOperation>(`/api/v1/${module}/start`, body),
+  modulePrepare: (module: "stimulation" | "actuation") => post(`/api/v1/${module}/prepare`),
+  moduleStop: (module: "processing" | "stimulation" | "actuation") => post(`/api/v1/${module}/stop`),
 
   acqConnect: (body: ModuleActionRequest) => post<RuntimeOperation>("/api/v1/acquisition/connect", body),
   acqDisconnect: () => post("/api/v1/acquisition/disconnect"),
-  acqMetadata: () => post<DataSourceMetadata>("/api/v1/acquisition/metadata/refresh"),
+  acqMetadata: () => get<DataSourceMetadata>("/api/v1/acquisition/metadata"),
+  acqMetadataRefresh: () => post<DataSourceMetadata>("/api/v1/acquisition/metadata/refresh"),
   acqPreviewStart: (body: S["StartAcquisitionPreviewRequest"]) =>
     post<AcquisitionPreview>("/api/v1/acquisition/preview/start", body),
-  acqPreviewStop: (generation: string, captureId: string) =>
-    post<AcquisitionPreview>("/api/v1/acquisition/preview/stop", { generation, capture_id: captureId }),
   acqPreview: (generation: string, captureId?: string) =>
     get<AcquisitionPreview>(`/api/v1/acquisition/preview?${new URLSearchParams({ generation, ...(captureId ? { capture_id: captureId } : {}) })}`),
   acqPreviewChunk: (generation: string, captureId: string, sequenceId: number) =>
     get<AcquisitionPreviewChunk>(`/api/v1/acquisition/preview/chunks/${sequenceId}?${new URLSearchParams({ generation, capture_id: captureId })}`),
 
-  stimStart: (body: ModuleActionRequest) => post<RuntimeOperation>("/api/v1/stimulation/start", body),
-  stimStop: () => post("/api/v1/stimulation/stop"),
   trialStart: (n_trials: number, trial_params: S["StartTrialRequest"]["trial_params"]) =>
     post("/api/v1/stimulation/trial/start", { n_trials, trial_params }),
 
@@ -111,5 +70,5 @@ export const api = {
   // ---- host settings ------------------------------------------------------
   getConfig: () => get<ConfigData>("/api/v1/config"),
   patchConfig: (updates: Record<string, unknown>, expected_revision: string) =>
-    send<PatchConfigResult>("PATCH", "/api/v1/config", { updates, expected_revision }),
+    requestEnvelope<PatchConfigResult>("/api/v1/config", "PATCH", { updates, expected_revision }),
 };

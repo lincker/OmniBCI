@@ -32,15 +32,12 @@ type Appearance = "system" | "light" | "dark";
 function initialView(): View {
   const hash = window.location.hash.slice(1);
   if ([...setupPages, ...settingsPages].some(([page]) => page === hash) || hash === "run" || hash === "results" || hash === "plugins") return hash as View;
-  if (["engine-panel", "acquisition-panel", "stimulation-panel", "acks-panel"].includes(hash)) return "run";
-  if (hash === "channels") return "processing";
-  if (hash === "results-panel") return "results";
   return "acquisition";
 }
 
 export default function App({ connected = true, onEditorStateChange }: {
   connected?: boolean;
-  onEditorStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
+  onEditorStateChange?: (state: { dirty: boolean }) => void;
 } = {}) {
   const { language, setLanguage, t } = useI18n();
   const [view, setView] = useState<View>(initialView);
@@ -96,10 +93,10 @@ export default function App({ connected = true, onEditorStateChange }: {
   }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress]);
 
   useEffect(() => {
-    const state = { dirty: dirty || current.dirty, busy: busy || runtimeControls.busy || runtime.inProgress };
+    const state = { dirty: dirty || current.dirty };
     desktopBridge()?.setEditorState(state);
     onEditorStateChange?.(state);
-  }, [dirty, current.dirty, busy, runtimeControls.busy, runtime.inProgress, onEditorStateChange]);
+  }, [dirty, current.dirty, onEditorStateChange]);
 
   const navigate = useCallback((next: View) => {
     if (next === view) return;

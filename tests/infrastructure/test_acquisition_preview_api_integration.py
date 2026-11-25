@@ -49,7 +49,6 @@ async def test_real_capture_round_trip_preserves_selected_values_and_main_stream
     cache = PreviewCache(diagnostics, generation="g")
     routes = {
         EventType.StartAcquisitionPreview: AcquisitionCommand.start_preview,
-        EventType.StopAcquisitionPreview: AcquisitionCommand.stop_preview,
         EventType.GetAcquisitionPreview: AcquisitionCommand.get_preview,
     }
     broker = CommandResultBroker(SimpleNamespace(
@@ -103,8 +102,6 @@ async def test_real_capture_round_trip_preserves_selected_values_and_main_stream
         assert data["descriptor"] is None
         np.testing.assert_array_equal(main.get_nowait().raw_data, raw)
         assert source.is_streaming
-        stopped = await asyncio.to_thread(client.post, "/api/v1/acquisition/preview/stop", json=params)
-        assert stopped.status_code == 200 and source.is_streaming
         missing = await asyncio.to_thread(client.get, "/api/v1/acquisition/preview/chunks/99", params=params)
         assert missing.status_code == 404
         stale = await asyncio.to_thread(client.get, "/api/v1/acquisition/preview/chunks/0",

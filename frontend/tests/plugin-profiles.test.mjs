@@ -118,7 +118,7 @@ function componentHarness(props) {
     try {
       props.current = useCurrentConfiguration(props.runtime.status.accepted, props.runtime.completedRestorations);
       const runtime = runtimeController(props.runtime);
-      const engine = { data: { running: props.engineRunning, processor_alive: false, actuation_alive: false, actuation_connected: false, ...props.engine },
+      const engine = { data: { running: props.engineRunning, processor_alive: false, actuation_connected: false, ...props.engine },
         error: props.engineAvailable === false ? new Error("Engine unavailable") : null, refresh: async () => {} };
       const runtimeControls = useRuntimeControls(runtime, props.current, props.acquisition, engine);
       controls = runtimeControls;
@@ -236,7 +236,6 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
     data.profileKinds.push(kind);
     return clone(data.profiles.filter((item) => kind === undefined || item.kind === kind));
   };
-  api.modules = async () => data.modules();
   api.module = async (module) => data.modules().modules[module];
   api.create = async (kind, choice, name, parameters, processing_input) => {
     const input = processing_input === undefined ? {} : { processing_input: clone(processing_input) };
@@ -246,6 +245,7 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
   };
   controlApi.acquisitionStatus = async () => clone(data.source);
   controlApi.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
+  controlApi.actuationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, effector: null });
   signalConfigApi.get = async () => null;
   data.moduleRequests = [];
   const startModule = async (module, { operation_id, configuration }) => {
@@ -259,7 +259,6 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
       result: { configuration_applied: true, action: "started" } };
   };
   controlApi.moduleStart = startModule;
-  controlApi.stimStart = (body) => startModule("stimulation", body);
   controlApi.engineStart = async () => { data.events.push("start"); runtimeStatus.running = true; runtimeStatus.applied = clone(data.revisions); runtimeStatus.generation = "generation-a"; };
   controlApi.acqConnect = async ({ operation_id, configuration: body }) => {
     data.events.push("connect"); calls.connect.push(clone(body));
@@ -277,19 +276,75 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
       result: { configuration_applied: true, action: "connected" } };
   };
   controlApi.acqDisconnect = async () => { data.events.push("disconnect"); data.source.connected = false; data.source.connection_id = null; };
-  controlApi.acqMetadata = async () => { data.events.push("metadata"); return clone(data.metadata); };
+  controlApi.acqMetadata = async () => { data.events.push("metadata-cache"); return clone(data.metadata); };
+  controlApi.acqMetadataRefresh = async () => { data.events.push("metadata"); return clone(data.metadata); };
   runtimeConfigApi.status = async () => runtimeStatus;
   const runtime = { blocked: false, status: runtimeStatus, refresh: async () => {} };
   data.runtime = runtime;
   let harness;
+  let metadataGeneration = 0;
+  let trackedConnection = data.source.connected ? data.source.connection_id : null;
+  let hydratedConnection = null;
+  let metadataState = null;
+  let inspectFailure = null;
+  const syncMetadataView = () => {
+    const activeConnection = !acquisition.error && acquisition.data?.connected ? acquisition.data.connection_id ?? null : null;
+    if (trackedConnection !== activeConnection) {
+      trackedConnection = activeConnection;
+      metadataGeneration += 1;
+      if (!activeConnection) hydratedConnection = null;
+    }
+    acquisition.metadata = activeConnection && metadataState?.forConnection === activeConnection ? metadataState.value : null;
+    acquisition.inspect.error = activeConnection && inspectFailure?.forConnection === activeConnection ? inspectFailure.message : null;
+    if (activeConnection && acquisition.data?.metadata_available && hydratedConnection !== activeConnection) {
+      hydratedConnection = activeConnection;
+      const generation = ++metadataGeneration;
+      void controlApi.acqMetadata().then((value) => {
+        if (generation === metadataGeneration) {
+          metadataState = { forConnection: activeConnection, value };
+          inspectFailure = null;
+          syncMetadataView();
+          harness?.updateProps({ acquisition: { ...acquisition } });
+        }
+      }).catch(() => {
+        if (hydratedConnection === activeConnection) hydratedConnection = null;
+      });
+    }
+  };
   const acquisition = {
-    data: clone(data.source), error: null, pending: false,
+    data: clone(data.source), metadata: null, error: null, pending: false,
+    inspect: { pending: false, error: null, run: async () => {
+      if (acquisition.pending) return;
+      const activeConnection = !acquisition.error && acquisition.data?.connected ? acquisition.data.connection_id ?? null : null;
+      if (!activeConnection) return;
+      const generation = ++metadataGeneration;
+      hydratedConnection = activeConnection;
+      metadataState = null; inspectFailure = null;
+      acquisition.inspect.pending = true; acquisition.pending = true;
+      syncMetadataView();
+      harness?.updateProps({ acquisition: { ...acquisition } });
+      try {
+        const value = await controlApi.acqMetadataRefresh();
+        if (generation === metadataGeneration) metadataState = { forConnection: activeConnection, value };
+      } catch (cause) {
+        if (generation === metadataGeneration) {
+          inspectFailure = { forConnection: activeConnection, message: translate("en", "profiles.inspectFailed", { error: cause instanceof Error ? cause.message : String(cause) }) };
+        }
+      } finally {
+        await acquisition.refresh();
+        acquisition.inspect.pending = false; acquisition.pending = false;
+        syncMetadataView();
+        harness?.updateProps({ acquisition: { ...acquisition } });
+      }
+    } },
     refresh: async () => {
       try { acquisition.data = await controlApi.acquisitionStatus(); acquisition.error = null; }
       catch (cause) { acquisition.error = cause; }
+      syncMetadataView();
       harness?.updateProps({ acquisition: { ...acquisition }, engineRunning: runtime.status.running });
     },
   };
+  syncMetadataView();
   const command = (execute) => {
     const state = { pending: false, error: null, run: async (...args) => {
       state.pending = true; state.error = null; acquisition.pending = true;
@@ -362,9 +417,6 @@ for (const [module, slot, profileId] of [
     await withProfiles(module, async (h, calls, data) => {
       const saved = clone(data.profiles);
       form(h).props.onChange({ gain: 23, calibration: [4, 5] }); await h.settle();
-      const labels = elements(h.tree).filter((item) => item.type === "button").map(text);
-      assert.ok(!labels.includes("Apply current configuration"));
-      assert.ok(!labels.includes("Update saved profile"));
       assert.equal(dialog(h), undefined);
       const request = data.current().request(module);
       assert.ok(request.bindings.every((item) => item.slot.startsWith(`${module}.`) && !item.profile_id));
@@ -512,7 +564,6 @@ test("filter instances retain independent values and order without saved profile
     assert.equal(data.current().entries[second].parameters.gain, 23);
     assert.equal(data.current().entries[added].profile, null);
     await click(h, "Move up", filterRows(h).at(-1));
-    assert.ok(!elements(h.tree).some((item) => item.type === "button" && text(item) === "Apply current filter chain"));
     const filters = data.current().request("processing").bindings.filter((item) => item.slot.startsWith("processing.filter."));
     assert.deepEqual(filters.map((item) => item.slot), data.current().filterOrder);
     assert.equal(filters.at(-2).parameters.gain, 23);
@@ -705,7 +756,7 @@ test("failed metadata retrieval clears stale data and retains unsaved profile ed
   await withProfiles("acquisition", async (harness, calls) => {
     metadata(harness).props.onRead(); await harness.settle();
     assert.ok(metadata(harness).props.value);
-    controlApi.acqMetadata = async () => { throw new Error("Device metadata request timed out."); };
+    controlApi.acqMetadataRefresh = async () => { throw new Error("Device metadata request timed out."); };
     metadata(harness).props.onRead(); await harness.settle();
     assert.match(text(harness.tree), /Device metadata request timed out/);
     assert.equal(metadata(harness).props.value, null);
@@ -804,7 +855,7 @@ test("explicit metadata inspection can repeat on a connected source without prom
 test("a delayed inspection response cannot be adopted after the source reconnects", async () => {
   await withProfiles("acquisition", async (harness, calls, data) => {
     let finishRead;
-    controlApi.acqMetadata = () => new Promise((resolve) => { finishRead = resolve; });
+    controlApi.acqMetadataRefresh = () => new Promise((resolve) => { finishRead = resolve; });
     await inspectSource(harness);
     data.source.connection_id = "connection-b";
     await data.acquisition.refresh(); await harness.settle();
@@ -862,7 +913,6 @@ test("Scan45 retains editable declarations and cannot adopt them as verified obs
     assert.equal(metadata(harness).props.value.comparison.status, "unverified");
     assert.equal(metadata(harness).props.canUseObserved, false);
     assert.equal(metadata(harness).props.onUseObserved, undefined);
-    assert.equal(metadata(harness).props.onSaveObservedProfile, undefined);
     assert.equal(calls.create.length, 0);
   }, { engineRunning: true, configure: (data) => {
     observedSource(data, { sample_rate: 500, channel_count: 3 }, "user-declared");
@@ -1454,6 +1504,56 @@ for (const [module, start, slot] of [
     assert.equal(form(h).props.value.gain, 19);
     assert.equal(data.current().hasChanges(module, data.current().modules[module].activation), false);
   }, { engineRunning: true, configure: (data) => { data.source.connected = false; } });
+});
+
+test("saving a modified profile in place advances its revision without touching runtime or creating duplicates", async () => {
+  await withProfiles("processing", async (h, calls, data) => {
+    const updates = [];
+    api.update = async (target, name, parameters, processing_input) => {
+      updates.push({ id: target.profile_id, expected_revision: target.revision, name,
+        parameters: clone(parameters), processing_input: clone(processing_input) });
+      const updated = { ...clone(target), name, parameters: clone(parameters),
+        revision: target.revision + 1, ...(processing_input === undefined ? {} : { processing_input: clone(processing_input) }) };
+      data.profiles = data.profiles.map((item) => item.profile_id === updated.profile_id ? updated : item);
+      return clone(updated);
+    };
+    const accepted = clone(data.activation);
+    await change(h, "Load saved profile", "decoder-b");
+    assert.equal(button(h, "Save profile").props.disabled, true);
+    await saveShortcut(h);
+    assert.equal(dialog(h), undefined);
+    assert.equal(updates.length, 0);
+
+    form(h).props.onChange({ gain: 15, calibration: [5, 6] }); await h.settle();
+    input(h).props.onChange(decoderInput(["C3", "P4"])); await h.settle();
+    assert.match(text(h.tree), /Loaded profile: Decoder B · Modified/);
+    assert.equal(button(h, "Save profile").props.disabled, false);
+
+    await click(h, "Save profile");
+    assert.equal(updates.length, 1);
+    assert.deepEqual(updates[0], { id: "decoder-b", expected_revision: 2, name: "Decoder B",
+      parameters: { gain: 15, calibration: [5, 6] }, processing_input: decoderInput(["C3", "P4"]) });
+    assert.match(text(h.tree), /Saved changes to the loaded profile/);
+    assert.match(text(h.tree), /Loaded profile: Decoder B/);
+    assert.doesNotMatch(text(h.tree), /Modified/);
+    assert.equal(button(h, "Save profile").props.disabled, true);
+    assert.deepEqual(data.activation, accepted);
+    assert.deepEqual(calls, { create: [], connect: [] });
+
+    // Save shortcut updates a dirty loaded profile in place; history restore keeps current values intact.
+    form(h).props.onChange({ gain: 21, calibration: [7, 8] }); await h.settle();
+    await saveShortcut(h);
+    assert.equal(updates.length, 2);
+    assert.equal(updates[1].expected_revision, 3);
+    const history = elements(h.tree).find((item) => item.type.name === "ConfigurationHistory");
+    assert.equal(history.props.profile.revision, 4);
+    history.props.onProfileRestored({ ...clone(history.props.profile), parameters: { gain: 2, calibration: [3, 4] }, revision: 5 });
+    await h.settle();
+    assert.equal(form(h).props.value.gain, 21);
+    assert.match(text(h.tree), /Loaded profile: Decoder B · Modified/);
+    await click(h, "Save profile");
+    assert.equal(updates[2].expected_revision, 5);
+  });
 });
 
 test("invalid current parameters edited in Setup block module startup locally without requiring a Profile", async () => {

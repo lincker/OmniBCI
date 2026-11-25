@@ -1,5 +1,4 @@
 """Plugin package installation, lifecycle, and version-profile routes."""
-from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 import tempfile
@@ -7,14 +6,10 @@ import tempfile
 from fastapi import APIRouter, Depends, Request
 from starlette.concurrency import run_in_threadpool
 
-from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.plugin_management.package_service import PluginPackageService
-from omnibci.application.plugin_management.packages import (
-    PluginPackageConflictError, PluginPackageError, PluginPackageNotFoundError, PluginPackageStorageError,
-)
 from omnibci.presentation.dependencies import get_configuration_service, get_plugin_package_service
-from omnibci.presentation.errors import ApiError, configuration_errors
+from omnibci.presentation.errors import ApiError, configuration_errors, package_errors
 from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.plugin_config import PluginProfileResponse
 from omnibci.presentation.schemas.plugin_packages import (
@@ -23,20 +18,6 @@ from omnibci.presentation.schemas.plugin_packages import (
 )
 
 router = APIRouter(prefix="/plugin-packages", tags=["Plugin packages"])
-
-
-@contextmanager
-def package_errors():
-    try:
-        yield
-    except PluginPackageNotFoundError as exc:
-        raise ApiError(404, ErrorCode.NOT_FOUND, str(exc)) from exc
-    except (PluginPackageConflictError, ProfileRevisionConflict) as exc:
-        raise ApiError(409, ErrorCode.CONFLICT, str(exc)) from exc
-    except PluginPackageStorageError as exc:
-        raise ApiError(503, ErrorCode.SERVICE_UNAVAILABLE, str(exc)) from exc
-    except PluginPackageError as exc:
-        raise ApiError(422, ErrorCode.VALIDATION_ERROR, str(exc)) from exc
 
 
 @router.get("", response_model=ApiResponse[list[PackageVersionResponse]])

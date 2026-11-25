@@ -74,3 +74,18 @@ test("per-trial controls must declare their object payload key", () => {
   const controls = { cue: { ...targetControl, payload_key: "event_id" } };
   assert.deepEqual(readTrialControls(controls), controls);
 });
+
+test("trial controls validate supported fields and numeric defaults before rendering", () => {
+  const controls = { count: { type: "int", field: "n_trials", default: 1, min: 1 }, cue: { field: "trial_params", payload_key: "event_id", default: 2, max: 40 } };
+  const copied = readTrialControls(controls);
+  assert.deepEqual(copied, controls);
+  copied.count.default = 10;
+  assert.equal(controls.count.default, 1);
+  for (const invalid of [null, [], { a: null }, { a: { field: "unknown" } },
+    { a: { field: "n_trials", type: "text" } }, { a: { field: "n_trials", label: {} } },
+    { a: { field: "n_trials", default: 1.5 } }, { a: { field: "trial_params", payload_key: "event_id", min: NaN } },
+    { a: { field: "trial_params", payload_key: "event_id", min: 2, max: 1 } }, { a: { field: "trial_params", payload_key: "event_id", default: 5, max: 3 } },
+    { a: { field: "n_trials" }, b: { field: "n_trials" } }]) {
+    assert.throws(() => readTrialControls(invalid));
+  }
+});

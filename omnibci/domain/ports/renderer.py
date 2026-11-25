@@ -12,12 +12,10 @@ Design constraints:
   - Coordinates use NDC (Normalized Device Coordinates): the visible viewport
     spans [-1, 1], with origin at centre and +y up.
 """
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from math import isfinite
 from numbers import Real
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 import numpy as np
 
@@ -106,7 +104,6 @@ class Color:
 # Renderer protocol
 # ---------------------------------------------------------------------------
 
-@runtime_checkable
 class RenderSurface(Protocol):
     """Drawing capability borrowed by a paradigm on the renderer owner thread."""
 
@@ -157,7 +154,6 @@ class RenderSurface(Protocol):
         ...
 
 
-@runtime_checkable
 class Renderer(RenderSurface, Protocol):
     """Host-owned window, context and frame submission on one owner thread."""
 

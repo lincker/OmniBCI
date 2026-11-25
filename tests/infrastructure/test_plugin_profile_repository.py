@@ -7,7 +7,8 @@ import pytest
 import tomlkit
 
 from omnibci.application.plugin_management.identity import PluginSelection
-from omnibci.application.configuration.models import ModuleActivation, PluginProfile, ProfileBinding, EngineSettings
+from omnibci.application.configuration.definitions import MODULES
+from omnibci.application.configuration.models import ActivationSet, ModuleActivation, PluginProfile, ProfileBinding, EngineSettings
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileStorageError, PluginProfileValidationError, ProfileRevisionConflict
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 
@@ -31,11 +32,15 @@ def _module(profile):
     ),))
 
 
+def _activation_set(repository):
+    return ActivationSet({module: repository.get_module(module) for module in MODULES}, repository.get_engine())
+
+
 def test_missing_reads_do_not_create_storage(repository):
     assert repository.list_profiles() == []
     assert repository.get_module("acquisition") is None
     assert repository.get_engine() is None
-    assert all(item is None for item in repository.get_activation_set().revisions().values())
+    assert all(item is None for item in _activation_set(repository).revisions().values())
     with pytest.raises(PluginProfileNotFoundError):
         repository.get_profile(str(uuid4()))
     assert not repository.root.exists()
@@ -84,7 +89,7 @@ def test_engine_namespace_change_preserves_existing_settings_modules_and_history
     path.write_text('[engine]\n"NEUROENGINE.queue_size" = 100\ndebug = false\n', encoding="utf-8")
     before = {item: item.read_bytes() for item in repository.root.rglob("*.toml")}
 
-    accepted = repository.get_activation_set()
+    accepted = _activation_set(repository)
 
     assert accepted.engine.settings == {"NEUROENGINE.queue_size": 100, "debug": False}
     assert accepted.engine.revision != "388c8997fdb5461903849aa0f8dd1072e1a5db9d24490096a25c77cfbfd1fe27"
@@ -135,7 +140,7 @@ def test_modules_have_independent_cas_and_no_implicit_history(repository):
         repository.save_module(original, expected_revision=original.revision)
     assert repository.get_module("stimulation") == stimulation
     assert repository.list_module_history("processing") == []
-    assert repository.get_activation_set().modules["processing"] == changed
+    assert _activation_set(repository).modules["processing"] == changed
 
 
 def test_module_history_records_a_b_a_as_three_immutable_entries(repository):
@@ -244,7 +249,7 @@ def test_old_storage_paths_are_ignored(repository, profile):
     directory.mkdir()
     (directory / f"{profile.profile_id}.toml").write_text("invalid old profile", encoding="utf-8")
     assert repository.list_profiles() == []
-    assert all(value is None for value in repository.get_activation_set().revisions().values())
+    assert all(value is None for value in _activation_set(repository).revisions().values())
 
 
 @pytest.mark.parametrize("bad_id", ["../outside", "", "not-a-uuid"])

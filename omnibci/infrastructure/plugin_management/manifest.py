@@ -166,7 +166,7 @@ def _parse_contributions(
         api_version=api_version,
         version=version,
         domain=domain, engines=dict(package.get("engines", {})),
-        host_version=package.get("host_version"), requires=tuple(sorted(requirements.items())),
+        requires=tuple(sorted(requirements.items())),
         manifest_version=1,
         platforms=_platforms(package, manifest_path),
         precedence=precedence,

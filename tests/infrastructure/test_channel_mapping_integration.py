@@ -76,7 +76,13 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine))
     signal = SignalSetupService(profiles, engine,
                                 container.acquisition_service, container.command_results)
-    container.acquisition_service.set_signal_preparer(signal.prepare)
+    container.acquisition_service.set_signal_preparer(signal.try_prepare)
+    from omnibci.application.source_metadata import descriptor_layout
+
+    def active_plan():
+        state = signal.read()
+        preview = signal.preview_input(state["active_input"])["plan"]
+        return {**preview, "source": descriptor_layout(preview["source"]).to_dict()}
     from omnibci.application.configuration.models import MODULE_KINDS
     engine.configure_modules(container.acquisition_service, container.command_results, signal,
                              lambda module: accepted_runtime_settings(profiles=profiles, active_kinds=MODULE_KINDS[module]))
@@ -126,9 +132,9 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         assert metadata["comparison"]["status"] == "unconfirmed"
         assert profiles.repository.list_profiles("acquisition") == []
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
-        observed_plan = signal._plan.to_dict()
+        observed_plan = active_plan()
         assert observed_plan["source"]["sample_rate"] == metadata["descriptor"]["sample_rate"]
-        assert signal._plan.source.output_row_count == metadata["descriptor"]["output_row_count"]
+        assert ResolvedSignalPlan.from_dict(observed_plan).source.output_row_count == metadata["descriptor"]["output_row_count"]
         await asyncio.to_thread(container.acquisition_service.handle_stop_stream, StopStreamCommand())
         assert profiles.repository.list_profiles("acquisition") == []
 
@@ -156,7 +162,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
         readiness = signal.read()["readiness"]
         assert readiness["ready"] is True
         original_receipt = readiness["receipt"]
-        plan = signal._plan.to_dict()
+        plan = active_plan()
         assert plan["processing_input"] == processing_input.to_dict()
         assert "setup" not in plan
         assert [channel["name"] for channel in plan["output_channels"]] == ["O2", "Pz"]
@@ -204,7 +210,7 @@ async def test_cnt_processing_attaches_independently_and_rejects_stale_connectio
             await start_worker("processing")
             await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
             await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
-            current_plan = signal._plan.to_dict()
+            current_plan = active_plan()
             assert [channel["name"] for channel in current_plan["output_channels"]] == outputs
             assert all(channel.get("reference") is None for channel in current_plan["output_channels"])
             transformed = ResolvedSignalPlan.from_dict(current_plan).apply(chunk)

@@ -5,7 +5,7 @@ import type { components } from "./rest-types";
 
 type S = components["schemas"];
 export type ChannelDescriptor = S["ChannelDescriptorModel"];
-export type SignalInfo = S["SignalInfoModel"];
+type SignalInfo = S["SignalInfoModel"];
 export type ChannelBinding = S["ChannelBindingModel"];
 /** The read endpoint fills the output list even though request fields have defaults. */
 export type ProcessingInput = Omit<S["ProcessingInputModel"], "outputs"> & { outputs: ChannelBinding[] };

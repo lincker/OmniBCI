@@ -183,3 +183,119 @@ class TestNeuroEngineBuilder:
             channel.reporter.close()
 
         assert captured["sp_eb"] is eng.event_bus
+
+
+class TestConfigFromSettings:
+    def test_reads_all_keys(self):
+        values = {
+            "NEUROENGINE.queue_size": 50,
+            "ACQUISITION.sample_rate": 250,
+            "debug": True,
+        }
+        cfg = NeuroEngineConfig.from_settings(values)
+        assert cfg.queue_size == 50
+        assert not hasattr(cfg, "sample_rate")
+        assert cfg.debug is True
+
+    def test_falls_back_on_missing_keys(self):
+        cfg = NeuroEngineConfig.from_settings({})
+        assert cfg.queue_size == 100
+        assert cfg.debug is False
+
+    def test_dataclass_defaults(self):
+        cfg = NeuroEngineConfig()
+        assert (cfg.queue_size, cfg.debug) == (100, False)
+
+    def test_dormant_module_values_are_not_parsed_by_foundation(self):
+        cfg = NeuroEngineConfig.from_settings({
+            "ALGORITHM.baseline_duration": "invalid",
+            "STIMULATION.server_port": "invalid",
+            "ACTUATION.server_port": "invalid",
+            "ACTUATION.watchdog_timeout_s": "invalid",
+        })
+        assert cfg.queue_size == 100
+        assert not hasattr(cfg, "baseline_duration")
+
+    def test_worker_stores_baseline_duration(self):
+        w = SignalProcessingWorker(command_queue=MagicMock(), baseline_duration=0.3, settings_snapshot={})
+        assert w.baseline_duration == 0.3
+
+
+def _debug_engine(debug: bool) -> NeuroEngine:
+    return NeuroEngine(
+        event_bus=MagicMock(),
+        data_manager=MagicMock(),
+        acquisition_worker=MagicMock(),
+        acquisition_command_queue=MagicMock(),
+        signal_processing_worker=MagicMock(),
+        processor_command_queue=MagicMock(),
+        peer_gateway=MagicMock(),
+        debug=debug,
+    )
+
+
+class TestEngineDebugFlag:
+    def test_debug_default_is_false(self):
+        eng = NeuroEngine(
+            event_bus=MagicMock(), data_manager=MagicMock(),
+            acquisition_worker=MagicMock(), acquisition_command_queue=MagicMock(),
+            signal_processing_worker=MagicMock(), processor_command_queue=MagicMock(),
+            peer_gateway=MagicMock(),
+        )
+        assert eng._debug is False
+
+    @patch("omnibci.infrastructure.neuroengine.engine.asyncio.run")
+    def test_run_passes_debug_true(self, mock_run):
+        _debug_engine(debug=True).run()
+        assert mock_run.call_args.kwargs.get("debug") is True
+        mock_run.call_args.args[0].close()
+
+    @patch("omnibci.infrastructure.neuroengine.engine.asyncio.run")
+    def test_run_passes_debug_false(self, mock_run):
+        _debug_engine(debug=False).run()
+        assert mock_run.call_args.kwargs.get("debug") is False
+        mock_run.call_args.args[0].close()
+
+
+class TestProcessorSampleRate:
+    def test_worker_has_no_configured_sample_rate(self):
+        worker = SignalProcessingWorker(command_queue=MagicMock(),
+                                        settings_snapshot={"ACQUISITION.sample_rate": 250})
+        assert not hasattr(worker, "sample_rate")
+
+
+@pytest.mark.parametrize("worker_type", ["acquisition", "processing"])
+def test_worker_configuration_is_detached_and_required(worker_type):
+    Worker = AcquisitionWorker if worker_type == "acquisition" else SignalProcessingWorker
+    snapshot = {"PLUGINS.bindings": [{"parameters": {"sample_rate": 250}}]}
+    worker = Worker(command_queue=None, settings_snapshot=snapshot)
+    snapshot["PLUGINS.bindings"][0]["parameters"]["sample_rate"] = 500
+    assert worker.settings_snapshot["PLUGINS.bindings"][0]["parameters"]["sample_rate"] == 250
+    with pytest.raises(TypeError, match="settings_snapshot"):
+        Worker(command_queue=None)
+
+
+def test_builder_passes_shared_source_context_with_owned_module_revisions():
+    snapshot = synthetic_execution_snapshot({
+        "ACQUISITION.sample_rate": 250, "ACQUISITION.DATA_PROVIDER_PORT": 4455,
+        "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "b" * 64},
+        "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1",
+        "PLUGINS.bindings": [ProfileBinding("acquisition.source", "acquisition", None,
+            PluginSelection("test.source", "default", "1.0.0"), {}).to_dict()],
+    })
+    with patch("omnibci.infrastructure.neuroengine.builder.mp.Queue", return_value=MagicMock()):
+        builder = NeuroEngineBuilder(settings_snapshot=snapshot)
+        snapshot["ACQUISITION.sample_rate"] = 1000
+        engine = builder.build()
+    channels = [engine._worker_factory(module, builder._settings_snapshot)
+                for module in ("acquisition", "processing")]
+    acquisition, processing = [channel.process for channel in channels]
+    for channel in channels:
+        channel.receiver.close()
+        channel.reporter.close()
+    assert set(acquisition.settings_snapshot["CONFIG.module_revisions"]) == {"acquisition"}
+    assert set(processing.settings_snapshot["CONFIG.module_revisions"]) == {"acquisition", "processing"}
+    assert processing.settings_snapshot["ACQUISITION.sample_rate"] == 250
+    assert not hasattr(processing, "sample_rate")
+    assert acquisition.settings_snapshot["ACQUISITION.sample_rate"] == 250
+    assert processing.baseline_duration == 0.0

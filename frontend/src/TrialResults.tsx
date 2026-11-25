@@ -20,7 +20,7 @@ export function TrialResults({ trials, generation, stale = false }: {
   return <div className="trial-results">
     <p className="meta" id="results-scope">{t("results.scope", { limit: MAX_TRIALS })}</p>
     {currentGeneration && <p className="meta results-generation">{t("results.generation", { generation: currentGeneration })}</p>}
-    {stale && <p className="notice" role="status">{t("results.stale")}</p>}
+    {stale && <p className="inline-message" role="status">{t("results.stale")}</p>}
     <div className="results-toolbar">
       <label>{t("results.search")}<input type="search" aria-label={t("results.search")} value={query}
         placeholder={t("results.searchHint")} onChange={(event) => setQuery(event.target.value)} /></label>

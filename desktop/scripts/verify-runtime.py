@@ -78,9 +78,9 @@ def audit_native_libraries(root, manifest):
 
 
 def plugin_check():
-    from omnibci.application.plugin_schema import validate_parameters
-    from omnibci.infrastructure.plugins.loader import PluginLoader
-    from omnibci.infrastructure.plugins.plugin_catalog import PluginCatalog, PluginRoot, vendor_plugins_dir
+    from omnibci.application.plugin_management.schema import validate_parameters
+    from omnibci.infrastructure.plugin_management.loader import PluginLoader
+    from omnibci.infrastructure.plugin_management.catalog import PluginCatalog, PluginRoot, vendor_plugins_dir
     from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.frame_pack import FramePack
 
     vendor = vendor_plugins_dir()
@@ -97,7 +97,7 @@ def plugin_check():
             if descriptor.entrypoint and descriptor.supports_platform(sys.platform):
                 PluginLoader.load_entrypoint(descriptor, object)
         contributions.extend(found)
-    assert len(contributions) == 11, len(contributions)
+    assert len(contributions) == 13, len(contributions)
     resource = resources.files("omnibci.infrastructure.plugins.paradigms.classic40SSVEP").joinpath(
         "resource", "classic40_ssvep.ofp",
     )

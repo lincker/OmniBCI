@@ -171,7 +171,7 @@ def test_runtime_plan_accepts_current_values_for_every_plugin_role(client, slot,
     if kind == "decoder":
         assert binding.processing_input.to_dict() == current["processing_input"]
     assert service.repository.list_profiles() == []
-    assert all(value is None for value in service.repository.get_activation_set().modules.values())
+    assert all(value is None for value in service.selected_configuration().modules.values())
 
 
 @pytest.mark.parametrize("changes", [
@@ -197,7 +197,7 @@ def test_runtime_plan_rejects_invalid_current_values_without_writes(client, chan
     response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "processing", "bindings": [current]})
     assert response.status_code == 422, response.text
     assert service.repository.list_profiles() == []
-    assert all(value is None for value in service.repository.get_activation_set().modules.values())
+    assert all(value is None for value in service.selected_configuration().modules.values())
 
 
 def test_runtime_plan_requires_explicit_current_decoder_mapping(client):
@@ -208,7 +208,7 @@ def test_runtime_plan_requires_explicit_current_decoder_mapping(client):
     }]})
     assert response.status_code == 422, response.text
     assert "processing_input" in response.json()["message"]
-    assert all(value is None for value in service.repository.get_activation_set().modules.values())
+    assert all(value is None for value in service.selected_configuration().modules.values())
 
 
 def test_acquisition_configuration_does_not_require_processing(client):
@@ -273,7 +273,7 @@ def test_catalog_lists_each_plugin_kind_without_applying_configuration(client, k
     assert isinstance(plugin["available"], bool)
     assert not {"id", "name", "display_name", "params", "plugin_type", "location", "entrypoint"}.intersection(plugin)
     assert service.repository.list_profiles() == []
-    assert all(module is None for module in service.repository.get_activation_set().modules.values())
+    assert all(module is None for module in service.selected_configuration().modules.values())
 
 
 def test_catalog_exposes_stimulation_trial_controls(client):
@@ -313,7 +313,6 @@ def test_profile_crud_and_compare_and_swap(client):
     http, _ = client
     profile = create(client)
     path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
-    assert http.get(path).json()["data"] == profile
     assert http.get(f"{PREFIX}/plugin-profiles?kind=acquisition").json()["data"] == [profile]
     assert http.get(f"{PREFIX}/plugin-profiles?kind=decoder").json()["data"] == []
     update = {"name": "Renamed", "parameters": {"sample_rate": 500}, "expected_revision": 1}
@@ -323,7 +322,7 @@ def test_profile_crud_and_compare_and_swap(client):
     assert http.put(path, json=update).status_code == 409
     assert http.delete(f"{path}?expected_revision=1").status_code == 409
     assert http.delete(f"{path}?expected_revision=2").status_code == 200
-    assert http.get(path).status_code == 404
+    assert http.get(f"{PREFIX}/plugin-profiles").json()["data"] == []
 
 
 
@@ -348,7 +347,7 @@ def test_decoder_profile_saves_and_pins_processing_input(client, sources):
     selected = accept(http, "processing", [("processing.decoder", configured)])
     decoder = selected["bindings"][0]
     assert decoder["processing_input"] == configured["processing_input"]
-    runtime = service.materialize(service.repository.get_activation_set())
+    runtime = service.materialize(service.selected_configuration())
     assert "SIGNAL.setup" not in runtime
     assert next(binding for binding in runtime["PLUGINS.bindings"]
                 if binding["slot"] == "processing.decoder")["processing_input"] == configured["processing_input"]
@@ -356,7 +355,7 @@ def test_decoder_profile_saves_and_pins_processing_input(client, sources):
         "expected_revision": configured["revision"], "processing_input": None})
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["data"]["processing_input"] == profile["processing_input"]
-    assert service.materialize(service.repository.get_activation_set()) == runtime
+    assert service.materialize(service.selected_configuration()) == runtime
 
 
 
@@ -387,7 +386,7 @@ def test_invalid_decoder_input_returns_422_without_saving(client, channel_input)
     response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
         "expected_revision": profile["revision"], "processing_input": channel_input})
     assert response.status_code == 422, response.text
-    assert http.get(path).json()["data"] == profile
+    assert http.get(f"{PREFIX}/plugin-profiles").json()["data"] == [profile]
 
 
 def test_acquisition_profile_rejects_processing_input(client):
@@ -397,7 +396,7 @@ def test_acquisition_profile_rejects_processing_input(client):
     response = http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
         "expected_revision": profile["revision"], "processing_input": {}})
     assert response.status_code == 422, response.text
-    assert http.get(path).json()["data"] == profile
+    assert http.get(f"{PREFIX}/plugin-profiles").json()["data"] == [profile]
 
 
 @pytest.mark.parametrize("field, value", [
@@ -413,7 +412,7 @@ def test_acquisition_profile_rejects_removed_metadata_fields(client, field, valu
     path = f"{PREFIX}/plugin-profiles/{profile['profile_id']}"
     assert http.put(path, json={"name": profile["name"], "parameters": profile["parameters"],
         "expected_revision": profile["revision"], field: value}).status_code == 422
-    assert http.get(path).json()["data"] == profile
+    assert http.get(f"{PREFIX}/plugin-profiles").json()["data"] == [profile]
 
 
 def test_saving_active_profile_does_not_change_selected_values(client):
@@ -500,8 +499,8 @@ def test_invalid_parameters_return_structured_422(client, parameters):
 
 def test_missing_profile_and_unknown_fields_are_rejected(client):
     http, _ = client
-    assert http.get(f"{PREFIX}/plugin-profiles/{uuid4()}").status_code == 404
-    assert http.get(f"{PREFIX}/plugin-profiles/not-a-uuid").status_code == 422
+    assert http.get(f"{PREFIX}/plugin-profiles/{uuid4()}/history").status_code == 404
+    assert http.get(f"{PREFIX}/plugin-profiles/not-a-uuid/history").status_code == 422
     response = http.post(f"{PREFIX}/apply-plan", json={"settings": {}, "module": "acquisition", "bindings": [], "unexpected": True})
     assert response.status_code == 422
 
@@ -528,10 +527,9 @@ def test_invalid_stored_identity_remains_an_http_validation_error(client):
     document = tomlkit.parse(path.read_text())
     document["selection"]["version"] = "1.0.0."
     path.write_text(tomlkit.dumps(document))
-    for route in (f"{PREFIX}/plugin-profiles/{profile['profile_id']}", f"{PREFIX}/plugin-profiles"):
-        response = http.get(route)
-        assert response.status_code == 422
-        assert response.json()["code"] == "VALIDATION_ERROR"
+    response = http.get(f"{PREFIX}/plugin-profiles")
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_configuration_queries_need_no_repository_or_catalog_access(client):
@@ -545,7 +543,7 @@ def test_configuration_queries_need_no_repository_or_catalog_access(client):
     engine = service.repository.save_engine(service.propose_engine({"debug": False}))
     queries = SimpleNamespace(
         list_plugin_configurations=service.catalog.list,
-        list_profiles=service.repository.list_profiles, get_profile=service.repository.get_profile,
+        list_profiles=service.repository.list_profiles,
         get_module=service.repository.get_module, get_engine=service.repository.get_engine,
         module_history=service.repository.list_module_history,
         module_history_entry=service.repository.get_module_history_entry,
@@ -556,33 +554,11 @@ def test_configuration_queries_need_no_repository_or_catalog_access(client):
     catalog = http.get(f"{PREFIX}/plugin-catalog/effector")
     assert catalog.status_code == 200 and catalog.json()["data"]
     assert http.get(f"{PREFIX}/plugin-profiles?kind=effector").json()["data"][0]["profile_id"] == profile["profile_id"]
-    assert http.get(f"{PREFIX}/plugin-profiles/{profile['profile_id']}").json()["data"]["parameters"] == profile["parameters"]
     assert http.get(f"{PREFIX}/modules/actuation").json()["data"]["revision"] == activation.revision
-    assert http.get(f"{PREFIX}/modules").json()["data"]["engine"]["revision"] == engine.revision
     assert http.get(f"{PREFIX}/engine").json()["data"]["revision"] == engine.revision
     assert http.get(f"{PREFIX}/modules/actuation/history").json()["data"][0]["entry_id"] == history.entry_id
     assert http.get(f"{PREFIX}/modules/actuation/history/{history.entry_id}").json()["data"]["revision"] == activation.revision
     assert http.get(f"{PREFIX}/modules/actuation/history/{uuid4()}").status_code == 404
-
-
-def test_module_overview_keeps_partial_query_errors(client):
-    http, service = client
-    def get_module(module):
-        if module == "processing":
-            raise ValueError("Processing configuration unreadable")
-        return None
-    def get_engine():
-        raise OSError("Engine settings unreadable")
-    http.app.state.container.configuration_service = SimpleNamespace(
-        get_module=get_module, get_engine=get_engine,
-        default_module_settings=service.default_module_settings,
-    )
-    response = http.get(f"{PREFIX}/modules")
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["errors"] == {"processing": "Processing configuration unreadable", "engine": "Engine settings unreadable"}
-    assert data["engine"] is None
-    assert data["modules"]["actuation"]["bindings"] == []
 
 
 def test_openapi_publishes_typed_profile_and_module_contracts(client):
@@ -655,3 +631,26 @@ def test_module_history_records_a_b_a_and_revert_uses_entry_identity(client):
     apply_plan(http, plan.json()["data"])
     assert http.get(f"{PREFIX}/modules/acquisition/history").json()["data"] == history
     assert http.get(f"{PREFIX}/modules/acquisition/history/{uuid4()}").status_code == 404
+
+
+from unittest.mock import Mock
+from omnibci.application.configuration.errors import PluginProfileValidationError
+from omnibci.presentation.dependencies import get_configuration_service
+
+
+@pytest.mark.parametrize("error,status,code", [
+    (PluginProfileValidationError("invalid input"), 422, "VALIDATION_ERROR"),
+    (ValueError("private implementation detail"), 500, "INTERNAL_ERROR"),
+])
+def test_profile_route_distinguishes_input_validation_from_internal_errors(error, status, code):
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    service = SimpleNamespace(list_profiles=Mock(side_effect=error))
+    app.dependency_overrides[get_configuration_service] = lambda: service
+    with TestClient(app, raise_server_exceptions=False) as http:
+        response = http.get("/config/plugin-profiles")
+    assert response.status_code == status
+    assert response.json()["code"] == code
+    if status == 500:
+        assert "private implementation detail" not in response.text

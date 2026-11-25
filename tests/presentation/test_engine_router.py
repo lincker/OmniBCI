@@ -17,8 +17,9 @@ class TestEngineStatus:
         assert "running" in data
         assert "acquisition_alive" in data
         assert "processor_alive" in data
-        assert data["actuation_alive"] is False
+        assert "stimulation_connected" in data
         assert "actuation_connected" in data
+        assert "actuation_alive" not in data
 
     def test_status_running_true_when_service_running(self, api_client, engine_service):
         engine_service._running = True
@@ -65,34 +66,10 @@ class TestEngineStop:
             mock_stop.assert_awaited_once()
 
 
-@pytest.mark.parametrize("module", ["acquisition", "processing", "actuation"])
-@pytest.mark.parametrize("action", ["stop"])
-def test_module_action_targets_only_requested_module(api_client, engine_service, module, action):
-    with patch.object(engine_service, f"{action}_module", new_callable=AsyncMock) as operation:
-        response = api_client.post(f"/api/v1/engine/modules/{module}/{action}")
-    assert response.status_code == 200
-    operation.assert_awaited_once_with(module)
-
-
-@pytest.mark.parametrize("module", ["unknown", "stimulation", "engine"])
-def test_module_route_rejects_unsupported_modules(api_client, module):
-    assert api_client.post(f"/api/v1/engine/modules/{module}/start").status_code == 422
-
-
-
-
-@pytest.mark.parametrize("action", ["stop"])
-@pytest.mark.parametrize("execution_unknown", [False, True])
-def test_output_delivery_failure_reports_uncertainty(api_client, engine_service, action, execution_unknown):
-    from omnibci.application.services.command_result_service import CommandDeliveryError
-
-    error = CommandDeliveryError(
-        "output-command", "ResumeActuation" if action == "start" else "SettleActuation",
-        "Peer connection failed", execution_unknown=execution_unknown,
-    )
-    with patch.object(engine_service, f"{action}_module", new_callable=AsyncMock, side_effect=error):
-        response = api_client.post(f"/api/v1/engine/modules/actuation/{action}")
-
-    assert response.status_code == 503
-    assert response.json()["code"] == "PEER_DELIVERY_FAILED"
-    assert response.json()["detail"]["execution_unknown"] is execution_unknown
+@pytest.mark.parametrize("path", [
+    "/api/v1/engine/modules/processing/start",
+    "/api/v1/engine/modules/actuation/stop",
+    "/api/v1/engine/modules/stimulation/prepare",
+])
+def test_legacy_engine_module_routes_are_removed(api_client, path):
+    assert api_client.post(path).status_code == 404

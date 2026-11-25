@@ -15,34 +15,6 @@ from omnibci.sdk import Decoder, Prediction, SignalInfo
 
 
 class Classic40FBCCA(Decoder):
-    # class Template:
-    #     MULTIPLY_TIME = 5
-    #     def __init__(self, sample_rate, sample_count) -> None:
-    #         self.SAMPLE_RATE = sample_rate
-    #         self.SAMPLE_COUNT = sample_count
-    #         self.FREQUENCY_SET = [8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
-    #                               8.2, 9.2, 10.2, 11.2, 12.2, 13.2, 14.2, 15.2,
-    #                               8.4, 9.4, 10.4, 11.4, 12.4, 13.4, 14.4, 15.4,
-    #                               8.6, 9.6, 10.6, 11.6, 12.6, 13.6, 14.6, 15.6,
-    #                               8.8, 9.8, 10.8, 11.8, 12.8, 13.8, 14.8, 15.8]
-    #
-    #     def generate_template(self):
-    #         template_set = []
-    #         sample_points = np.linspace(0, (self.SAMPLE_COUNT - 1) / self.SAMPLE_RATE, int(self.SAMPLE_COUNT),
-    #                                     endpoint=True)
-    #         sample_points = sample_points.reshape(1, len(sample_points))
-    #         for index in range(0, len(self.FREQUENCY_SET)):
-    #             frequency = self.FREQUENCY_SET[index]
-    #             test_frequency = np.linspace(frequency, frequency * self.MULTIPLY_TIME, int(self.MULTIPLY_TIME),
-    #                                          endpoint=True)
-    #             test_frequency = test_frequency.reshape(1, len(test_frequency))
-    #             num_matrix = 2 * np.pi * np.dot(test_frequency.T, sample_points)
-    #             cos_set = np.cos(num_matrix)
-    #             sin_set = np.sin(num_matrix)
-    #             cos_sin_set = np.append(cos_set, sin_set, axis=0)
-    #             template_set.append(cos_sin_set)
-    #         return template_set
-
     def __init__(
         self, *, parameters: Mapping[str, object], resource_root: Path,
         input_signal: SignalInfo,
@@ -62,8 +34,6 @@ class Classic40FBCCA(Decoder):
         if self.SAMPLE_COUNT < 2:
             raise ValueError("Decode window must contain at least two samples")
         self.OFFSET_LENGTH = math.floor(offset_time * self.SAMPLE_RATE)
-        # self.template_set = self.Template(sample_rate=self.SAMPLE_RATE,
-        #                                   sample_count=self.SAMPLE_COUNT).generate_template()
         self.num_harmonics = 5
         self.num_bands = 3
         self.weights = self._filter_bank = None

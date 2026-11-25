@@ -52,7 +52,7 @@ def _checkpoint(value):
     return data
 
 
-def metadata_request(value):
+def _metadata_request(value):
     if value is None:
         return None
     data = _record(value, (), {"refresh"})
@@ -78,9 +78,7 @@ def _preview_request(value, *, action):
     fields = {"generation"}
     if action == "start":
         fields |= {"expected_revision", "connection_id", "capture_id"}
-    elif action == "stop":
-        fields.add("capture_id")
-    optional = {"selection", "continuous"} if action == "start" else {"capture_id"} if action == "get" else ()
+    optional = {"selection", "continuous"} if action == "start" else {"capture_id"}
     data = _record(value, fields, optional)
     for key in fields - {"selection", "continuous"}:
         _text(data[key])
@@ -140,7 +138,7 @@ def _attachment_receipt(value):
     return data
 
 
-def detach_input_request(value):
+def _detach_input_request(value):
     data = _identity(value, optional={"drain"})
     if "drain" in data and type(data["drain"]) is not bool:
         raise ValueError("drain must be a boolean")
@@ -212,10 +210,6 @@ def _output_receipt(value, *, flags, counts=()):
     return data
 
 
-def _actuation_request(value):
-    return validate_actuation_command(value)
-
-
 @dataclass(frozen=True)
 class CommandContract:
     owner: str
@@ -229,15 +223,13 @@ _CONTRACTS = {
     EventType.DisconnectDataProvider: CommandContract("acquisition", ("acquisition",), _none, _none),
     EventType.GetSourceCheckpoint: CommandContract("acquisition", ("acquisition",), _identity, _source_receipt),
     EventType.RestoreSourceCheckpoint: CommandContract("acquisition", ("acquisition",), _checkpoint, partial(_source_receipt, restore=True)),
-    EventType.GetSourceMetadata: CommandContract("acquisition", (), metadata_request, metadata_receipt),
+    EventType.GetSourceMetadata: CommandContract("acquisition", (), _metadata_request, metadata_receipt),
     EventType.StartStream: CommandContract("acquisition", ("acquisition",), _none, _none),
-    EventType.StopStream: CommandContract("acquisition", ("acquisition",), _none, _none),
     EventType.StopAndDrain: CommandContract("acquisition", ("acquisition",), _none, _drain_receipt),
     EventType.StartAcquisitionPreview: CommandContract("acquisition", ("acquisition",), partial(_preview_request, action="start"), _preview_receipt),
-    EventType.StopAcquisitionPreview: CommandContract("acquisition", ("acquisition",), partial(_preview_request, action="stop"), _preview_receipt),
     EventType.GetAcquisitionPreview: CommandContract("acquisition", (), partial(_preview_request, action="get"), _preview_receipt),
     EventType.AttachProcessingInput: CommandContract("acquisition", ("processing",), _preparation_receipt, _attachment_receipt),
-    EventType.DetachProcessingInput: CommandContract("acquisition", ("processing",), detach_input_request, _drain_receipt),
+    EventType.DetachProcessingInput: CommandContract("acquisition", ("processing",), _detach_input_request, _drain_receipt),
     EventType.StageProcessingConfiguration: CommandContract("processing", ("processing",), stage_configuration_request, _configuration_receipt),
     EventType.CancelProcessingConfiguration: CommandContract("processing", ("processing",), cancel_configuration_request, _configuration_receipt),
     EventType.PrepareSignalProcessing: CommandContract("processing", ("processing",), prepare_signal_request, _preparation_receipt),
@@ -246,7 +238,7 @@ _CONTRACTS = {
     EventType.StopStimulation: CommandContract("stimulation", ("stimulation",), _none, _none),
     EventType.PauseStimulation: CommandContract("stimulation", ("stimulation",), _none,
         partial(_output_receipt, flags={"paused": True, "renderer_stopped": True}, counts=("cancelled_trials",))),
-    EventType.ActuationCommand: CommandContract("actuation", ("actuation",), _actuation_request, None),
+    EventType.ActuationCommand: CommandContract("actuation", ("actuation",), validate_actuation_command, None),
     EventType.SettleActuation: CommandContract("actuation", ("actuation",), _none,
         partial(_output_receipt, flags={"paused": True, "execution_complete": True, "outputs_settled": True}, counts=("pending_cancelled",))),
     EventType.ResumeActuation: CommandContract("actuation", ("actuation",), _none,

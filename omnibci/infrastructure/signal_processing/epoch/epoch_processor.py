@@ -4,7 +4,6 @@ EpochProcessor — Infrastructure helper for the processor.
 Responsibility:
   - Epoching: collect prepared signal chunks into an epoch buffer (boundary indices are
     located by SignalProcessor's EpochDetector and passed in).
-  - Construct an immutable Epoch value-object once the buffer is ready.
   - Run the decoder and wrap the result as a Classification value-object.
 """
 
@@ -14,7 +13,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from omnibci.domain.classification import Classification
-from omnibci.domain.epoch import Epoch
 from omnibci.domain.ports.algorithm import Decoder, Filter, Prediction
 from omnibci.infrastructure.signal_processing.epoch.pipeline import ProcessingPipeline
 from omnibci.domain.signal import SignalChunk
@@ -29,10 +27,9 @@ class EpochProcessor:
 
     One instance per epoch (created fresh on each detected start, dropped on
     completion). Lifecycle:
-        initialize_epoch()            — first samples stored from start_idx
+        initialize_epoch()                    — first samples stored from start_idx
         append_chunk() / append_until_index() — stream more samples
-        build_epoch()                 — construct immutable Epoch VO
-        _run_pipeline()               — decode window → Classification
+        _run_pipeline()                       — decode window → Classification
     """
 
     def __init__(
@@ -93,8 +90,8 @@ class EpochProcessor:
 
         *pre_trigger_data* (channels × n) is the optional reference data supplied by
         the caller's PreTriggerBuffer. It is stored separately from the analysis
-        window: the decoder still sees only post-trigger samples, while
-        ``build_epoch`` stitches pre-trigger data + window into the Epoch VO.
+        window so filters can inspect pre-trigger reference samples while the
+        decoder sees only post-trigger samples.
 
         Raises:
             ValueError: if *start_idx* is negative.
@@ -154,40 +151,6 @@ class EpochProcessor:
         self._epoch_data = self._epoch_storage[:, :total]
         self._current_chunk_data = samples
         self._pending_decode = True
-
-    # ------------------------------------------------------------------
-    # Domain-object construction
-    # ------------------------------------------------------------------
-
-    def build_epoch(self) -> Epoch:
-        """
-        Construct an immutable Epoch value-object from the current buffer.
-
-        Raises:
-            RuntimeError: if no epoch is being collected.
-            ValueError: propagated from Epoch.__post_init__ on bad data.
-        """
-        if self._event_id is None:
-            raise RuntimeError("No active epoch; call initialize_epoch() first")
-        if self._epoch_data.size == 0:
-            raise RuntimeError("Epoch buffer is empty; cannot build Epoch VO")
-
-        channel_count = self._epoch_data.shape[0]
-        # Stitch [ pre_trigger_data | window ] into one contiguous segment; the
-        # trigger sits at index trigger_offset == pre-trigger sample count.
-        trigger_offset = self._pre_trigger_data.shape[1]
-        if trigger_offset:
-            full = np.concatenate([self._pre_trigger_data, self._epoch_data], axis=1)
-        else:
-            full = self._epoch_data
-        return Epoch(
-            # Epoch copies and freezes its array; no extra defensive copy is needed.
-            data=full,
-            event_id=self._event_id,
-            sample_rate=self.sample_rate,
-            channel_count=channel_count,
-            trigger_offset=trigger_offset,
-        )
 
     # ------------------------------------------------------------------
     # Decoding

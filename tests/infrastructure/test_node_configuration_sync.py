@@ -135,7 +135,7 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
     node_catalog = MetadataCatalog(kinds)
 
     async def scenario():
-        engine = NeuroEngineService(HardwareFreeGraph, snapshot_provider=lambda: profiles.materialize(profiles.repository.get_activation_set()))
+        engine = NeuroEngineService(HardwareFreeGraph, snapshot_provider=lambda: profiles.materialize(profiles.selected_configuration()))
         publication = NodeConfigurationService(engine, profiles)
         servers, clients, tasks = [], [], []
         try:

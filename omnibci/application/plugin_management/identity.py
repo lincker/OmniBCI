@@ -11,9 +11,9 @@ PLUGIN_KINDS = frozenset({
 PACKAGE_DOMAINS = frozenset({"acquisition", "processing", "stimulation", "actuation"})
 SUPPORTED_PLATFORMS = frozenset({"darwin", "linux", "win32"})
 
-IDENTIFIER_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_-]*"
-_IDENTIFIER_RE = re.compile(IDENTIFIER_PATTERN)
-_PACKAGE_ID_RE = re.compile(rf"{IDENTIFIER_PATTERN}\.{IDENTIFIER_PATTERN}")
+_IDENTIFIER_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_-]*"
+_IDENTIFIER_RE = re.compile(_IDENTIFIER_PATTERN)
+_PACKAGE_ID_RE = re.compile(rf"{_IDENTIFIER_PATTERN}\.{_IDENTIFIER_PATTERN}")
 _VERSION_RE = re.compile(r"[0-9][A-Za-z0-9._+-]{0,127}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 

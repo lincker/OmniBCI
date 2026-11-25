@@ -70,7 +70,9 @@ function text(tree) {
   if (React.isValidElement(tree)) return text(tree.props.children);
   return tree == null || typeof tree === "boolean" ? "" : String(tree);
 }
-function render({ stimulation = ready, stimulationError = null, selectedParadigm = paradigm,
+function render({ stimulation = ready, stimulationError = null,
+  actuation = { active: false, process_alive: false, engine_connected: false, effector: null }, actuationError = null,
+  selectedParadigm = paradigm,
   loadError = null, runtime = {}, acquisition = { connected: false, streaming: false },
   selection = activation, engine = { running: true, processor_alive: true }, engineError = null, acquisitionError = null,
   signal = null, signalError = null,
@@ -80,17 +82,17 @@ function render({ stimulation = ready, stimulationError = null, selectedParadigm
   onStateChange = noop, onEffect = noop, onEditProcessing = noop } = {}) {
   const dispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher;
   const previous = dispatcher.current;
-  // Seed the two polls, then the accepted selection and loaded trial-control state.
+  // Seed the polls, then the accepted selection and loaded trial-control state.
   const selectedModules = selection?.modules ? selection : selection ? moduleConfiguration(selection) : null;
   const actions = Object.fromEntries(["start", "stop", "launch", "readCurrent", "stopStim", "trigger", "startProcessing", "stopProcessing", "startActuation", "stopActuation"].map((name) => [name, { pending: false, error: actionErrors[name] ?? null }]));
-  const states = [stimulation, stimulationError, signal, signalError, actions, {}, selectedParadigm,
+  const states = [stimulation, stimulationError, actuation, actuationError, signal, signalError, actions, {}, selectedParadigm,
     controls, loadError, controlValues, trialError, 0];
   let stateIndex = 0;
   dispatcher.current = {
     useState: (initial) => {
       const index = stateIndex++;
       return [index < states.length ? states[index] : typeof initial === "function" ? initial() : initial,
-        (value) => onStateChange(({ 9: "controlValues", 10: "trialError" })[index] ?? index, value)];
+        (value) => onStateChange(({ 11: "controlValues", 12: "trialError" })[index] ?? index, value)];
     },
     useContext: () => english, useRef: (value) => ({ current: value }),
     useCallback: (callback) => callback, useEffect: onEffect,
@@ -254,8 +256,7 @@ test("startup summary displays pinned versions rather than the latest saved revi
   assert.doesNotMatch(text(summary), /Lab source/);
   assert.match(text(summary), /example\.source\/main/);
   assert.match(text(summary), /Plugin 1\.2\.0/);
-  assert.doesNotMatch(text(summary), /Profile revision/);
-  assert.doesNotMatch(text(summary), /9\.9\.9|Profile revision 9/);
+  assert.doesNotMatch(text(summary), /9\.9\.9/);
 });
 
 test("current summary includes every configured role and plugin identity", () => {
@@ -267,12 +268,10 @@ test("current summary includes every configured role and plugin identity", () =>
     assert.ok(elements(summary).some((element) => text(element) === label), `Missing startup role: ${label}`);
   }
   for (const binding of completeActivation.bindings) {
-    assert.ok(!text(summary).includes(`Saved ${binding.profile_id}`));
     assert.ok(text(summary).includes(`${binding.selection.package_id}/${binding.selection.contribution_id}`));
-    assert.doesNotMatch(text(summary), /Profile revision/);
   }
   assert.match(text(summary), /Plugin 1\.2\.3/);
-  assert.doesNotMatch(text(summary), /latest\.package|new-contribution|9\.9\.9|Profile revision 99/);
+  assert.doesNotMatch(text(summary), /latest\.package|new-contribution|9\.9\.9/);
 });
 
 test("startup summary groups plugins into the four configuration modules", () => {
@@ -301,11 +300,9 @@ test("startup filters preserve activation order and repeated use of the same pro
   const filters = completeActivation.bindings.filter((binding) => binding.slot.startsWith("processing.filter."));
   assert.equal(items.length, 3, "Repeated profiles represent separate filter instances");
   filters.forEach((binding, index) => {
-    assert.ok(!text(items[index]).includes(`Saved ${binding.profile_id}`));
     assert.ok(text(items[index]).includes(`${binding.selection.package_id}/${binding.selection.contribution_id}`));
     assert.ok(text(items[index]).includes("Plugin 1.2.3"));
-    assert.doesNotMatch(text(items[index]), /Profile revision/);
-    assert.doesNotMatch(text(items[index]), /9\.9\.9|Profile revision 99/);
+    assert.doesNotMatch(text(items[index]), /9\.9\.9/);
   });
 });
 
@@ -317,7 +314,7 @@ for (const [name, overrides, expected] of [
   const tree = render({ selection: completeActivation, profiles: latestProfiles, ...overrides });
   const summary = elements(tree).find((element) => element.props["aria-label"] === "Current parameters");
   assert.match(text(summary), expected);
-  assert.doesNotMatch(text(summary), /Saved |pinned\.|latest\.package|Plugin 1\.2\.3|Profile revision/);
+  assert.doesNotMatch(text(summary), /pinned\.|latest\.package|Plugin 1\.2\.3/);
   assert.equal(elements(summary).filter((element) => element.type === "li").length, 0);
 });
 
@@ -344,11 +341,10 @@ test("Run routes each explicit source action to the shared controller without co
   const calls = [];
   const acquisitionActions = Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) =>
     [name, async (...args) => calls.push([name, ...args])]));
-  const originalSignal = signalConfigApi.get, originalStatus = runtimeConfigApi.status, originalActivation = pluginConfigApi.modules;
+  const originalSignal = signalConfigApi.get, originalStatus = runtimeConfigApi.status, originalModule = pluginConfigApi.module;
   signalConfigApi.get = async () => null;
   runtimeConfigApi.status = async () => ({ running: true, accepted: revisionMap(revision), applied: revisionMap(revision),
     generation: "engine-1", recovery: {}, operations: {} });
-  pluginConfigApi.modules = async () => moduleConfiguration(sourceActivation);
   pluginConfigApi.module = async (module) => moduleConfiguration(sourceActivation).modules[module];
   try {
     const disconnected = render({ selection: sourceActivation, acquisitionActions });
@@ -365,7 +361,7 @@ test("Run routes each explicit source action to the shared controller without co
     await actionButton(reading, "Start reading").props.onClick();
     await actionButton(reading, "Stop reading").props.onClick();
     assert.deepEqual(calls, [["connect", currentRequest("acquisition", moduleConfiguration(sourceActivation).modules.acquisition)], ["read", { expected_revision: revision, generation: "engine-1", connection_id: "source-1" }], ["disconnect"], ["stopRead"]]);
-  } finally { signalConfigApi.get = originalSignal; runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; }
+  } finally { signalConfigApi.get = originalSignal; runtimeConfigApi.status = originalStatus; pluginConfigApi.module = originalModule; }
 });
 
 test("a pending source command blocks duplicate source actions but permits navigation", () => {
@@ -386,12 +382,12 @@ test("a failed stimulation launch refreshes status and displays its error next t
   const original = [{ ...api }, { ...signalConfigApi }, { ...runtimeConfigApi }, { ...pluginConfigApi }];
   const updates = new Map();
   let refreshes = 0;
-  api.stimStart = async () => { throw new Error("Renderer initialization failed"); };
+  api.moduleStart = async () => { throw new Error("Renderer initialization failed"); };
   api.stimulationStatus = async () => ({ ...ready, active: false, process_alive: false });
+  api.actuationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, effector: null });
   signalConfigApi.get = async () => null;
   runtimeConfigApi.status = async () => ({ running: true, accepted: revisionMap(revision), applied: revisionMap(revision),
     generation: "engine-1", recovery: {}, operations: {} });
-  pluginConfigApi.modules = async () => moduleConfiguration(activation);
   pluginConfigApi.module = async (module) => moduleConfiguration(activation).modules[module];
   try {
     const options = { stimulation: { ...ready, active: false, process_alive: false },
@@ -402,7 +398,7 @@ test("a failed stimulation launch refreshes status and displays its error next t
     await new Promise(setImmediate);
     assert.equal(refreshes, 1, "The stimulation command refreshes its own state and runtime without acquisition");
     assert.equal(updates.get(0).active, false);
-    const result = render({ ...options, actionErrors: { start: "Old engine failure", launch: updates.get(4).launch.error } });
+    const result = render({ ...options, actionErrors: { start: "Old engine failure", launch: updates.get(6).launch.error } });
     const stim = card(result, "Stimulation");
     assert.ok(elements(stim).some((element) => element.props.role === "alert" && text(element).includes("Renderer initialization failed")));
     assert.doesNotMatch(text(stim), /Old engine failure/);

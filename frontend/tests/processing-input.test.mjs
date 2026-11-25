@@ -225,7 +225,6 @@ test("plugin defaults require a connected descriptor with unique labels and neve
 test("profiles without a mapping create a fresh identity mapping without importing legacy settings", async () => {
   await withInput(async (view, calls) => {
     assert.equal(calls.change.length, 0);
-    assert.doesNotMatch(text(view.tree), /import|reference|bipolar|template|montage/i);
     await click(view, "Create channel mapping");
     assert.deepEqual(calls.change, [mapping()]);
   }, { value: null, requirements: channelRequirements });

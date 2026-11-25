@@ -47,13 +47,12 @@ class AcquisitionAppService:
         command_executor: CommandExecutor,
         settings=None,
         admission=None,
-        lifecycle_lock=None,
         *,
         preview_provider=None,
         generation_provider=None,
     ) -> None:
         self._admission = admission
-        """Use injected settings only for optional device status metadata."""
+        # Use injected settings only for optional device status metadata.
         self._settings = settings
         self._command_executor = command_executor
         # Projection of worker-reported device state (AcquisitionState events);
@@ -61,7 +60,7 @@ class AcquisitionAppService:
         self._connected = False
         self._streaming = False
         self._connection_id = None
-        self.lifecycle_lock = lifecycle_lock or RLock()
+        self.lifecycle_lock = RLock()
         self._prepare_signal = None
         self._metadata_binding = None
         self._preview_provider = preview_provider
@@ -277,14 +276,6 @@ class AcquisitionAppService:
                 "selection": selected.to_dict(), "continuous": continuous,
             })
             return {**result, **self._read_preview_cache(generation, result["capture_id"])}
-
-    @admitted(scopes="acquisition", recovery=True)
-    def stop_preview(self, *, generation: str, capture_id: str) -> dict:
-        self._require_capture_id(capture_id)
-        with self.lifecycle_lock:
-            result = self._preview_request(EventType.StopAcquisitionPreview,
-                                           {"generation": generation, "capture_id": capture_id})
-            return {**result, **self._read_preview_cache(generation, capture_id)}
 
     def get_preview(self, *, generation: str, capture_id: str | None = None) -> dict:
         if capture_id is not None:

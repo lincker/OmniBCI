@@ -23,6 +23,8 @@ from omnibci.infrastructure.process_lifecycle import StartupReporter
 from omnibci.infrastructure.stimulation.engine_channel import engine_peer_config
 from omnibci.infrastructure.stimulation.stimulator import Stimulator
 
+logger = logging.getLogger(__name__)
+
 _MANAGED_CONNECT_TIMEOUT_S = 5.0
 _EXTERNAL_CONNECT_TIMEOUT_S = 10.0
 
@@ -72,7 +74,7 @@ class Stimulation:
         self._stop_requests = []
 
     def run(self):
-        print('---StimulationMain run---')
+        logger.info("Stimulation process starting")
         asyncio.run(self.serve())
         return self._reconnect_requested
 
@@ -226,7 +228,7 @@ class Stimulation:
             raise BaseExceptionGroup("Stimulation shutdown failed", errors)
 
     async def start(self):
-        print('---StimulationMain start---')
+        logger.info("Stimulation event loop starting")
         # Install inbound routes before the reconnecting transport can receive
         # its first frame.
         self._register_event_listener()
@@ -556,7 +558,7 @@ class Stimulation:
         return stop_event is not None and stop_event.is_set()
 
     async def stop(self):
-        print('---StimulationMain stop---')
+        logger.info("Stimulation stopping")
         errors: list[Exception] = []
         cancellation: asyncio.CancelledError | None = None
         try:

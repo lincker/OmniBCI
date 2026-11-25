@@ -2,26 +2,10 @@
 OmniBCI REST + WebSocket API server.
 
 Start with:
-    uvicorn omnibci.presentation.main:app --host 0.0.0.0 --port 8000 --reload
+    uvicorn omnibci.presentation.main:app --host 127.0.0.1 --port 8000 --reload
 
-Endpoints:
-    GET  /healthz                          Health check
-    POST /api/v1/engine/start              Start NeuroEngine
-    POST /api/v1/engine/stop               Stop NeuroEngine
-    GET  /api/v1/engine/status             Engine status
-
-    POST /api/v1/acquisition/connect       Connect data source
-    POST /api/v1/acquisition/disconnect    Disconnect data source
-    POST /api/v1/acquisition/stream/start  Start data stream
-    POST /api/v1/acquisition/stream/stop   Stop data stream
-    GET  /api/v1/acquisition/status        Acquisition status
-
-    GET  /api/v1/config/plugin-catalog/{kind}  List configurable plugins
-    POST /api/v1/stimulation/start         Start stimulation
-    POST /api/v1/stimulation/stop          Stop stimulation
-    POST /api/v1/stimulation/trial/start   Trigger a trial
-
-    WS   /api/v1/ws/results                Real-time classification results
+Interactive API documentation is served at ``/docs`` and the OpenAPI schema at
+``/openapi.json`` (exported to ``docs/openapi.json`` via ``scripts/export_openapi.py``).
 """
 
 import asyncio
@@ -33,7 +17,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
 
-from omnibci.presentation.routers import engine, acquisition, stimulation, results, config
+from omnibci.presentation.routers import (
+    engine, acquisition, processing, stimulation, actuation, results, config,
+)
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages, plugin_market
 from omnibci.presentation.routers import signal_setup
 from omnibci.presentation.routers import server
@@ -85,8 +71,8 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
     (``omnibci.bootstrap``); this lifespan only:
       1. builds the container and exposes its services on app.state;
       2. gives the ResultsBroadcaster the running asyncio loop;
-      3. stores a hook that registers EventBus listeners (engine read-model +
-         WebSocket broadcaster) once the engine process is actually running.
+      3. registers EventBus listeners (engine read-model + WebSocket broadcaster)
+         for replay when the engine graph is built.
     """
     container = await build_container(
         host_settings=host_settings,
@@ -102,7 +88,7 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         app.state.engine_service = container.engine_service
         app.state.acquisition_service = container.acquisition_service
         app.state.stimulation_service = container.stimulation_service
-        app.state.stimulation_process_manager = container.stimulation_process_manager
+        app.state.actuation_service = container.actuation_service
         app.state.plugin_package_service = container.plugin_package_service
         app.state.plugin_market_service = container.plugin_market_service
 
@@ -112,9 +98,8 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         results_broadcaster.start_heartbeat()
 
         # Record EventBus listeners now; the graph is built at engine start.
-        # Presentation
-        # subscriptions are injected here so bootstrap stays free of any presentation
-        # import.
+        # Presentation subscriptions are injected here so bootstrap stays free
+        # of any presentation import.
         broadcaster_subscriptions = [
             (EventType.TrialCompleted, results_broadcaster.on_trial_completed),
             # Relay stimulation acks (from the stim process via the socket) to clients.
@@ -174,7 +159,9 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     app.include_router(server.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(processing.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(actuation.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(results.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(signal_setup.router, prefix=prefix, responses=ERROR_RESPONSES)

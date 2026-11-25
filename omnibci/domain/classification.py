@@ -1,8 +1,7 @@
 """
 Classification — Domain Value Object.
 
-The result produced by a decoder after analysing one Epoch.
-Replaces the bare `int` that was previously emitted via _emit_result().
+The result produced by a decoder after analysing one epoch.
 
 Business rules encoded here:
   - target_id must be non-negative.
@@ -15,12 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import isfinite
 from numbers import Integral, Real
-from typing import Optional
 
 from omnibci.domain.signal_info import integer
-
-#: Standard threshold for "high confidence" (confidence >= this value).
-HIGH_CONFIDENCE_THRESHOLD = 0.7
 
 
 def _normalize_target_id(value: object) -> int:
@@ -56,7 +51,7 @@ class Classification:
     """
     target_id: int
     event_id: int
-    confidence: Optional[float] = None
+    confidence: float | None = None
     forced: bool = False
     produced_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -70,15 +65,6 @@ class Classification:
             raise TypeError("produced_at must be a datetime")
         if self.produced_at.tzinfo is None or self.produced_at.utcoffset() is None:
             raise ValueError("produced_at must include a timezone offset")
-
-    # ------------------------------------------------------------------
-    # Convenience
-    # ------------------------------------------------------------------
-
-    @property
-    def is_high_confidence(self) -> bool:
-        """True when confidence is available and above the standard threshold."""
-        return self.confidence is not None and self.confidence >= HIGH_CONFIDENCE_THRESHOLD
 
     def __repr__(self) -> str:
         conf = f"{self.confidence:.2f}" if self.confidence is not None else "n/a"

@@ -490,3 +490,53 @@ class TestRenderFrameDrawing:
 
     def test_render_frame_noop_without_renderer(self, paradigm):
         assert paradigm.render_frame(timing(0)) is False
+
+
+from unittest.mock import Mock
+
+
+@pytest.fixture
+def payload_paradigm(tmp_path):
+    instance = Classic40SSVEP_2(parameters={}, resource_root=tmp_path)
+    instance.trigger = Mock()
+    instance.trigger.clear.return_value = instance.trigger.send.return_value = None
+    instance._text_view = Mock()
+    return instance
+
+
+@pytest.mark.parametrize('event_id', [0, 1, 40])
+def test_explicit_trial_preserves_cue_or_free_run_timing(payload_paradigm, event_id):
+    assert payload_paradigm.present_trial({'event_id': event_id}) is None
+    assert payload_paradigm.is_presenting()
+    if event_id == 0:
+        payload_paradigm.trigger.clear.assert_called_once_with()
+        payload_paradigm.trigger.send.assert_called_once_with(0)
+    else:
+        assert not payload_paradigm.trigger.mock_calls
+
+
+@pytest.mark.parametrize('payload', [None, 1, {}, {'event_id': True}, {'event_id': -1},
+                                     {'event_id': 41}, {'event_id': 1.0}, {'event_id': '1'},
+                                     {'event_id': 0, 'unknown': True}])
+def test_invalid_trial_never_falls_back_to_free_run(payload_paradigm, payload):
+    with pytest.raises(ValueError):
+        payload_paradigm.present_trial(payload)
+    assert not payload_paradigm.is_presenting()
+    assert not payload_paradigm.trigger.mock_calls
+
+
+@pytest.mark.parametrize('payload', [None, 1, {}, {'target_id': 0}, {'target_id': True},
+                                     {'target_id': 41}, {'target_id': 1.0}, {'target_id': '1'}])
+def test_invalid_result_changes_neither_activity_nor_feedback(payload_paradigm, payload):
+    with pytest.raises(ValueError):
+        payload_paradigm.present_result(payload)
+    assert not payload_paradigm.is_presenting()
+    assert not payload_paradigm._text_view.mock_calls
+
+
+def test_result_object_preserves_character_and_delete_feedback(payload_paradigm):
+    assert payload_paradigm.present_result({'target_id': 1}) is None
+    assert payload_paradigm.is_presenting()
+    payload_paradigm._text_view.add_text.assert_called_once()
+    assert payload_paradigm.present_result({'target_id': 40}) is None
+    payload_paradigm._text_view.remove_last.assert_called_once_with()

@@ -1,4 +1,17 @@
 /** Module configurations used by console tests; runtime APIs always receive separate sections. */
+import React from "react";
+
+export function elements(tree) {
+  if (Array.isArray(tree)) return tree.flatMap(elements);
+  return React.isValidElement(tree) ? [tree, ...elements(tree.props.children)] : [];
+}
+
+export function text(tree) {
+  if (Array.isArray(tree)) return tree.map(text).join("");
+  if (React.isValidElement(tree)) return text(tree.props.children);
+  return tree == null || typeof tree === "boolean" ? "" : String(tree);
+}
+
 export const moduleNames = ["acquisition", "processing", "stimulation", "actuation"];
 export const revisionMap = (revision) => ({
   ...Object.fromEntries(moduleNames.map((module) => [module, revision ?? null])),

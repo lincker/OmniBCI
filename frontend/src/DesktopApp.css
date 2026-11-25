@@ -16,5 +16,4 @@
 .desktop-control-guard { border: 0; padding: 0; margin: 0; min-width: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .file-path-field { display: flex; gap: 8px; min-width: 0; width: 100%; max-width: 440px; margin-top: 0.5rem; }
 .file-path-field input { flex: 1; }
-.result-export-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 @media (max-width: 760px) { .desktop-connection-bar { flex-wrap: wrap; } .desktop-server-address { flex-basis: 50%; } }

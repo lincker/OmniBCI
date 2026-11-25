@@ -25,7 +25,7 @@ from omnibci.shared.events import Event, EventType
 from .processing_state import AwaitingEpochState, AssemblingEpochState
 from .epoch.epoch_processor import EpochProcessor
 from .epoch.pretrigger_buffer import PreTriggerBuffer
-from .configuration_transactions import ConfigurationTransactions, configuration_receipt
+from .configuration_transactions import ConfigurationTransactions
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,7 @@
 /** Decoder profiles own channel mapping and declarations for unreported channel types. */
 import { useI18n, translate, type Translate } from "./i18n";
 import { useEffect, useRef, useState } from "react";
+import { errorMessage } from "./api/client";
 import { signalConfigApi as api, type ChannelBinding, type ChannelDescriptor, type ProcessingInput as Input,
   type SignalConfiguration, type SignalPreview } from "./api/signal-config";
 import { selectionKey, type PluginDefinition, type PluginSelection } from "./api/plugin-config";
@@ -64,7 +65,7 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
       if (sequence === sourceRequest.current) {
         request.current += 1; setPreview(null); setPreviewing(false);
         currentConfig.current = null; setConfig(null);
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorMessage(cause));
       }
       return null;
     } finally { if (sequence === sourceRequest.current) setRefreshing(false); }
@@ -144,7 +145,7 @@ export function ProcessingInput({ value, busy, configurationRevision, decoderSel
         if (next.source_revision === current.source_revision) setPreview(next);
         else { await refreshSource(); if (sequence === request.current) setNotice(true); }
       }
-    } catch (cause) { if (sequence === request.current) setError(cause instanceof Error ? cause.message : String(cause)); }
+    } catch (cause) { if (sequence === request.current) setError(errorMessage(cause)); }
     finally { if (sequence === request.current) setPreviewing(false); }
   };
 

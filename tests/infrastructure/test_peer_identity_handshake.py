@@ -383,3 +383,161 @@ def test_failed_handshake_cleanup_blocks_restart_until_socket_release(monkeypatc
 def test_identity_requires_role_revision_and_generation(role, revision, generation):
     with pytest.raises(ValueError):
         PeerIdentity(role, revision, "c" * 64, generation, "prepare-1", RECEIPT.bindings_sha256)
+
+
+def _exec_receipt():
+    return PluginExecutionReceipt(
+        "actuation", "prepare-1", "run-1", "a" * 64, "b" * 64,
+        "remote-node", "linux-aarch64", "c" * 64,
+        {"actuation.effector": {"binding_sha256": "d" * 64, "content_sha256": "e" * 64,
+                                "origin": "local", "verified_repository": None}},
+    )
+
+
+async def _wait_closed_slot(server):
+    async def poll():
+        while server._clients or server._pending_clients or server._closing_writers:
+            await asyncio.sleep(0.001)
+    await asyncio.wait_for(poll(), 1)
+
+
+@pytest.mark.parametrize("change", ["operation_id", "binding_sha256", "content_sha256",
+                                    "environment_sha256", "node_id", "target"])
+def test_accepted_operation_pins_actual_node_artifact_and_environment(change):
+    async def scenario():
+        evidence = _exec_receipt()
+        identity = PeerIdentity("actuation", "a" * 64, "b" * 64, "run-1",
+                                "prepare-1", evidence.bindings_sha256)
+        server = NetworkServer("127.0.0.1", 0, max_clients=1, identity=identity)
+        await server.start()
+        port = server.server.sockets[0].getsockname()[1]
+
+        async def exchange(data, accepted):
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            try:
+                writer.write(encode_event(Event(EventType.PeerHello, data)))
+                await writer.drain()
+                if accepted:
+                    event = await asyncio.wait_for(read_event_frame(reader), 1)
+                    assert event.type == EventType.PeerAccepted
+                    assert event.data == evidence.to_dict()
+                    assert server.execution_receipt == evidence
+                else:
+                    assert await asyncio.wait_for(reader.read(), 1) == b""
+                    assert not server.is_connected
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                await _wait_closed_slot(server)
+
+        try:
+            await exchange(evidence.to_dict(), True)
+            changed = evidence.to_dict()
+            if change in {"binding_sha256", "content_sha256"}:
+                changed["artifacts"]["actuation.effector"][change] = "f" * 64
+            else:
+                changed[change] = "f" * 64
+            await exchange(changed, False)
+            await exchange(evidence.to_dict(), True)
+        finally:
+            await server.stop()
+    asyncio.run(scenario())
+
+
+def test_first_handshake_rejects_extra_path_before_readiness():
+    async def scenario():
+        evidence = _exec_receipt()
+        identity = PeerIdentity("actuation", "a" * 64, "b" * 64, "run-1",
+                                "prepare-1", evidence.bindings_sha256)
+        server = NetworkServer("127.0.0.1", 0, identity=identity)
+        await server.start()
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.server.sockets[0].getsockname()[1])
+        try:
+            data = evidence.to_dict()
+            data["artifacts"]["actuation.effector"]["location"] = "/private/plugin"
+            writer.write(encode_event(Event(EventType.PeerHello, data)))
+            await writer.drain()
+            assert await asyncio.wait_for(reader.read(), 1) == b""
+            assert not server.is_connected
+            assert server.execution_receipt is None
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+    asyncio.run(scenario())
+
+
+def test_execution_history_failure_prevents_acknowledging_readiness():
+    async def scenario():
+        evidence = _exec_receipt()
+        recorded = []
+
+        def record(value):
+            recorded.append(value)
+            raise OSError("history unavailable")
+
+        identity = PeerIdentity("actuation", "a" * 64, "b" * 64, "run-1",
+                                "prepare-1", evidence.bindings_sha256)
+        server = NetworkServer("127.0.0.1", 0, identity=identity, record_execution=record)
+        await server.start()
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.server.sockets[0].getsockname()[1])
+        try:
+            writer.write(encode_event(Event(EventType.PeerHello, evidence.to_dict())))
+            await writer.drain()
+            assert await asyncio.wait_for(reader.read(), 1) == b""
+            assert recorded == [evidence]
+            assert not server.is_connected
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cancel_stop", [False, True])
+def test_peer_stop_waits_for_history_write_even_when_cancelled(cancel_stop):
+    import threading
+
+    async def scenario():
+        evidence = _exec_receipt()
+        started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+        def record(value):
+            assert value == evidence
+            started.set()
+            assert release.wait(2), "test did not release the history write"
+            finished.set()
+
+        identity = PeerIdentity("actuation", "a" * 64, "b" * 64, "run-1",
+                                "prepare-1", evidence.bindings_sha256)
+        server = NetworkServer("127.0.0.1", 0, identity=identity, record_execution=record)
+        await server.start()
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.server.sockets[0].getsockname()[1])
+        stop = None
+        try:
+            writer.write(encode_event(Event(EventType.PeerHello, evidence.to_dict())))
+            await writer.drain()
+            assert await asyncio.to_thread(started.wait, 1)
+            stop = asyncio.create_task(server.stop())
+            await asyncio.sleep(.02)
+            assert not stop.done()
+            if cancel_stop:
+                stop.cancel()
+                await asyncio.sleep(.02)
+                assert not stop.done()
+            release.set()
+            if cancel_stop:
+                with pytest.raises(asyncio.CancelledError):
+                    await stop
+            else:
+                await stop
+            assert finished.is_set()
+            assert not server.is_connected
+        finally:
+            release.set()
+            if stop is not None:
+                await asyncio.gather(stop, return_exceptions=True)
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+    asyncio.run(scenario())

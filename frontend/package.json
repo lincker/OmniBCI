@@ -2,7 +2,7 @@
   "name": "omnibci-console",
   "version": "0.1.0",
   "private": true,
-  "description": "OmniBCI Web console — read-only MVP (stage 1). Types generated from the server OpenAPI spec.",
+  "description": "OmniBCI Web and Desktop console. Types generated from the server OpenAPI spec.",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -6,12 +6,12 @@ import { translateControlLabel, translatePluginName, useI18n, type TranslationKe
 import { EpochProcessing } from "./EpochProcessing";
 import { AcquisitionPreview } from "./AcquisitionPreview";
 import { WorkbenchIcon as Icon } from "./WorkbenchIcon";
-import { pluginConfigApi, selectionId, selectionKey, configurationModules, type PluginDefinition } from "./api/plugin-config";
+import { pluginConfigApi, selectionId, selectionKey, configurationModules, type ConfigurationModule, type PluginDefinition } from "./api/plugin-config";
 import { MAX_TRIALS, parseTrialSequence, readTrialControls, type TrialControl } from "./plugin-controls";
 import { ModuleRuntime } from "./ModuleRuntime";
 import { LiveResults } from "./LiveResults";
 import type { AcquisitionController } from "./hooks/useAcquisition";
-import { currentBindings as collectCurrentBindings, type ConfigurationModule, type CurrentConfigurationController } from "./hooks/useCurrentConfiguration";
+import { currentBindings as collectCurrentBindings, type CurrentConfigurationController } from "./hooks/useCurrentConfiguration";
 import { recordingPathMissing, type RuntimeControls } from "./hooks/useRuntimeControls";
 import "./RunConsole.css";
 
@@ -35,10 +35,10 @@ const startupModules = [
 
 type Step = ConfigurationModule;
 const pipelineSteps = [
-  { id: "acquisition", label: "run.acquisition", slot: "acquisition.source", icon: "signal" },
-  { id: "processing", label: "run.signalProcessing", slot: "processing.decoder", icon: "workflow" },
-  { id: "stimulation", label: "run.stimulation", slot: "stimulation.paradigm", icon: "monitor" },
-  { id: "actuation", label: "run.actuation", slot: "actuation.effector", icon: "monitor", optional: true },
+  { id: "acquisition", label: "run.acquisition", slot: "acquisition.source" },
+  { id: "processing", label: "run.signalProcessing", slot: "processing.decoder" },
+  { id: "stimulation", label: "run.stimulation", slot: "stimulation.paradigm" },
+  { id: "actuation", label: "run.actuation", slot: "actuation.effector", optional: true },
 ] as const;
 type StepPhase = "done" | "working" | "failed" | "partial" | "waiting" | "unconfigured";
 
@@ -75,7 +75,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   current: CurrentConfigurationController;
 }) {
   const { t } = useI18n();
-  const { stimulation, signal, start, stop, trigger, operationReason, currentReason, readyFor, matches } = runtimeControls;
+  const { stimulation, actuation, signal, start, stop, trigger, operationReason, currentReason, readyFor, matches } = runtimeControls;
   const [selectedParadigm, setSelectedParadigm] = useState<PluginDefinition | null>(null);
   const [controls, setControls] = useState<Record<string, TrialControl>>({});
   const [loadError, setLoadError] = useState<string | { key: TranslationKey; params?: TranslationParams } | null>(null);
@@ -110,12 +110,10 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     const binding = bindings(module).find((item) => item.slot === slot);
     return binding ? `${binding.selection.package_id}/${binding.selection.contribution_id} · ${binding.selection.version}` : emptySelection(module);
   };
-  const selectedPlugin = (binding: ReturnType<typeof currentBindings>[number]) => {
-    if (!("selection" in binding)) return null;
-    return <><strong>{binding.selection.package_id}/{binding.selection.contribution_id}</strong>
+  const selectedPlugin = (binding: ReturnType<typeof currentBindings>[number]) =>
+    <><strong>{binding.selection.package_id}/{binding.selection.contribution_id}</strong>
       <small className="meta">{t("run.pinnedVersion", { version: binding.selection.version })}</small></>;
-  };
-  const missingRecording = recordingPathMissing(currentSource && "selection" in currentSource ? currentSource : undefined);
+  const missingRecording = recordingPathMissing(currentSource);
   const playback = acquisition.data?.metadata_provenance === "file-reported"
     || bindings("acquisition").some((item) => item.slot === "acquisition.source" && "data_file_path" in item.parameters);
   const selectedParadigmId = selectedParadigm ? selectionId(selectedParadigm.selection) : "";
@@ -244,7 +242,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const pluginInUse = (id: Step) => {
     const step = pipelineSteps.find((item) => item.id === id)!;
     const binding = readyFor(id) ? currentBindings(id).find((item) => item.slot === step.slot) : undefined;
-    return binding && "selection" in binding
+    return binding
       ? <p className="step-plugin meta">{t("pipeline.inUse", { name: `${binding.selection.package_id}/${binding.selection.contribution_id}` })}</p>
       : null;
   };
@@ -317,7 +315,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
         {acquisition.error && <p className="error" role="alert">{acquisition.error.message}</p>}
         <p className="meta">{acquisitionAvailable ? <>{translatePluginName(acquisition.data?.source ?? "", acquisition.data?.source ?? t("run.noSource"), t)} · {" "}
           {t("run.acquisitionDetails", { sampleRate: acquisition.data?.sample_rate ?? "—", channelCount: acquisition.data?.channel_count ?? "—" })}</> : t("run.unavailable")}</p>
-        <ModuleRuntime module="acquisition" controls={runtimeControls} showEngineStart={false} />
+        <ModuleRuntime module="acquisition" controls={runtimeControls} />
         {stepHelp(t("run.connectHelp"), <>{t("run.readHelp")}{playback && <> {t("run.playbackRestart")}</>}</>)}
         <AcquisitionPreview generation={running ? runtime.status?.generation : null}
           revision={runtime.status?.applied?.acquisition} connectionId={acquisition.data?.connection_id ?? null}
@@ -326,7 +324,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       {stepPanel("processing", <section className="card" aria-label={t("run.activeDecoderInput")}>
         <h2><Icon name="workflow" />{t("run.signalProcessing")}</h2>
         {pluginInUse("processing")}
-        <ModuleRuntime module="processing" controls={runtimeControls} showEngineStart={false} />
+        <ModuleRuntime module="processing" controls={runtimeControls} />
         {currentDecoder && !currentDetector && onEditProcessing && <button className="text-button" onClick={onEditProcessing}>{t("run.configureProcessing")}</button>}
       <div className="summary-items"><div><span>{t("run.signalPreparation")}</span>
         <strong>{current.modules.processing.error ? t("run.unavailable") : decoderConfigured === null ? t("run.loading")
@@ -348,7 +346,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
         {stimulation.error && <p className="error" role="alert">{stimulation.error.message}</p>}
         {stimulation.data?.active && stimulation.data.engine_connected && matches("stimulation", true)
           && <p className="meta">{paradigmName}<br />{t("profiles.slotTrigger")}: {selectedName("stimulation.trigger")}</p>}
-        <ModuleRuntime module="stimulation" controls={runtimeControls} showEngineStart={false} />
+        <ModuleRuntime module="stimulation" controls={runtimeControls} />
         <form className="actions trial-controls" onSubmit={(event) => { event.preventDefault(); triggerTrial(); }}>
           {sequenceControl && <div className="trial-sequence">
             <label className="control"><span className="meta">{t("run.targetSequence")}</span>
@@ -388,9 +386,9 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       </section>)}
       {stepPanel("actuation", <section className="card"><h2><Icon name="monitor" />{t("run.actuation")}</h2>
         {pluginInUse("actuation")}
-        {engine.data?.actuation_alive && engine.data.actuation_connected && matches("actuation", true)
+        {actuation.data?.active && actuation.data.engine_connected && matches("actuation", true)
           && <p className="meta">{selectedName("actuation.effector")}</p>}
-        <ModuleRuntime module="actuation" controls={runtimeControls} showEngineStart={false} />
+        <ModuleRuntime module="actuation" controls={runtimeControls} />
         {stepHelp(t("run.actuationHelp"))}
       </section>)}
     </div>

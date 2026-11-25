@@ -6,5 +6,4 @@ class EngineStatusResponse(BaseModel):
     acquisition_alive: bool
     processor_alive: bool
     stimulation_connected: bool
-    actuation_alive: bool
     actuation_connected: bool

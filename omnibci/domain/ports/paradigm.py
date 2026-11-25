@@ -1,13 +1,11 @@
 """
 Paradigm — domain port for stimulus-presentation plugins.
 
-The stimulation subsystem loads a Paradigm plugin (selected by
-STIMULATION.paradigm) and drives it to present stimuli. Each paradigm owns its
-own per-trial JSON object shape (SSVEP: event_id; P300: flash sequence;
-MI: cue class), opaque to the dispatch/queue layer.
+The stimulation subsystem loads the configured Paradigm plugin and drives it
+to present stimuli. Each paradigm owns its own per-trial JSON object shape
+(SSVEP: cue_target_id; P300: flash sequence; MI: cue class), opaque to the
+dispatch/queue layer.
 """
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 

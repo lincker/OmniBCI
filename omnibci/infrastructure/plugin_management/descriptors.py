@@ -63,7 +63,6 @@ class PluginPackageDescriptor:
     domain: str
     manifest_version: int = 1
     engines: Mapping[str, str] = field(default_factory=dict)
-    host_version: str | None = None
     requires: tuple[tuple[str, str], ...] = ()
     platforms: tuple[str, ...] = ()
     # Derived during preparation, never supplied by package authors.
@@ -98,7 +97,7 @@ class PluginDescriptor:
     package: PluginPackageDescriptor
     contribution_id: str
     category: str
-    entrypoint: PluginEntrypoint | None
+    entrypoint: PluginEntrypoint
     display_name: str
     description: str | None = None
     controls: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)

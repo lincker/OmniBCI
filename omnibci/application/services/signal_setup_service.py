@@ -1,5 +1,4 @@
 """Resolve decoder input against the selected or running Acquisition binding."""
-from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
 import json
@@ -8,9 +7,10 @@ from threading import RLock
 from uuid import uuid4
 
 from omnibci.application.configuration.definitions import module_runtime_settings
-from omnibci.application.configuration.errors import ConfigProfileValidationError
+from omnibci.application.configuration.errors import (
+    ConfigProfileValidationError, PluginProfileNotFoundError, ProfileRevisionConflict,
+)
 from omnibci.application.plugin_management.identity import PluginSelection
-from omnibci.application.configuration.errors import PluginProfileNotFoundError, ProfileRevisionConflict
 from omnibci.application.processing_source import (
     acquisition_binding_key, binding_for, processing_binding_key, processing_input,
     source_id_for, validate_source_binding,
@@ -42,7 +42,6 @@ class SignalSetupService:
         self._admission = engine.admission
         self._receipt = None
         self._pending_receipt = None
-        self._plan = None
         self._bound_key = None
         self._source_fingerprint = None
         self._preparation_error = None
@@ -52,7 +51,6 @@ class SignalSetupService:
         """Discard preparation receipts when the processing worker is stopped."""
         self._receipt = None
         self._pending_receipt = None
-        self._plan = None
         self._bound_key = None
         self._source_fingerprint = None
         self._preparation_error = None
@@ -98,7 +96,7 @@ class SignalSetupService:
                 metadata = None
         receipt = self._receipt
         # A processing-only update preserves the prepared source contract.
-        if (not source_error and active and receipt and self._plan
+        if (not source_error and active and receipt
                 and receipt.generation == active.get("CONFIG.generation")
                 and receipt.engine_revision == active.get("CONFIG.engine_revision")
                 and receipt.acquisition_revision == active.get("CONFIG.module_revisions", {}).get("acquisition")
@@ -310,7 +308,7 @@ class SignalSetupService:
                 raise RuntimeError("Signal Processing did not acknowledge the input boundary")
             if self._preparation_error is not None:
                 raise RuntimeError(self._preparation_error)
-            self._receipt, self._plan = receipt, plan
+            self._receipt = receipt
             self._bound_key, self._source_fingerprint = source_key, source_fingerprint(metadata)
             return receipt.to_dict()
         except Exception:

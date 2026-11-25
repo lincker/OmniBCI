@@ -7,10 +7,8 @@ flow and server contracts, see [web and server contracts](frontend-separation.md
 Screenshots are in `docs/images/ui/`. They show the dark theme at 1440×900 with
 Chinese as the interface language.
 
-The agreed [module and surface names](plugin-marketplace-design.md#32-canonical-module-and-surface-names)
-use **Plugins** for the management area and **Plugin Marketplace** for its
-distribution capability. The current UI and route use **Plugins** and `#plugins`. Screenshots below retain
-the earlier label and illustrate layout; the old route has no compatibility redirect.
+The console uses **Plugins** (`#plugins`) for package management and
+**Plugin Marketplace** for package distribution.
 
 ## Layout
 
@@ -91,19 +89,20 @@ The Run page is designed around one question: *what do I do next?*
    (forced outputs are marked `F`), the feed connection state, and a link to
    the full Results page. You no longer have to leave Run to see whether
    decoding works.
-5. **Secondary information** is collapsed below: current parameters, epoch
-   processing, and acknowledgements.
+5. **Secondary sections below.** Current parameters and acknowledgements sit in
+   collapsed disclosures below the pipeline; **Epoch processing** is shown as an
+   expanded, paginated card so every closed epoch remains directly inspectable.
 
 At 1440×900 the engine bar, stepper, active panel, and live results fit on one
 screen. Below 1100 px the results panel stacks under the step panel. Below
 760 px the stepper wraps to two columns.
 
-A mid-session view: acquisition and processing are done, stimulation is next,
+A mid-run view: acquisition and processing are done, stimulation is next,
 and decoded trials arrive in the side panel:
 
-![Run console during a session](images/ui/run-pipeline.png)
+![Run console during a run](images/ui/run-pipeline.png)
 
-#### Typical session
+#### Typical run
 
 1. Start engine. The Next badge moves to 采集.
 2. Connect, then Start reading. 采集 turns green and the panel advances to 信号处理.
@@ -126,11 +125,15 @@ Contribution selection remains in the owning module's configuration. Runtime
 preparation creates Instances in that module's backend Host; the management page
 itself does not execute plugin code.
 
-![Plugins layout with the historical Extensions label](images/ui/extensions.png)
-
 ### Settings / General
 
 ![General settings](images/ui/general.png)
+
+### Settings / Logs
+
+The Logs view (`#logs`) displays up to 200 recent lines from the last 64 KiB of
+the connected server process's log file, with a 5-second auto-refresh while
+visible and a manual refresh action.
 
 ## Design tokens
 
@@ -161,8 +164,8 @@ themes. The tokens are defined in `frontend/src/styles.css`:
   follows it, and each runtime panel highlights a single primary button.
   Disabled buttons always explain why in one line.
 - **Less text by default.** Long help sits behind **说明 / Details**
-  disclosures. Secondary data (current parameters, epochs, acknowledgements)
-  is collapsed.
+  disclosures. Current parameters and acknowledgements stay collapsed below the
+  pipeline, while Epoch processing stays expanded for live inspection.
 - **Results while operating.** The Run page always shows the latest decoded
   output.
 - **Smooth in-page jumps.** Setup scroll areas use smooth scrolling, so the
@@ -174,24 +177,22 @@ themes. The tokens are defined in `frontend/src/styles.css`:
   The runtime panel exposes its active state with a `data-active` attribute
   rather than an extra class, which keeps existing selectors stable.
 
-## Changed files
+## Key source files
 
-| File | Change |
+| File | Responsibility |
 | --- | --- |
-| `frontend/src/styles.css` | New tokens and transitions; hover states; activity-bar and explorer selection; rounded, elevated cards and groups; status pills; sticky engine card; footer elevation; reduced-motion support. |
-| `frontend/src/ModuleRuntime.css`, `ModuleRuntime.tsx` | Runtime panel with a state stripe and `data-active`. |
-| `frontend/src/PluginProfiles.css` | Segmented processing step bar. |
-| `frontend/src/RunConsole.tsx`, `RunConsole.css` | Guided pipeline: engine bar, stepper tabs, step panels, next-step logic, two-column layout, collapsed secondary sections. |
-| `frontend/src/LiveResults.tsx`, `LiveResults.css` | New live results side panel. |
-| `frontend/src/ModuleRuntime.tsx` | `actions="connection"` mode for Setup / Acquisition; single primary action. |
-| `frontend/src/PluginProfiles.tsx` | Setup shows a status strip and an "Operate in Run" link instead of lifecycle buttons. |
-| `frontend/src/locales/runtime.ts`, `profiles.ts` | `pipeline.*`, `live.*`, and Setup status strings (en and zh). |
-| `frontend/tests/run-configuration-state.test.mjs`, `plugin-profiles.test.mjs` | Stepper tests; Setup lifecycle tests now start modules through the shared runtime controls that Run uses. |
+| `frontend/src/styles.css` | Shared `light-dark()` tokens, layout grid, cards, status pills, footer elevation, and reduced-motion rules |
+| `frontend/src/ModuleRuntime.tsx`, `ModuleRuntime.css` | Module runtime panel with `data-active` state stripe, single primary action, and `actions="connection"` mode for Acquisition |
+| `frontend/src/PluginProfiles.tsx`, `PluginProfiles.css` | Setup pages, segmented processing step bar, read-only status strip, and profile editor/history |
+| `frontend/src/RunConsole.tsx`, `RunConsole.css` | Guided pipeline: engine bar, stepper tabs, step panels, next-step logic, and secondary disclosures |
+| `frontend/src/LiveResults.tsx`, `LiveResults.css` | Sticky live-results side panel on Run |
+| `frontend/src/EpochProcessing.tsx`, `EpochProcessing.css` | Paginated closed-epoch inspection card on Run |
+| `frontend/src/locales/` | English and Chinese message catalogs (`common`, `profiles`, `runtime`, `setup`) |
 
 ## Regenerating screenshots
 
 Start the Server and the Vite dev server, then capture each page with headless
-Chrome. `run-pipeline.png` and `run-stepper.png` need a running session. Start
+Chrome. `run-pipeline.png` and `run-stepper.png` need an active run. Start
 the engine, connect, read, and start processing first, then capture
 `#run` (crop `.run-pipeline` for the stepper close-up).
 
@@ -199,7 +200,7 @@ the engine, connect, read, and start processing first, then capture
 uvicorn omnibci.presentation.main:app --host 127.0.0.1 --port 8000 &
 (cd frontend && npm run dev) &
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-for page in acquisition processing run results extensions general; do
+for page in acquisition processing run results plugins general; do
   "$CHROME" --headless=new --disable-gpu --hide-scrollbars --window-size=1440,900 \
     --virtual-time-budget=6000 --screenshot="docs/images/ui/$page.png" \
     "http://localhost:5173/#$page"

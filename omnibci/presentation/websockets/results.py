@@ -138,7 +138,7 @@ class ResultsBroadcaster:
             return
         self._schedule(model_cls(**wire).model_dump_json())
 
-    # Named handlers kept as the EventBus subscription seam (see bootstrap).
+    # Named handlers registered on the EventBus during presentation lifespan.
     def on_trial_completed(self, event: Event) -> None:
         self._broadcast_event(event)
 

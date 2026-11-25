@@ -1,12 +1,10 @@
 # ============================================================================
-# OmniBCI — 项目元数据 + 工具配置的单一真相源（PEP 621）。
+# OmniBCI — Single source of truth for project metadata and tool configuration (PEP 621).
 #
-# 安装：
-#   pip install -e .            运行时依赖（服务器）
-#   pip install -e ".[stim]"    + 刺激渲染（显示机）
-#   pip install -e ".[dev]"     + 测试/契约/lint（开发机、CI）
-#
-# 依赖版本钉子平移自原 requirements/*.txt（现已降级为指向此文件的 shim）。
+# Installation:
+#   pip install -e .            Runtime dependencies (server)
+#   pip install -e ".[stim]"    + Stimulation rendering (display host)
+#   pip install -e ".[dev]"     + Tests / contracts / lint (development, CI)
 # ============================================================================
 
 [build-system]
@@ -20,12 +18,12 @@ description = "OmniBCI — a cross-platform BCI framework (DDD / clean architect
 readme = "Readme.md"
 requires-python = ">=3.14"
 dependencies = [
-    # 数值 / 信号
+    # Numerical / signal processing
     "numpy==2.4.4",
     "scipy==1.17.1",
     "mne==1.12.1",
     "scikit-learn==1.8.0",
-    # 配置
+    # Configuration
     "tomlkit==0.14.0",
     "platformdirs>=4.0",
     "cryptography>=46.0.0",
@@ -40,7 +38,7 @@ dependencies = [
 omnibci-plugin = "omnibci.plugin_cli:main"
 
 [project.optional-dependencies]
-# 刺激渲染：只有运行刺激进程的机器需要（多机部署时服务器可不装）
+# Stimulation rendering: only needed on machines running the stimulation process.
 stim = [
     "pyopengl==3.1.10",
     "glfw==2.10.0",
@@ -51,7 +49,7 @@ dev = [
     "omnibci[stim]",
     "pytest==9.0.3",
     "pytest-asyncio==1.4.0",
-    # starlette TestClient 的运行时依赖；原 requirements 缺失（本地靠环境顺带装上）
+    # Runtime dependency for Starlette TestClient.
     "httpx>=0.27",
     "import-linter>=2.0",
 ]
@@ -69,29 +67,26 @@ include = ["omnibci*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
-# 现有 @pytest.mark.asyncio 均为显式标记 → strict 模式
+# All async tests are explicitly marked with @pytest.mark.asyncio.
 asyncio_mode = "strict"
 markers = [
-    "gui: 需要真实显示器/OpenGL 上下文（CI 无头环境跳过）",
-    "hardware: 需要真实 EEG 硬件（CI 永远跳过）",
-    "integration: 使用真实文件或进程边界的较慢集成测试",
+    "gui: requires a real display and OpenGL context (skipped in headless CI)",
+    "hardware: requires real EEG hardware (always skipped in CI)",
+    "integration: slower integration tests using real files or process boundaries",
 ]
 
 # ============================================================================
-# import-linter 分层契约
+# import-linter architecture contracts
 #
-# 豁免表已随 P0-1/2/3 修复全部清零（2026-07）。此后任何跨层依赖都会让
-# CI 直接失败；确需豁免的必须在 PR 里专门论证后加 ignore_imports。
-# 本地运行：lint-imports
+# Run locally with: lint-imports
 # ============================================================================
 [tool.importlinter]
 root_package = "omnibci"
-# TYPE_CHECKING 块内的 import 仅用于类型标注，不构成运行时依赖，放行。
-# （stimulation_service 对 StimulationProcessManager 的引用属于此类）
+# Imports inside TYPE_CHECKING blocks are type-only and not runtime dependencies.
 exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
-name = "Clean architecture 分层（presentation → application → domain）"
+name = "Clean architecture layers (presentation -> application -> domain)"
 type = "layers"
 layers = [
     "omnibci.presentation",
@@ -100,7 +95,7 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "application 不得依赖 infrastructure"
+name = "Application must not depend on infrastructure"
 type = "forbidden"
 source_modules = ["omnibci.application"]
 forbidden_modules = ["omnibci.infrastructure"]
@@ -112,7 +107,7 @@ source_modules = ["omnibci.domain"]
 forbidden_modules = ["omnibci.infrastructure"]
 
 [[tool.importlinter.contracts]]
-name = "infrastructure 不得依赖 presentation"
+name = "Infrastructure must not depend on presentation"
 type = "forbidden"
 source_modules = ["omnibci.infrastructure"]
 forbidden_modules = ["omnibci.presentation"]
@@ -124,7 +119,7 @@ source_modules = ["omnibci.infrastructure.signal_processing"]
 forbidden_modules = ["omnibci.infrastructure.neuroengine"]
 
 [[tool.importlinter.contracts]]
-name = "shared 保持零内部依赖（纯共享内核）"
+name = "Shared kernel must have zero internal dependencies"
 type = "forbidden"
 source_modules = ["omnibci.shared"]
 forbidden_modules = [

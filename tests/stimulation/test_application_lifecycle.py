@@ -299,3 +299,189 @@ def test_event_queue_close_failure_keeps_cleanup_obligation() -> None:
 
     assert isinstance(raised.value.exceptions[0], OSError)
     assert app._event_queue_closed is False
+
+
+from queue import Queue
+from unittest.mock import Mock
+
+
+def _pause_app():
+    instance = Stimulation.__new__(Stimulation)
+    instance.should_stop = False
+    instance.stim_command_queue = Queue()
+    instance.result_command_queue = Queue()
+    instance.event_bus = Mock()
+    instance.stimulator = Mock()
+    instance._runtime_snapshot = {"CONFIG.module_revisions": {"stimulation": "revision"}, "CONFIG.engine_revision": "engine", "CONFIG.generation": "generation"}
+    instance._paused = False
+    return instance
+
+
+def _pause_receipts(instance, command):
+    return [call.args[0].data for call in instance.event_bus.put_event.call_args_list
+            if call.args[0].type == EventType.CommandResult
+            and call.args[0].data.command == command.name]
+
+
+def test_pause_joins_renderer_clears_trigger_and_cancels_future_trials():
+    async def scenario():
+        instance = _pause_app()
+        exited = asyncio.Event()
+        instance._render_task = asyncio.create_task(exited.wait())
+        instance._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
+            "queued-trials", {"n_trials": 2, "trial_params": [{"event_id": 1}, {"event_id": 2}]},
+        )))
+        pause = asyncio.create_task(instance._pause_stimulation(Event(
+            EventType.PauseStimulation, CommandRequest("pause"),
+        )))
+        await asyncio.sleep(0)
+        assert not pause.done()
+        assert _pause_receipts(instance, EventType.PauseStimulation) == []
+        instance.stimulator.request_stop.assert_called_once()
+        instance.stimulator.clear_trigger.assert_not_called()
+        assert instance.stim_command_queue.empty()
+        assert _pause_receipts(instance, EventType.StartStimTrial)[0].ok is False
+        await instance.execute_command()
+        instance.stimulator.present_trial.assert_not_called()
+        exited.set()
+        await pause
+        instance.stimulator.clear_trigger.assert_not_called()
+        result = _pause_receipts(instance, EventType.PauseStimulation)[0]
+        assert result.command_id == "pause"
+        assert result.ok
+        assert result.data == {
+            "paused": True, "renderer_stopped": True, "cancelled_trials": 2,
+            "generation": "generation", "module_revision": "revision", "engine_revision": "engine",
+        }
+        instance._put_stim_command_queue(Event(EventType.StartStimTrial, CommandRequest(
+            "late-trial", {"n_trials": 1, "trial_params": [{"event_id": 0}]},
+        )))
+        assert instance.stim_command_queue.empty()
+        assert _pause_receipts(instance, EventType.StartStimTrial)[-1].ok is False
+
+    asyncio.run(scenario())
+
+
+def test_trigger_clear_failure_leaves_paused_without_success_receipt():
+    async def scenario():
+        instance = _pause_app()
+        async def failed_cleanup():
+            raise OSError("trigger clear failed")
+        instance._render_task = asyncio.create_task(failed_cleanup())
+        await instance._pause_stimulation(Event(EventType.PauseStimulation, CommandRequest("pause")))
+        result = _pause_receipts(instance, EventType.PauseStimulation)[0]
+        assert not result.ok
+        assert "trigger clear failed" in result.message
+        assert result.data is None
+        assert instance._paused
+
+    asyncio.run(scenario())
+
+
+def test_renderer_failure_is_not_a_successful_pause():
+    async def scenario():
+        instance = _pause_app()
+
+        async def failed_renderer():
+            raise RuntimeError("renderer teardown failed")
+
+        instance._render_task = asyncio.create_task(failed_renderer())
+        await instance._pause_stimulation(Event(EventType.PauseStimulation, CommandRequest("pause")))
+        result = _pause_receipts(instance, EventType.PauseStimulation)[0]
+        assert not result.ok
+        assert "renderer teardown failed" in result.message
+        assert instance._paused
+        instance.stimulator.clear_trigger.assert_not_called()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('cleanup_error', [None, RuntimeError('trigger cleanup failed')])
+def test_stop_receipt_follows_cleanup_and_precedes_ipc_close(cleanup_error):
+    async def scenario():
+        app = Stimulation(settings_snapshot={})
+        calls = []
+        release = asyncio.Event()
+        requested = asyncio.Event()
+
+        async def render():
+            await release.wait()
+            calls.append('cleanup')
+            if cleanup_error:
+                raise cleanup_error
+
+        def request_stop():
+            requested.set()
+
+        async def send(event):
+            if event.type == EventType.CommandResult:
+                assert calls == ['cleanup']
+                assert event.data.command_id == 'stop'
+                assert event.data.ok is (cleanup_error is None)
+                calls.append('receipt')
+            return True
+
+        app.start = AsyncMock()
+        app._await_managed_readiness = AsyncMock()
+        app.stimulator = Mock()
+        app.stimulator.start_async = render
+        app.stimulator.request_stop = request_stop
+        app.peer_channel.send = AsyncMock(side_effect=send)
+        app.stop = AsyncMock(side_effect=lambda: calls.append('ipc-close'))
+        async def command():
+            await app._stop_stimulation_system(Event(EventType.StopStimulation, CommandRequest('stop')))
+        app.execute_command = command
+        task = asyncio.create_task(app.serve())
+        try:
+            await asyncio.wait_for(requested.wait(), .5)
+            assert calls == []
+            assert not task.done()
+            release.set()
+            if cleanup_error:
+                with pytest.raises(RuntimeError, match='trigger cleanup failed'):
+                    await task
+            else:
+                await task
+            assert calls == ['cleanup', 'receipt', 'ipc-close']
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            app._close_event_queue()
+    asyncio.run(scenario())
+
+
+def test_repeated_cancellation_cannot_close_ipc_before_render_settles():
+    async def scenario():
+        app = Stimulation(settings_snapshot={})
+        release, started = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def render():
+            started.set()
+            await release.wait()
+            calls.append('cleanup')
+
+        app.start = AsyncMock()
+        app._await_managed_readiness = AsyncMock()
+        app.execute_command = AsyncMock()
+        app.stimulator = Mock()
+        app.stimulator.start_async = render
+        app.stop = AsyncMock(side_effect=lambda: calls.append('ipc-close'))
+        task = asyncio.create_task(app.serve())
+        try:
+            await started.wait()
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert calls == []
+            assert not app._render_task.cancelled()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert calls == ['cleanup', 'ipc-close']
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            app._close_event_queue()
+    asyncio.run(scenario())
