@@ -162,3 +162,17 @@ class TestRobustness:
     def test_strict_stream_decoder_rejects_invalid_event_envelopes(self, body):
         with pytest.raises(InvalidEventBody):
             decode_event_body(body, PROTOCOL_VERSION)
+
+
+@pytest.mark.parametrize("command,evidence", [
+    (EventType.PauseStimulation, {"paused": True, "renderer_stopped": True, "cancelled_trials": 2}),
+    (EventType.SettleActuation, {"paused": True, "execution_complete": True, "outputs_settled": True}),
+])
+def test_command_result_preserves_quiescence_evidence(command, evidence):
+    from omnibci.application.events import CommandResult
+
+    data = {**evidence, "module_revision": "revision", "engine_revision": "engine", "generation": "generation"}
+    result = CommandResult("correlation", command.name, ok=True, data=data)
+    received = decode_event_body(event_to_body(Event(EventType.CommandResult, result)).encode(), PROTOCOL_VERSION)
+    assert received.type is EventType.CommandResult
+    assert CommandResult.from_value(received.data) == result

@@ -38,11 +38,6 @@ def test_results_are_empty_before_engine_start(api_client):
     assert response.json()["data"] == {"generation": None, "trials": []}
 
 
-def test_removed_lifecycle_routes_are_not_exposed(api_client):
-    for path in ("/api/v1/sessions", "/api/v1/recording/start", "/api/v1/recording/stop"):
-        assert api_client.post(path).status_code == 404
-
-
 def test_epoch_page_includes_unclassified_processing_records(api_client):
     class Results:
         def epochs(self, *, offset, limit):

@@ -17,6 +17,8 @@ from fastapi.testclient import TestClient
 def isolated_module_config_directory(monkeypatch, tmp_path):
     """Never read or write real user profiles in tests, including API lifespan."""
     monkeypatch.setenv("OMNIBCI_CONFIG_DIR", str(tmp_path / "module-config"))
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
 
 
 @pytest.fixture(autouse=True)

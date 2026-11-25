@@ -400,3 +400,65 @@ async def test_builder_manages_real_worker_startup_and_cleanup(broken, prepared_
     finally:
         await engine._stop()
     assert engine.shutdown_complete
+
+
+def _capture_worker_settings(worker_type, snapshot, output):
+    import builtins
+
+    original_import = builtins.__import__
+
+    def import_runtime(name, *args, **kwargs):
+        if name == "omnibci.infrastructure.repositories.configuration_repository":
+            raise AssertionError("Runtime worker must not load configuration storage")
+        return original_import(name, *args, **kwargs)
+
+    builtins.__import__ = import_runtime
+    try:
+        if worker_type == "acquisition":
+            worker = AcquisitionWorker(command_queue=None, settings_snapshot=snapshot)
+            worker._load_data_source = lambda: output.put(worker.settings_snapshot)
+            worker._run = lambda: None
+        elif worker_type == "processing":
+            worker = SignalProcessingWorker(command_queue=None, settings_snapshot=snapshot)
+            worker._run_processor = lambda: output.put(worker.settings_snapshot)
+        else:
+            if worker_type == "stimulation":
+                from omnibci.infrastructure.stimulation.application import Stimulation as Application
+            else:
+                from omnibci.infrastructure.actuation.application import Actuation as Application
+            app = Application(settings_snapshot=snapshot)
+            try:
+                output.put(app._runtime_snapshot)
+            finally:
+                app._close_event_queue()
+            return
+        worker.run()
+    finally:
+        builtins.__import__ = original_import
+
+
+@pytest.mark.integration
+def test_spawned_workers_receive_snapshot_without_loading_configuration_storage():
+    snapshot = {"ACQUISITION.signal_source": "neuroscan_scan45_reader",
+                "ACQUISITION.sample_rate": 250, "ACQUISITION.DATA_PROVIDER_PORT": 9876,
+                "ALGORITHM.filters": ["BASELINE_CORRECTION"]}
+    context = mp.get_context("spawn")
+    output = context.Queue()
+    processes = [context.Process(target=_capture_worker_settings, args=(kind, snapshot, output))
+                 for kind in ("acquisition", "processing", "stimulation", "actuation")]
+    try:
+        for process in processes:
+            process.start()
+        for _ in processes:
+            assert output.get(timeout=15) == snapshot
+        for process in processes:
+            process.join(timeout=15)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+            process.close()
+        output.close()
+        output.join_thread()

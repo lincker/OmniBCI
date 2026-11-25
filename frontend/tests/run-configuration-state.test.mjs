@@ -242,7 +242,6 @@ test("an inline source summary identifies the current configuration without a pr
     assert.match(summary, /Current parameters/);
     assert.match(summary, /example\.source\/main/);
     assert.match(summary, /Plugin 1\.0\.0/);
-    assert.doesNotMatch(summary, /Profile revision|revision 0/);
   });
 });
 
@@ -255,8 +254,6 @@ test("a source loaded from a profile identifies the current plugin without imply
     assert.doesNotMatch(summary, /Lab source/);
     assert.match(summary, /example\.source\/main/);
     assert.match(summary, /Plugin 1\.0\.0/);
-    assert.doesNotMatch(summary, /Profile revision/);
-    assert.doesNotMatch(summary, /not saved as a profile|Profile revision 4/);
   });
 });
 

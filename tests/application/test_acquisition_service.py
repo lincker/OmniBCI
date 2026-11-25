@@ -400,3 +400,157 @@ def test_scan45_declared_dimensions_are_not_presented_as_a_verified_match():
     service, _, _, _, _, response = _metadata_service()
     response["descriptor"]["provenance"] = "user-declared"
     assert service.get_metadata()["comparison"]["status"] == "unverified"
+
+
+def _checkpoint(resource="input", revision="content-1", cursor=100):
+    from omnibci.domain.ports.acquisition import SourceCheckpoint
+
+    return SourceCheckpoint(resource_id=resource, resource_revision=revision, state={"cursor": cursor})
+
+
+def test_same_resource_and_revision_restores_old_cursor_with_independent_copy():
+    from omnibci.application.source_checkpoint import checkpoint_for_restore
+
+    previous = _checkpoint(cursor=120)
+    restored = checkpoint_for_restore(previous, _checkpoint(cursor=0))
+    assert restored == previous
+    restored.state["cursor"] = 0
+    assert previous.state["cursor"] == 120
+
+
+def test_different_resource_begins_new_timeline():
+    from omnibci.application.source_checkpoint import checkpoint_for_restore
+
+    assert checkpoint_for_restore(_checkpoint(), _checkpoint(resource="different-input")) is None
+
+
+def test_changed_content_at_same_resource_is_not_silently_rewound():
+    from omnibci.application.source_checkpoint import checkpoint_for_restore
+
+    with pytest.raises(ValueError, match="changed"):
+        checkpoint_for_restore(_checkpoint(), _checkpoint(revision="content-2"))
+
+
+@pytest.mark.parametrize("previous,current", [
+    ({"cursor": 120}, "current"), ("previous", {"cursor": 0}),
+    ({"cursor": 120}, None),
+])
+def test_missing_identity_is_rejected(previous, current):
+    from omnibci.application.source_checkpoint import checkpoint_for_restore
+
+    prev_val = _checkpoint(cursor=120) if previous == "previous" else previous
+    curr_val = _checkpoint(cursor=0) if current == "current" else current
+    with pytest.raises(ValueError):
+        checkpoint_for_restore(prev_val, curr_val)
+
+
+def test_no_previous_checkpoint_needs_no_restore():
+    from omnibci.application.source_checkpoint import checkpoint_for_restore
+
+    assert checkpoint_for_restore(None, _checkpoint()) is None
+
+
+@pytest.mark.parametrize("identity", ["input", {}, {"resource_id": "input", "revision": 1}])
+def test_invalid_identity_fails_closed(identity):
+    from omnibci.application.source_checkpoint import checkpoint_for_restore
+
+    with pytest.raises(ValueError, match="SourceCheckpoint"):
+        checkpoint_for_restore(_checkpoint(), {"source_identity": identity})
+
+
+def _expectation_source_info(provenance="device-reported"):
+    from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
+
+    return source_descriptor(
+        SourceObservation(
+            native_text="native",
+            signal_info=SignalInfo(
+                sample_rate=500,
+                channels=(
+                    ChannelDescriptor(0, "C3", channel_id="channel-0"),
+                    ChannelDescriptor(1, "C4", channel_id="channel-1"),
+                ),
+            ),
+            native_event="final-row",
+            provenance=provenance,
+        ),
+        source_id="source",
+        connection_id="connection",
+    )
+
+
+def _expectation_source_binding(**parameters):
+    return {"slot": "acquisition.source", "parameters": parameters}
+
+
+@pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
+def test_matching_expectations_include_the_native_event_row(provenance):
+    from omnibci.application.source_expectations import compare_source_expectations, validate_source_expectations
+
+    binding = _expectation_source_binding(sample_rate=500, channel_count=3)
+    original = deepcopy(binding)
+    info = _expectation_source_info(provenance)
+    assert compare_source_expectations(binding, info) == {
+        "status": "matched",
+        "sample_rate": {"expected": 500, "actual": 500},
+        "channel_count": {"expected": 3, "actual": 3},
+    }
+    validate_source_expectations({"PLUGINS.bindings": [binding]}, info)
+    assert binding == original
+
+
+@pytest.mark.parametrize("parameters", [{}, {"sample_rate": 500}, {"channel_count": 3}])
+def test_unspecified_expectations_use_observed_values_without_changing_the_profile(parameters):
+    from omnibci.application.source_expectations import compare_source_expectations, validate_source_expectations
+
+    binding = _expectation_source_binding(**parameters)
+    original = deepcopy(binding)
+    comparison = compare_source_expectations(binding, _expectation_source_info())
+    assert comparison["status"] == "unconfirmed"
+    validate_source_expectations({"PLUGINS.bindings": [binding]}, _expectation_source_info())
+    assert binding == original
+
+
+def test_flat_settings_and_other_plugins_do_not_override_observed_source_values():
+    from omnibci.application.source_expectations import compare_source_expectations, validate_source_expectations
+
+    snapshot = {
+        "ACQUISITION.sample_rate": 1000, "ACQUISITION.channel_count": 65,
+        "PLUGINS.bindings": [{"slot": "processing.decoder", "parameters": {
+            "sample_rate": 500, "channel_count": 3,
+        }}],
+    }
+    assert compare_source_expectations(None, _expectation_source_info())["status"] == "unconfirmed"
+    validate_source_expectations(snapshot, _expectation_source_info())
+
+
+@pytest.mark.parametrize(("parameters", "difference"), [
+    ({"sample_rate": 250, "channel_count": 3}, "sample rate \\(Hz\\): expected 250, observed 500"),
+    ({"sample_rate": 500, "channel_count": 2}, "output rows \\(including event row\\): expected 2, observed 3"),
+    ({"sample_rate": 250}, "sample rate \\(Hz\\): expected 250, observed 500"),
+    ({"channel_count": 2}, "output rows \\(including event row\\): expected 2, observed 3"),
+])
+def test_mismatch_reports_expected_and_observed_values_without_modifying_them(parameters, difference):
+    from omnibci.application.source_expectations import compare_source_expectations, validate_source_expectations
+
+    binding = _expectation_source_binding(**parameters)
+    info = _expectation_source_info()
+    original = deepcopy(binding)
+    assert compare_source_expectations(binding, info)["status"] == "mismatched"
+    with pytest.raises(ValueError, match=difference + ".*Adjust the source.*save and apply") as error:
+        validate_source_expectations({"PLUGINS.bindings": [binding]}, info)
+    assert "expected None" not in str(error.value)
+    assert binding == original
+    assert info["sample_rate"] == 500 and info["output_row_count"] == 3
+
+
+@pytest.mark.parametrize("provenance", ["user-declared", "protocol-defined"])
+@pytest.mark.parametrize("parameters", [{}, {"sample_rate": 500, "channel_count": 3},
+                                        {"sample_rate": 1000, "channel_count": 10}])
+def test_declared_information_cannot_independently_verify_a_profile(provenance, parameters):
+    from omnibci.application.source_expectations import compare_source_expectations, validate_source_expectations
+
+    binding = _expectation_source_binding(**parameters)
+    info = _expectation_source_info(provenance)
+    assert compare_source_expectations(binding, info)["status"] == "unverified"
+    validate_source_expectations({"PLUGINS.bindings": [binding]}, info)

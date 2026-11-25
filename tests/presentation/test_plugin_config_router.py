@@ -631,3 +631,26 @@ def test_module_history_records_a_b_a_and_revert_uses_entry_identity(client):
     apply_plan(http, plan.json()["data"])
     assert http.get(f"{PREFIX}/modules/acquisition/history").json()["data"] == history
     assert http.get(f"{PREFIX}/modules/acquisition/history/{uuid4()}").status_code == 404
+
+
+from unittest.mock import Mock
+from omnibci.application.configuration.errors import PluginProfileValidationError
+from omnibci.presentation.dependencies import get_configuration_service
+
+
+@pytest.mark.parametrize("error,status,code", [
+    (PluginProfileValidationError("invalid input"), 422, "VALIDATION_ERROR"),
+    (ValueError("private implementation detail"), 500, "INTERNAL_ERROR"),
+])
+def test_profile_route_distinguishes_input_validation_from_internal_errors(error, status, code):
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    service = SimpleNamespace(list_profiles=Mock(side_effect=error))
+    app.dependency_overrides[get_configuration_service] = lambda: service
+    with TestClient(app, raise_server_exceptions=False) as http:
+        response = http.get("/config/plugin-profiles")
+    assert response.status_code == status
+    assert response.json()["code"] == code
+    if status == 500:
+        assert "private implementation detail" not in response.text

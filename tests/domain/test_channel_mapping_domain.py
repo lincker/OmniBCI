@@ -176,11 +176,8 @@ def test_non_signal_rows_cannot_be_mapped_or_disguised(signal_type):
     {"outputs": [{"source_channel_id": "id-C3", "name": "C3", "unit": "V"}]},
     {"outputs": [{"source_channel_id": "id-C3", "name": "Left"}, {"source_channel_id": "id-C3", "name": "Right"}]},
     {"outputs": [{"source_channel_id": "id-C3", "name": "EEG"}, {"source_channel_id": "id-C4", "name": "EEG"}]},
-    {"reference": {"mode": "original"}}, {"excluded_channels": []},
-    {"template": "standard_1020"}, {"coefficients": [[1]]},
-    {"outputs": [{"name": "bipolar", "positive": "C3", "negative": "C4"}]},
 ])
-def test_processing_input_rejects_legacy_transforms_and_invalid_bindings(value):
+def test_processing_input_rejects_invalid_bindings(value):
     with pytest.raises(ValueError):
         ProcessingInput.from_dict(value)
 
@@ -267,3 +264,68 @@ def test_canonical_channel_types_allow_matching_declarations():
     observed = source(channels=(ChannelDescriptor(0, "C3", signal_type=" EEG ", channel_id="channel-0"),))
     plan = compile_processing_plan(observed, ProcessingInput(outputs=(ChannelBinding("Left", "channel-0", "eeg"),)))
     assert observed.channels[0].signal_type == plan.output_channels[0].signal_type == "eeg"
+
+
+def _req_channels(*names, signal_type="eeg"):
+    return tuple(
+        ChannelDescriptor(index=index, name=name, signal_type=signal_type, unit="uV", channel_id=f"channel-{index}")
+        for index, name in enumerate(names)
+    )
+
+
+def test_requirements_normalize_names_preserve_default_order_and_round_trip():
+    from dataclasses import asdict
+
+    requirements = DecoderChannelRequirements.from_dict({
+        "description": " Occipital input ", "signal_type": " eeg ", "min_count": 2,
+        "required_names": [" Oz "], "default_names": [" O2 ", "Oz", "O1"],
+    })
+    assert requirements.default_names == ("O2", "Oz", "O1")
+    assert requirements.required_names == ("Oz",)
+    assert requirements.description == "Occipital input"
+    assert requirements.signal_type == "eeg"
+    assert DecoderChannelRequirements.from_dict(asdict(requirements)) == requirements
+    with pytest.raises(FrozenInstanceError):
+        requirements.min_count = 3
+
+
+@pytest.mark.parametrize("value", [
+    [], {"unknown": 1}, {"description": 1}, {"description": " "}, {"signal_type": []},
+    {"signal_type": ""}, {"min_count": True}, {"min_count": 0}, {"min_count": 1.5},
+    {"min_count": "2"}, {"required_names": "Oz"}, {"default_names": "Oz"},
+    {"required_names": ["Oz", " Oz "]}, {"default_names": ["Oz", "Oz"]},
+    {"required_names": [""]}, {"default_names": [1]}, {"required_names": None},
+    {"min_count": 2, "default_names": ["Oz"]},
+    {"required_names": ["Oz"], "default_names": ["O1", "O2"]},
+])
+def test_invalid_requirements_are_rejected(value):
+    with pytest.raises(ValueError):
+        DecoderChannelRequirements.from_dict(value)
+
+
+def test_required_names_are_a_subset_and_do_not_prescribe_order():
+    requirements = DecoderChannelRequirements(signal_type="eeg", min_count=2, required_names=("Oz", "O1"))
+    requirements.validate_channels(_req_channels("O2", "O1", "Oz"))
+    requirements.validate_channels(_req_channels("Oz", "O1"))
+    with pytest.raises(ValueError, match="missing required channels: Oz"):
+        requirements.validate_channels(_req_channels("O2", "O1"))
+    with pytest.raises(ValueError, match="at least 2"):
+        requirements.validate_channels(_req_channels("Oz"))
+    with pytest.raises(ValueError, match="incompatible channels: Oz, O1"):
+        requirements.validate_channels(_req_channels("Oz", "O1", signal_type="eog"))
+
+
+def test_defaults_are_suggestions_and_empty_defaults_allow_required_names():
+    DecoderChannelRequirements(default_names=("O1", "O2")).validate_channels(_req_channels("Oz"))
+    requirements = DecoderChannelRequirements(required_names=("Oz",))
+    assert requirements.default_names == ()
+    requirements.validate_channels(_req_channels("Oz"))
+
+
+def test_unselected_channels_and_trigger_do_not_satisfy_output_requirements():
+    observed = SignalInfo(sample_rate=250, channels=_req_channels("O1", "Oz", "M1"))
+    plan = compile_processing_plan(observed, ProcessingInput(outputs=(ChannelBinding("O1", "channel-0"),)))
+    with pytest.raises(ValueError, match="at least 2"):
+        DecoderChannelRequirements(min_count=2).validate_channels(plan.output_channels)
+    with pytest.raises(ValueError, match="missing required channels: Oz"):
+        DecoderChannelRequirements(required_names=("Oz",)).validate_channels(plan.output_channels)

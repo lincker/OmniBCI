@@ -212,3 +212,29 @@ def test_validate_controls_accepts_valid_and_rejects_malformed_controls():
     ):
         with pytest.raises(PluginSchemaError):
             validate_controls(bad)
+
+
+def test_file_profile_can_be_saved_before_selecting_a_recording():
+    from importlib import resources
+    import json
+
+    schema = json.loads(resources.files("omnibci.infrastructure.plugins.acquisition.file")
+                        .joinpath("default.schema.json").read_text())
+    assert validate_parameters(schema, {})["data_file_path"] == ""
+    assert schema["properties"]["data_file_path"]["x-widget"] == "file-path"
+
+
+@pytest.mark.parametrize("kind,widget", [("integer", "file-path"), ("string", "shell"), ("string", True)])
+def test_file_widget_is_a_closed_string_annotation(kind, widget):
+    schema = {"type": "object", "additionalProperties": False,
+              "properties": {"path": {"type": kind, "x-widget": widget}}}
+    with pytest.raises(PluginSchemaError, match="x-widget"):
+        validate_schema(schema)
+
+
+def test_file_widget_does_not_change_string_parameter_validation():
+    schema = {"type": "object", "additionalProperties": False,
+              "properties": {"path": {"type": "string", "x-widget": "file-path"}}}
+    assert validate_parameters(schema, {"path": "a/b.cnt"}) == {"path": "a/b.cnt"}
+    with pytest.raises(PluginSchemaError):
+        validate_parameters(schema, {"path": 42})

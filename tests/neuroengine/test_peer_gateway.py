@@ -610,5 +610,295 @@ async def _start(channel) -> None:
     await channel.start()
 
 
+def _safety_channel(transport, failsafe=None, watchdog=None):
+    bus = FakeBus()
+    fault = [Event(EventType.ActuationFault, {"code": "LINK_LOST"})]
+    failsafe_factory = failsafe if callable(failsafe) else (
+        (lambda: fault) if failsafe else None
+    )
+    cfg = PeerConfig(
+        name="actuation", transport=transport,
+        routes=RouteSpec(frozenset({EventType.ActuationCommand}),
+                         frozenset({EventType.ActuationFault})),
+        failsafe=failsafe_factory,
+        watchdog_timeout_s=watchdog,
+    )
+    return PeerChannel(cfg, bus), bus
+
+
+class TestDisconnectEdge:
+    def test_disconnect_trips_failsafe_once(self):
+        t = FakeTransport()
+        t._connected = True
+        ch, bus = _safety_channel(t, failsafe=True, watchdog=None)
+        ch._evaluate(now=1.0)
+        assert bus.put == []
+        t._connected = False
+        ch._evaluate(now=2.0)
+        assert len(bus.put) == 1 and bus.put[0].type == EventType.ActuationFault
+        ch._evaluate(now=3.0)
+        assert len(bus.put) == 1
+
+    def test_no_trip_before_first_connection(self):
+        t = FakeTransport()
+        t._connected = False
+        ch, bus = _safety_channel(t, failsafe=True, watchdog=1.0)
+        for now in (1.0, 2.0, 5.0):
+            ch._evaluate(now)
+        assert bus.put == []
+
+
+class TestHeartbeatStaleness:
+    def test_stale_trips_then_rearms(self):
+        t = FakeTransport()
+        t._connected = True
+        ch, bus = _safety_channel(t, failsafe=True, watchdog=1.0)
+        ch._started = True
+        ch._evaluate(now=10.0)
+        assert ch.is_connected is True
+        ch._evaluate(now=10.5)
+        assert bus.put == []
+        ch._evaluate(now=11.5)
+        assert len(bus.put) == 1
+        assert ch.is_connected is False
+
+        ch._evaluate(now=12.0)
+        assert len(bus.put) == 1
+        ch._on_liveness()
+        assert ch.is_connected is True
+        ch._evaluate(now=12.1)
+        assert len(bus.put) == 1
+
+    def test_idle_disconnect_after_stale_does_not_duplicate_failsafe(self):
+        t = FakeTransport()
+        t._connected = True
+        ch, bus = _safety_channel(t, failsafe=True, watchdog=1.0)
+        ch._started = True
+        ch._evaluate(now=1.0)
+        ch._evaluate(now=2.1)
+        assert len(bus.put) == 1
+        assert ch.is_connected is False
+
+        t._connected = False
+        ch._evaluate(now=3.0)
+        ch._evaluate(now=4.0)
+        assert len(bus.put) == 1
+        assert ch.is_connected is False
+
+    def test_failsafe_exception_cannot_leave_stale_channel_healthy(self):
+        def _broken_failsafe():
+            raise RuntimeError("failsafe callback failed")
+
+        t = FakeTransport()
+        t._connected = True
+        ch, _ = _safety_channel(t, failsafe=_broken_failsafe, watchdog=1.0)
+        ch._started = True
+        ch._evaluate(now=1.0)
+
+        try:
+            ch._evaluate(now=2.1)
+        except RuntimeError as exc:
+            assert str(exc) == "failsafe callback failed"
+        else:
+            raise AssertionError("broken failsafe must remain observable")
+
+        assert ch._stale_tripped is True
+        assert ch.is_connected is False
+
+    def test_monitor_fault_is_recorded_and_marks_channel_unhealthy(self, monkeypatch):
+        from omnibci.infrastructure.ipc import peer_channel as peer_channel_module
+
+        def _broken_failsafe():
+            raise RuntimeError("monitor failed")
+
+        async def _run():
+            t = FakeTransport()
+            t._connected = True
+            ch, _ = _safety_channel(t, failsafe=_broken_failsafe, watchdog=0.01)
+            ch._started = True
+            ch._was_connected = True
+            ch._last_seen = 0.0
+            await ch._monitor()
+            return ch
+
+        monkeypatch.setattr(peer_channel_module, "_MONITOR_POLL_S", 0)
+        ch = asyncio.run(_run())
+        assert isinstance(ch.monitor_fault, RuntimeError)
+        assert str(ch.monitor_fault) == "monitor failed"
+        assert ch.is_connected is False
+
+    def test_fresh_connection_resets_clock(self):
+        t = FakeTransport()
+        t._connected = False
+        ch, bus = _safety_channel(t, failsafe=True, watchdog=1.0)
+        ch._evaluate(now=100.0)
+        t._connected = True
+        ch._evaluate(now=100.0)
+        ch._evaluate(now=100.5)
+        assert bus.put == []
+
+
+class TestUnmonitored:
+    def test_no_failsafe_no_watchdog_is_not_monitored(self):
+        t = FakeTransport()
+        t._connected = True
+        ch, bus = _safety_channel(t, failsafe=None, watchdog=None)
+        assert ch._monitored is False
+        t._connected = False
+        ch._evaluate(now=1.0)
+        assert bus.put == []
+
+
+class TestActuationConfigSafety:
+    def test_actuation_config_has_failsafe_and_watchdog(self):
+        from omnibci.infrastructure.neuroengine.gateway.peers import ACTUATION_LINK_LOST, actuation_peer_config
+
+        cfg = actuation_peer_config(host="127.0.0.1", port=8001, watchdog_timeout_s=2.5)
+        assert cfg.watchdog_timeout_s == 2.5
+        assert cfg.transport._server.idle_timeout == 5.0
+        assert cfg.failsafe is not None
+        events = list(cfg.failsafe())
+        assert len(events) == 1
+        assert events[0].type == EventType.ActuationFault
+        assert events[0].data == ACTUATION_LINK_LOST
+
+
+import pytest_asyncio
+from unittest.mock import AsyncMock, MagicMock
+from omnibci.application.plugin_management.execution import bindings_fingerprint
+from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
+from omnibci.infrastructure.ipc.peer_transport import ListenTransport
+from omnibci.infrastructure.neuroengine import builder
+from omnibci.infrastructure.neuroengine.gateway.peers import actuation_peer_config
+from tests.execution_helpers import output_bindings
+
+
+@pytest_asyncio.fixture
+async def build_graph(monkeypatch):
+    monkeypatch.setattr(builder.mp, "Queue", MagicMock())
+    monkeypatch.setattr(builder.mp, "Pipe", lambda **kwargs: (MagicMock(), MagicMock()))
+    monkeypatch.setattr(builder, "AcquisitionWorker", MagicMock())
+    monkeypatch.setattr(builder, "SignalProcessingWorker", MagicMock())
+    monkeypatch.setattr(ListenTransport, "start", AsyncMock())
+    monkeypatch.setattr(ListenTransport, "stop", AsyncMock())
+    engines = []
+
+    async def build(**settings):
+        snapshot = {"CONFIG.module_revisions": {role: "a" * 64 for role in (
+            "acquisition", "processing", "stimulation", "actuation")},
+            "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1", "PLUGINS.bindings": output_bindings(), **settings}
+        engine = builder.NeuroEngineBuilder(settings_snapshot=snapshot).build()
+        assert not engine.peer_gateway._channels
+        engine._loop = asyncio.get_running_loop()
+        engine._started = True
+        await engine.peer_gateway.start()
+        engines.append(engine)
+        return engine, snapshot
+    yield build
+    for engine in engines:
+        await engine.peer_gateway.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stim_managed,actuation_managed", [
+    (True, True), (False, True), (True, False), (False, False),
+])
+async def test_prepared_listener_uses_its_own_external_identity(
+    build_graph, stim_managed, actuation_managed,
+):
+    engine, snapshot = await build_graph(**{
+        "STIMULATION.auto_spawn": stim_managed,
+        "ACTUATION.auto_spawn": actuation_managed,
+    })
+    for role, managed in (("stimulation", stim_managed), ("actuation", actuation_managed)):
+        await engine.ensure_output_ready(role, snapshot)
+        server = engine.peer_gateway.peer(role)._transport._server
+        expected = None if managed else PeerIdentity(role, "a" * 64, "c" * 64, "run-1",
+                                                    engine.node_operation_id(role), bindings_fingerprint(output_bindings(), role))
+        assert server.identity == expected
+        assert server.max_clients == (None if role == "stimulation" and managed else 1)
+
+
+@pytest.mark.asyncio
+async def test_preparation_is_idempotent_and_does_not_prepare_another_role(build_graph):
+    engine, snapshot = await build_graph()
+    await engine.ensure_output_ready("stimulation", snapshot)
+    channel = engine.peer_gateway.peer("stimulation")
+    await engine.ensure_output_ready("stimulation", snapshot)
+    assert engine.peer_gateway.peer("stimulation") is channel
+    assert "actuation" not in engine.peer_gateway._channels
+    assert channel._transport._server.identity is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settings,address", [
+    ({}, ("127.0.0.1", 8765)),
+    ({"STIMULATION.server_ip": "192.0.2.4", "STIMULATION.server_port": 9234}, ("192.0.2.4", 9234)),
+])
+async def test_stimulation_listener_and_client_use_the_same_module_address(build_graph, settings, address):
+    from omnibci.infrastructure.stimulation.application import Stimulation
+
+    engine, snapshot = await build_graph(**settings)
+    await engine.ensure_output_ready("stimulation", snapshot)
+    server = engine.peer_gateway.peer("stimulation")._transport._server
+    client = Stimulation(settings_snapshot=snapshot).peer_channel._transport._client
+    assert (server.host, server.port) == address
+    assert (client.server_ip, client.server_port) == address
+
+
+@pytest.mark.asyncio
+async def test_external_actuation_is_prepared_before_module_activation(build_graph):
+    engine, snapshot = await build_graph(**{"ACTUATION.auto_spawn": False})
+    assert not engine.peer_gateway._channels
+    await engine.ensure_output_ready("actuation", snapshot)
+    assert engine.peer_gateway.peer("actuation")._transport._server.identity == PeerIdentity(
+        "actuation", "a" * 64, "c" * 64, "run-1",
+        engine.node_operation_id("actuation"), bindings_fingerprint(output_bindings(), "actuation"))
+    assert not engine._actuation_active
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["stimulation", "actuation"])
+@pytest.mark.parametrize("missing", ["CONFIG.module_revisions", "CONFIG.engine_revision", "CONFIG.generation"])
+async def test_invalid_external_identity_fails_when_preparing_only_that_role(build_graph, role, missing):
+    engine, snapshot = await build_graph(**{f"{role.upper()}.auto_spawn": False, missing: None})
+    with pytest.raises(ValueError, match="Peer identity"):
+        await engine.ensure_output_ready(role, snapshot)
+    assert not engine.peer_gateway._channels
+    builder.AcquisitionWorker.assert_not_called()
+    builder.SignalProcessingWorker.assert_not_called()
+
+
+def test_peer_factories_preserve_routing_while_limiting_external_stimulation():
+    identity = PeerIdentity("stimulation", "a" * 64, "c" * 64, "run-1", "prepare-1", "d" * 64)
+    managed = stimulation_peer_config("127.0.0.1", 8000)
+    external = stimulation_peer_config("127.0.0.1", 8000, identity=identity)
+    assert managed.routes == external.routes
+    assert managed.transport._server.max_clients is None
+    assert external.transport._server.max_clients == 1
+
+    identity = PeerIdentity("actuation", "a" * 64, "c" * 64, "run-1", "prepare-1", "d" * 64)
+    managed = actuation_peer_config("127.0.0.1", 8001, watchdog_timeout_s=2)
+    external = actuation_peer_config("127.0.0.1", 8001, watchdog_timeout_s=2, identity=identity)
+    assert managed.routes == external.routes
+    assert managed.transport._server.max_clients == external.transport._server.max_clients == 1
+    assert managed.transport._server.idle_timeout == external.transport._server.idle_timeout == 4
+
+
+@pytest.mark.asyncio
+async def test_replacing_a_listener_invalidates_its_operation_even_with_same_configuration(build_graph):
+    engine, snapshot = await build_graph(**{"ACTUATION.auto_spawn": False})
+    assert engine.node_operation_id("actuation") is None
+    await engine.ensure_output_ready("actuation", snapshot)
+    first = engine.node_operation_id("actuation")
+    assert first
+    await engine.ensure_output_ready("actuation", snapshot)
+    assert engine.node_operation_id("actuation") == first
+    await engine.reconfigure_output_modules(snapshot, ("actuation",))
+    assert engine.node_operation_id("actuation") not in (None, first)
+    await engine.peer_gateway.stop()
+    assert engine.node_operation_id("actuation") is None
+
+
 if __name__ == "__main__":
     pytest.main(["-s", "-v", __file__])

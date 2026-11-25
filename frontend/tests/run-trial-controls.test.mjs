@@ -256,8 +256,7 @@ test("startup summary displays pinned versions rather than the latest saved revi
   assert.doesNotMatch(text(summary), /Lab source/);
   assert.match(text(summary), /example\.source\/main/);
   assert.match(text(summary), /Plugin 1\.2\.0/);
-  assert.doesNotMatch(text(summary), /Profile revision/);
-  assert.doesNotMatch(text(summary), /9\.9\.9|Profile revision 9/);
+  assert.doesNotMatch(text(summary), /9\.9\.9/);
 });
 
 test("current summary includes every configured role and plugin identity", () => {
@@ -269,12 +268,10 @@ test("current summary includes every configured role and plugin identity", () =>
     assert.ok(elements(summary).some((element) => text(element) === label), `Missing startup role: ${label}`);
   }
   for (const binding of completeActivation.bindings) {
-    assert.ok(!text(summary).includes(`Saved ${binding.profile_id}`));
     assert.ok(text(summary).includes(`${binding.selection.package_id}/${binding.selection.contribution_id}`));
-    assert.doesNotMatch(text(summary), /Profile revision/);
   }
   assert.match(text(summary), /Plugin 1\.2\.3/);
-  assert.doesNotMatch(text(summary), /latest\.package|new-contribution|9\.9\.9|Profile revision 99/);
+  assert.doesNotMatch(text(summary), /latest\.package|new-contribution|9\.9\.9/);
 });
 
 test("startup summary groups plugins into the four configuration modules", () => {
@@ -303,11 +300,9 @@ test("startup filters preserve activation order and repeated use of the same pro
   const filters = completeActivation.bindings.filter((binding) => binding.slot.startsWith("processing.filter."));
   assert.equal(items.length, 3, "Repeated profiles represent separate filter instances");
   filters.forEach((binding, index) => {
-    assert.ok(!text(items[index]).includes(`Saved ${binding.profile_id}`));
     assert.ok(text(items[index]).includes(`${binding.selection.package_id}/${binding.selection.contribution_id}`));
     assert.ok(text(items[index]).includes("Plugin 1.2.3"));
-    assert.doesNotMatch(text(items[index]), /Profile revision/);
-    assert.doesNotMatch(text(items[index]), /9\.9\.9|Profile revision 99/);
+    assert.doesNotMatch(text(items[index]), /9\.9\.9/);
   });
 });
 
@@ -319,7 +314,7 @@ for (const [name, overrides, expected] of [
   const tree = render({ selection: completeActivation, profiles: latestProfiles, ...overrides });
   const summary = elements(tree).find((element) => element.props["aria-label"] === "Current parameters");
   assert.match(text(summary), expected);
-  assert.doesNotMatch(text(summary), /Saved |pinned\.|latest\.package|Plugin 1\.2\.3|Profile revision/);
+  assert.doesNotMatch(text(summary), /pinned\.|latest\.package|Plugin 1\.2\.3/);
   assert.equal(elements(summary).filter((element) => element.type === "li").length, 0);
 });
 

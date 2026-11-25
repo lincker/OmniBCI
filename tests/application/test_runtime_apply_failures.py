@@ -409,6 +409,22 @@ async def test_acquisition_start_failure_rolls_back_without_recreating_active_ou
 
 
 @pytest.mark.asyncio
+async def test_failed_artifact_preparation_preserves_the_running_source(harness, monkeypatch):
+    h = harness()
+    before = deepcopy(h.engine.applied_snapshot)
+
+    def reject(snapshot, modules):
+        raise RuntimeError("artifact integrity failed")
+
+    monkeypatch.setattr(h.engine, "prepare_plugins", reject, raising=False)
+    result = await apply(h)
+    assert result["status"] == "failed" and "artifact integrity failed" in result["error"]
+    assert h.engine.applied_snapshot == before
+    assert not any(item[0] in {"stop_module", "stop_graph"} for item in h.log)
+    assert not h.engine.admission.recovery_status
+
+
+@pytest.mark.asyncio
 async def test_engine_output_settlement_failure_keeps_old_graph_paused(harness):
     h = harness(actuation=True)
     h.commands.settle_failure = h.previous.modules[h.module].revision
@@ -520,3 +536,19 @@ async def test_acquisition_persistence_failure_rolls_back_without_settling_outpu
     assert h.acquisition.starts == [(h.previous.modules[h.module].revision, 100)]
     assert not any(item[0] in {"SettleActuation", "PauseStimulation", "stop_graph"} for item in h.log)
     assert not h.engine.admission.recovery_required
+
+
+@pytest.mark.asyncio
+async def test_failed_artifact_preparation_preserves_the_running_source(harness, monkeypatch):
+    h = harness()
+    before = deepcopy(h.engine.applied_snapshot)
+
+    def reject(snapshot, modules):
+        raise RuntimeError("artifact integrity failed")
+
+    monkeypatch.setattr(h.engine, "prepare_plugins", reject, raising=False)
+    result = await apply(h)
+    assert result["status"] == "failed" and "artifact integrity failed" in result["error"]
+    assert h.engine.applied_snapshot == before
+    assert not any(item[0] in {"stop_module", "stop_graph"} for item in h.log)
+    assert not h.engine.admission.recovery_status

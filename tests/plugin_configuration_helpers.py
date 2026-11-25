@@ -112,3 +112,32 @@ def output_payload_files(document):
             contribution["payload_schemas"] = dict.fromkeys(fields, name)
             files[name] = json.dumps({"type": "object", "properties": {}, "additionalProperties": False})
     return files
+
+
+def package_archive(tmp_path, version="1.0.0", *, properties=None, schema_version=1,
+                    package_id="acme.device", code=None):
+    """Build a valid v1 plugin package zip archive in tmp_path."""
+    import json
+    import zipfile
+    import tomlkit
+
+    publisher, name = package_id.split(".")
+    manifest = {
+        "manifest_version": 1,
+        "package": {"id": name, "publisher": publisher, "version": version, "api_version": "1", "domain": "actuation"},
+        "contributions": [{"id": "output", "kind": "effector",
+                           "entrypoint": "driver:Driver", "display_name": "Test output",
+                           "configuration": {"schema": "configuration.schema.json", "schema_version": schema_version}}],
+    }
+    schema = {"type": "object", "additionalProperties": False, "properties": properties if properties is not None else {
+        "gain": {"type": "number", "minimum": 0, "default": 1.0},
+    }}
+    payload_files = output_payload_files(manifest)
+    destination = tmp_path / f"{package_id}-{version}.zip"
+    with zipfile.ZipFile(destination, "w") as archive:
+        for fname, contents in payload_files.items():
+            archive.writestr(fname, contents)
+        archive.writestr("manifest.toml", tomlkit.dumps(manifest))
+        archive.writestr("configuration.schema.json", json.dumps(schema))
+        archive.writestr("driver.py", code or "raise AssertionError('Catalog must not import plugin code')\n")
+    return destination

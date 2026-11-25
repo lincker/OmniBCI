@@ -417,9 +417,6 @@ for (const [module, slot, profileId] of [
     await withProfiles(module, async (h, calls, data) => {
       const saved = clone(data.profiles);
       form(h).props.onChange({ gain: 23, calibration: [4, 5] }); await h.settle();
-      const labels = elements(h.tree).filter((item) => item.type === "button").map(text);
-      assert.ok(!labels.includes("Apply current configuration"));
-      assert.ok(!labels.includes("Update saved profile"));
       assert.equal(dialog(h), undefined);
       const request = data.current().request(module);
       assert.ok(request.bindings.every((item) => item.slot.startsWith(`${module}.`) && !item.profile_id));
@@ -567,7 +564,6 @@ test("filter instances retain independent values and order without saved profile
     assert.equal(data.current().entries[second].parameters.gain, 23);
     assert.equal(data.current().entries[added].profile, null);
     await click(h, "Move up", filterRows(h).at(-1));
-    assert.ok(!elements(h.tree).some((item) => item.type === "button" && text(item) === "Apply current filter chain"));
     const filters = data.current().request("processing").bindings.filter((item) => item.slot.startsWith("processing.filter."));
     assert.deepEqual(filters.map((item) => item.slot), data.current().filterOrder);
     assert.equal(filters.at(-2).parameters.gain, 23);

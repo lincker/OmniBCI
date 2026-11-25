@@ -191,3 +191,15 @@ def test_clearing_foundation_recovery_preserves_unconfirmed_module_state():
     assert gate.recovery_status == {"actuation": "External output not settled"}
     gate.clear_quarantine()
     assert gate.recovery_status == {}
+
+
+def test_public_recovery_flag_changes_only_when_quarantine_is_explicitly_cleared():
+    gate = RuntimeAdmission()
+    assert gate.recovery_required is False
+    gate.quarantine("Unconfirmed device state")
+    assert gate.recovery_required is True
+    with gate.command(recovery=True):
+        pass
+    assert gate.recovery_required is True
+    gate.clear_quarantine()
+    assert gate.recovery_required is False

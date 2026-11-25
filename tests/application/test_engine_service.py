@@ -55,6 +55,18 @@ class TestNeuroEngineServiceStatus:
 
 
 class TestNeuroEngineServicePortState:
+    def test_engine_port_cannot_be_instantiated_directly(self):
+        from omnibci.application.ports.engine_port import EnginePort
+
+        with pytest.raises(TypeError):
+            EnginePort()
+
+    def test_neuro_engine_service_is_engine_port(self):
+        from omnibci.application.ports.engine_port import EnginePort
+
+        assert issubclass(NeuroEngineService, EnginePort)
+        assert isinstance(NeuroEngineService(engine_factory=MagicMock()), EnginePort)
+
     @pytest.mark.parametrize("alive", [None, False, True])
     def test_actuation_process_liveness_is_independent_of_engine_readiness(self, engine_service, alive):
         engine_service._actuation.process_manager = None if alive is None else MagicMock(is_alive=alive)
@@ -916,3 +928,547 @@ async def test_a_later_stimulation_recovery_uses_its_current_configuration(runni
     prepared = graph.ensure_output_ready.await_args.args[1]
     assert prepared["STIMULATION.renderer"] == "current"
     assert prepared["CONFIG.module_revisions"]["stimulation"] == "current-revision"
+
+
+def _restart_mock_engine():
+    engine = MagicMock()
+    engine.shutdown_complete = True
+    engine.run = MagicMock()
+    return engine
+
+
+@pytest.fixture()
+def restart_factory():
+    return MagicMock(side_effect=lambda snapshot: _restart_mock_engine())
+
+
+@pytest.fixture()
+def restart_svc(restart_factory):
+    service = NeuroEngineService(engine_factory=restart_factory)
+    service._engine = _restart_mock_engine()
+    service._running = False
+    return service
+
+
+class TestRestartRebuildsEngine:
+    @pytest.mark.asyncio
+    async def test_start_stop_start_builds_new_engine(self, restart_svc, restart_factory):
+        first = restart_svc._engine
+        rebuilt = _restart_mock_engine()
+        restart_factory.side_effect = None
+        restart_factory.return_value = rebuilt
+
+        await restart_svc.handle_start_engine(StartEngineCommand())
+        await restart_svc.handle_stop_engine(StopEngineCommand())
+        await restart_svc.handle_start_engine(StartEngineCommand())
+
+        assert restart_svc._engine is rebuilt
+        assert restart_svc._engine is not first
+        restart_factory.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_first_start_does_not_rebuild(self, restart_svc, restart_factory):
+        first = restart_svc._engine
+        await restart_svc.handle_start_engine(StartEngineCommand())
+        restart_factory.assert_not_called()
+        assert restart_svc._engine is first
+
+    @pytest.mark.asyncio
+    async def test_subscriptions_replayed_onto_new_bus(self, restart_svc, restart_factory):
+        handler = MagicMock()
+        restart_svc.subscribe(EventType.TrialCompleted, handler)
+
+        await restart_svc.handle_start_engine(StartEngineCommand())
+        await restart_svc.handle_stop_engine(StopEngineCommand())
+
+        rebuilt = _restart_mock_engine()
+        restart_factory.side_effect = None
+        restart_factory.return_value = rebuilt
+        await restart_svc.handle_start_engine(StartEngineCommand())
+
+        rebuilt.subscribe.assert_called_once_with(EventType.TrialCompleted, handler)
+
+    @pytest.mark.asyncio
+    async def test_stop_is_idempotent(self, restart_svc):
+        await restart_svc.handle_start_engine(StartEngineCommand())
+        await restart_svc.handle_stop_engine(StopEngineCommand())
+        await restart_svc.handle_stop_engine(StopEngineCommand())
+        assert restart_svc._running is False
+
+    @pytest.mark.asyncio
+    async def test_restart_cycle_twice(self, restart_svc, restart_factory):
+        await restart_svc.handle_start_engine(StartEngineCommand())
+        await restart_svc.handle_stop_engine(StopEngineCommand())
+
+        restart_factory.side_effect = [_restart_mock_engine(), _restart_mock_engine()]
+        await restart_svc.handle_start_engine(StartEngineCommand())
+        await restart_svc.handle_stop_engine(StopEngineCommand())
+        await restart_svc.handle_start_engine(StartEngineCommand())
+        assert restart_factory.call_count == 2
+
+
+class _OperationOnlyGraph:
+    __slots__ = ("started", "stopped", "shutdown_complete", "subscriptions", "events")
+
+    def __init__(self):
+        self.started = threading.Event()
+        self.stopped = threading.Event()
+        self.shutdown_complete = False
+        self.subscriptions = []
+        self.events = []
+
+    def run(self):
+        self.started.set()
+        self.stopped.wait(5)
+        self.shutdown_complete = True
+
+    def wait_until_started(self, timeout):
+        assert self.started.wait(timeout)
+
+    def request_stop(self):
+        self.stopped.set()
+
+    def subscribe(self, event_type, handler):
+        self.subscriptions.append((event_type, handler))
+
+    def dispatch(self, event):
+        self.events.append(event)
+
+    def is_peer_connected(self, peer):
+        return peer == "stimulation"
+
+    def is_current_peer_channel(self, peer, channel):
+        return peer == "stimulation" and channel == "current"
+
+    def is_module_running(self, module):
+        return False
+
+    async def set_actuation_active(self, active):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_empty_foundation_passes_one_explicit_detached_snapshot():
+    graph = _OperationOnlyGraph()
+    inputs = []
+
+    def build(snapshot):
+        inputs.append(dict(snapshot))
+        snapshot["factory-only"] = True
+        return graph
+
+    service = NeuroEngineService(build)
+    await service.startup()
+    try:
+        await service.handle_start_engine(StartEngineCommand())
+        assert len(inputs) == 1 and inputs[0]["CONFIG.generation"] == service.generation
+        assert inputs[0]["PLUGINS.bindings"] == []
+        assert "factory-only" not in service.applied_snapshot
+        await service.handle_stop_engine(StopEngineCommand())
+        assert graph.shutdown_complete
+    finally:
+        graph.stopped.set()
+        if service._engine_thread is not None:
+            service._engine_thread.join(1)
+
+
+@pytest.mark.asyncio
+async def test_subscriptions_dispatch_and_peer_faults_use_only_declared_operations():
+    from unittest.mock import Mock
+
+    graph = _OperationOnlyGraph()
+    service = NeuroEngineService(lambda snapshot: graph, snapshot_provider=lambda: {"PLUGINS.bindings": []})
+    listener = Mock()
+    await service.startup()
+    service.subscribe(EventType.TrialCompleted, listener)
+    try:
+        await service.handle_start_engine(StartEngineCommand())
+        assert graph.subscriptions == [(EventType.TrialCompleted, listener)]
+        command = Event(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{"target_id": 1}]})
+        service.dispatch(command)
+        assert len(graph.events) == 1 and graph.events[0].type == command.type
+        assert graph.events[0].data == command.data
+        command.data["trial_params"][0]["target_id"] = 2
+        assert graph.events[0].data["trial_params"] == [{"target_id": 1}]
+        assert service.is_peer_connected("stimulation")
+        for channel in ("old", "current"):
+            service.on_peer_delivery_fault(Event(EventType.PeerDeliveryFault, {
+                "peer": "stimulation", "channel_id": channel, "reason": "lost delivery",
+            }))
+            assert service.admission.requires_recovery("stimulation") is (channel == "current")
+        await service.handle_stop_engine(StopEngineCommand())
+        assert graph.shutdown_complete
+    finally:
+        graph.stopped.set()
+        if service._engine_thread is not None:
+            service._engine_thread.join(1)
+
+
+@pytest.fixture
+def thread_factory(monkeypatch):
+    from unittest.mock import Mock
+
+    def create(**kwargs):
+        thread = MagicMock()
+        thread.is_alive.return_value = True
+        thread.join.side_effect = lambda _timeout: setattr(thread.is_alive, "return_value", False)
+        return thread
+
+    factory = Mock(side_effect=create)
+    monkeypatch.setattr("omnibci.application.services.engine_service.Thread", factory)
+    return factory
+
+
+def _runtime_graph():
+    graph = MagicMock(shutdown_complete=True)
+    graph.set_actuation_active = AsyncMock()
+    graph.ensure_output_ready = AsyncMock()
+    return graph
+
+
+def _runtime_snapshot(revision="revision-1"):
+    return {
+        "CONFIG.module_revisions": {"acquisition": revision, "processing": revision,
+                                    "stimulation": revision, "actuation": revision},
+        "CONFIG.engine_revision": "engine-1",
+        "ACQUISITION.sample_rate": 250,
+        "STIMULATION.paradigm": "selected-paradigm",
+        "ACTUATION.effector": "selected-effector",
+        "PLUGINS.bindings": [{"slot": "processing.decoder", "parameters": {"window_duration": 3.0}}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_unknown_shutdown_confirmation_blocks_replacement(thread_factory):
+    graph = _runtime_graph()
+    graph.shutdown_complete = None
+    service = NeuroEngineService(lambda snapshot: graph, snapshot_provider=lambda: {"PLUGINS.bindings": []})
+    await service.startup()
+    await service.handle_start_engine(StartEngineCommand())
+    with pytest.raises(RuntimeError, match="resources"):
+        await service.handle_stop_engine(StopEngineCommand())
+    assert service.restart_blocked
+    with pytest.raises(RuntimeError, match="recovery"):
+        await service.handle_start_engine(StartEngineCommand())
+
+
+@pytest.mark.asyncio
+async def test_graph_and_late_stimulation_ignore_saved_edits(thread_factory):
+    from unittest.mock import Mock
+    from omnibci.application.commands.stimulation_commands import StartStimulationCommand
+    from omnibci.application.services.stimulation_service import StimulationAppService
+
+    saved = _runtime_snapshot()
+    provider = Mock(return_value=saved)
+    graph = _runtime_graph()
+    factory = Mock(return_value=graph)
+    actuation = Mock()
+    service = NeuroEngineService(factory, actuation, snapshot_provider=provider)
+    await service.startup()
+    await service.handle_start_engine(StartEngineCommand())
+    pinned = service.applied_snapshot
+
+    saved["CONFIG.module_revisions"]["acquisition"] = "saved-later"
+    saved["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 9.0
+    returned = service.applied_snapshot
+    returned["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 12.0
+    manager = Mock(auto_spawn=True)
+    stimulation = StimulationAppService(service, manager)
+    stimulation.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=pinned)
+    actuation.start.assert_not_called()
+    async with service.runtime_transition("actuation"):
+        await service.start_module_for_configuration("actuation", service.applied_snapshot)
+
+    provider.assert_called_once_with()
+    assert factory.call_args.args == (pinned,)
+    actuation.start.assert_called_once_with(settings_snapshot=pinned)
+    manager.start.assert_called_once_with(settings_snapshot=pinned)
+    assert service.applied_snapshot == pinned
+    assert service.applied_revisions["acquisition"] == "revision-1"
+    assert isinstance(service.generation, str) and service.generation
+    assert "CONFIG.generation" not in saved
+
+
+@pytest.mark.asyncio
+async def test_factory_cannot_mutate_pinned_snapshot(thread_factory):
+    saved = _runtime_snapshot()
+
+    def build(snapshot):
+        snapshot["PLUGINS.bindings"][0]["parameters"]["window_duration"] = 99
+        return _runtime_graph()
+
+    service = NeuroEngineService(build, snapshot_provider=lambda: saved)
+    await service.startup()
+    await service.handle_start_engine(StartEngineCommand())
+
+    assert service.applied_snapshot["PLUGINS.bindings"] == saved["PLUGINS.bindings"]
+
+
+@pytest.mark.asyncio
+async def test_restart_resolves_once_and_explicit_rollback_does_not_resolve(thread_factory):
+    from unittest.mock import Mock
+
+    provider = Mock(side_effect=[_runtime_snapshot("first"), _runtime_snapshot("second")])
+    factory = Mock(side_effect=lambda snapshot: _runtime_graph())
+    service = NeuroEngineService(factory, snapshot_provider=provider)
+    await service.startup()
+    await service.handle_start_engine(StartEngineCommand())
+    original = service.applied_snapshot
+    await service.handle_stop_engine(StopEngineCommand())
+    await service.handle_start_engine(StartEngineCommand())
+    second_generation = service.generation
+
+    assert service.applied_revisions["acquisition"] == "second"
+    assert second_generation != original["CONFIG.generation"]
+    await service.handle_stop_engine(StopEngineCommand())
+    await service._start_engine_locked(StartEngineCommand(), settings_snapshot=original)
+
+    assert provider.call_count == 2
+    assert service.applied_revisions["acquisition"] == "first"
+    assert service.generation not in (original["CONFIG.generation"], second_generation)
+    assert factory.call_args.args[0]["CONFIG.module_revisions"]["acquisition"] == "first"
+
+
+@pytest.mark.asyncio
+async def test_failed_candidate_keeps_last_successful_revision(thread_factory):
+    from unittest.mock import Mock
+
+    failed_graph = _runtime_graph()
+    failed_graph.wait_until_started.side_effect = RuntimeError("initialization failed")
+    factory = Mock(side_effect=[_runtime_graph(), failed_graph])
+    provider = Mock(side_effect=[_runtime_snapshot("first"), _runtime_snapshot("failed")])
+    service = NeuroEngineService(factory, snapshot_provider=provider)
+    await service.startup()
+    await service.handle_start_engine(StartEngineCommand())
+    original = deepcopy(service.applied_snapshot)
+    await service.handle_stop_engine(StopEngineCommand())
+
+    with pytest.raises(RuntimeError, match="initialization failed"):
+        await service.handle_start_engine(StartEngineCommand())
+
+    assert service.applied_snapshot == original
+    assert not service.is_engine_ready
+
+
+@pytest.mark.asyncio
+async def test_missing_snapshot_is_not_silently_loaded_from_global_settings(thread_factory):
+    from unittest.mock import Mock
+
+    factory = Mock()
+    service = NeuroEngineService(factory, snapshot_provider=lambda: None)
+    await service.startup()
+
+    with pytest.raises(ValueError, match="snapshot_provider must return"):
+        await service.handle_start_engine(StartEngineCommand())
+
+    factory.assert_not_called()
+
+
+def _pkg_snapshot(version):
+    return {"CONFIG.revision": f"revision-{version}", "PLUGINS.bindings": [{
+        "selection": {"package_id": "acme.device", "contribution_id": "output", "version": version},
+        "parameters": {"gain": 1.0},
+    }]}
+
+
+@pytest.mark.parametrize("running,alive,blocked", [(True, False, False), (False, True, False), (False, False, True)])
+def test_paused_or_unresolved_graph_retains_acknowledged_and_attempted_packages(running, alive, blocked):
+    from unittest.mock import Mock
+
+    service = NeuroEngineService(Mock())
+    service._applied_snapshot = _pkg_snapshot("1.0.0")
+    service._graph_snapshot = _pkg_snapshot("2.0.0")
+    service._running = running
+    service._restart_blocked = blocked
+    service._engine_thread = Mock(is_alive=Mock(return_value=alive))
+    service._accepting_commands = False
+
+    references = service.runtime_package_snapshots
+
+    assert references == (_pkg_snapshot("1.0.0"), _pkg_snapshot("2.0.0"))
+    references[0]["PLUGINS.bindings"][0]["selection"]["version"] = "changed"
+    references[1]["PLUGINS.bindings"][0]["parameters"]["gain"] = 99
+    assert service._applied_snapshot == _pkg_snapshot("1.0.0")
+    assert service._graph_snapshot == _pkg_snapshot("2.0.0")
+    assert not service.is_engine_ready
+
+
+def test_clean_stopped_engine_does_not_retain_historical_package_snapshots():
+    from unittest.mock import Mock
+
+    service = NeuroEngineService(Mock())
+    service._applied_snapshot = _pkg_snapshot("1.0.0")
+    service._graph_snapshot = _pkg_snapshot("2.0.0")
+    service._engine_thread = Mock(is_alive=Mock(return_value=False))
+    assert service.runtime_package_snapshots == ()
+    assert service.applied_snapshot == _pkg_snapshot("1.0.0")
+
+
+@pytest.mark.asyncio
+async def test_successful_stop_releases_runtime_references_but_preserves_history(thread_factory):
+    from unittest.mock import Mock
+
+    service = NeuroEngineService(
+        Mock(return_value=_runtime_graph()),
+        snapshot_provider=lambda: _pkg_snapshot("1.0.0"),
+    )
+    await service.startup()
+    await service.handle_start_engine(StartEngineCommand())
+    applied = service.applied_snapshot
+    assert service.runtime_package_snapshots == (applied, applied)
+
+    await service.handle_stop_engine(StopEngineCommand())
+
+    assert service.runtime_package_snapshots == ()
+    assert service.applied_snapshot == applied
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_shutdown_keeps_package_ownership_until_successful_recovery(thread_factory):
+    from unittest.mock import Mock
+
+    graph = _runtime_graph()
+    service = NeuroEngineService(Mock(return_value=graph), snapshot_provider=lambda: _pkg_snapshot("1.0.0"))
+    await service.startup()
+    await service.handle_start_engine(StartEngineCommand())
+    graph.shutdown_complete = False
+    with pytest.raises(RuntimeError):
+        await service.handle_stop_engine(StopEngineCommand())
+    assert service.restart_blocked and not service.is_engine_ready
+    assert service.runtime_package_snapshots
+
+    graph.shutdown_complete = True
+    await service.handle_stop_engine(StopEngineCommand())
+    assert not service.runtime_package_snapshots
+
+
+def test_preparation_copies_inputs_and_excludes_externally_owned_outputs():
+    from unittest.mock import Mock
+
+    def prepare(snapshot, modules):
+        assert modules == ("processing",)
+        snapshot["PLUGINS.artifacts"] = {"processing.decoder": {"pin": "checked"}}
+        return snapshot
+
+    callback = Mock(side_effect=prepare)
+    engine = NeuroEngineService(Mock(), plugin_preparer=callback)
+    selected = {"PLUGINS.bindings": [], "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False}
+    original = deepcopy(selected)
+    prepared = engine.prepare_plugins(selected, ("processing", "stimulation", "actuation"))
+    assert prepared["PLUGINS.artifacts"]["processing.decoder"]["pin"] == "checked"
+    assert selected == original
+    callback.assert_called_once()
+
+
+def test_module_snapshot_is_prepared_before_returning_it_to_a_host():
+    from unittest.mock import Mock
+
+    callback = Mock(side_effect=lambda snapshot, modules: {**snapshot, "PLUGINS.artifacts": {"slot": "checked"}})
+    engine = NeuroEngineService(Mock(), plugin_preparer=callback)
+    engine._applied_snapshot = {"PLUGINS.bindings": [], "CONFIG.engine_revision": "engine"}
+    engine._module_snapshot_provider = lambda module: {
+        "PLUGINS.bindings": [], "CONFIG.engine_revision": "engine",
+        "CONFIG.module_revisions": {module: "revision"},
+    }
+    selected = engine.selected_module_snapshot("acquisition")
+    assert selected["PLUGINS.artifacts"] == {"slot": "checked"}
+    assert callback.call_args.args[1] == ("acquisition",)
+    assert "PLUGINS.artifacts" not in engine.applied_snapshot
+
+
+def test_missing_preparation_dependency_fails_explicitly_for_selected_code():
+    from unittest.mock import Mock
+
+    engine = NeuroEngineService(Mock())
+    with pytest.raises(RuntimeError, match="preparation"):
+        engine.prepare_plugins({"PLUGINS.bindings": [{"slot": "acquisition.source"}]}, ("acquisition",))
+
+
+@pytest.mark.asyncio
+async def test_module_acknowledgement_and_rollback_preserve_concurrent_output_update():
+    from unittest.mock import Mock
+
+    service = NeuroEngineService(Mock())
+    service._engine = Mock()
+    service._running = service._accepting_commands = True
+    service._engine_thread = Mock(is_alive=Mock(return_value=True))
+    original = {
+        "CONFIG.generation": "generation", "CONFIG.engine_revision": "engine",
+        "CONFIG.module_revisions": {"stimulation": "s0", "actuation": "e0"},
+        "STIMULATION.renderer": "old", "ACTUATION.server_port": 1234,
+        "PLUGINS.bindings": [
+            {"slot": "stimulation.paradigm", "parameters": {"value": 0}},
+            {"slot": "actuation.effector", "parameters": {"value": 0}},
+        ],
+    }
+    service._applied_snapshot = deepcopy(original)
+    first, second = deepcopy(original), deepcopy(original)
+    first["CONFIG.module_revisions"]["stimulation"] = "s1"
+    first["STIMULATION.renderer"] = "new"
+    first["PLUGINS.bindings"][0]["parameters"]["value"] = 1
+    second["CONFIG.module_revisions"]["actuation"] = "e1"
+    second["ACTUATION.server_port"] = 5678
+    second["PLUGINS.bindings"][1]["parameters"]["value"] = 2
+    async with service.runtime_transition("stimulation"):
+        service.acknowledge_configuration(first, modules=("stimulation",))
+    async with service.runtime_transition("actuation"):
+        service.acknowledge_configuration(second, modules=("actuation",))
+    applied = service.applied_snapshot
+    assert applied["CONFIG.module_revisions"] == {"stimulation": "s1", "actuation": "e1"}
+    assert applied["STIMULATION.renderer"] == "new"
+    assert applied["ACTUATION.server_port"] == 5678
+    async with service.runtime_transition("actuation"):
+        service.acknowledge_configuration(original, modules=("actuation",))
+    assert service.applied_snapshot["STIMULATION.renderer"] == "new"
+    assert service.applied_revisions["stimulation"] == "s1"
+
+
+@pytest.fixture
+def reading_engine():
+    from unittest.mock import Mock
+
+    engine = NeuroEngineService(Mock())
+    engine._running = engine._accepting_commands = True
+    engine._engine = Mock()
+    engine._engine_thread = Mock(is_alive=lambda: True)
+    engine._applied_snapshot = {"CONFIG.generation": "generation", "CONFIG.module_revisions": {"acquisition": "revision"}}
+    engine._acquisition = Mock(handle_get_status=lambda _: SimpleNamespace(connected=True, connection_id="connection"))
+    return engine
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["generation", "expected_revision", "connection_id"])
+async def test_reading_rejects_stale_identity_without_dispatching(reading_engine, field):
+    identity = {"generation": "generation", "expected_revision": "revision", "connection_id": "connection"}
+    identity[field] = "stale"
+    with pytest.raises(ProfileRevisionConflict, match="Source connection changed"):
+        await reading_engine.start_reading(**identity)
+    reading_engine._acquisition.handle_start_stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reading_checks_identity_in_owned_task_and_does_not_merge_other_requests(reading_engine):
+    entered, release = threading.Event(), threading.Event()
+
+    def read(*args, **kwargs):
+        assert reading_engine.admission.owns("acquisition")
+        entered.set()
+        assert release.wait(3)
+
+    reading_engine._acquisition.handle_start_stream.side_effect = read
+    request = asyncio.create_task(reading_engine.start_reading(
+        generation="generation", expected_revision="revision", connection_id="connection"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        with pytest.raises(ProfileRevisionConflict, match="in progress"):
+            await reading_engine.start_reading(generation="stale", expected_revision="revision", connection_id="connection")
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        with pytest.raises(ProfileRevisionConflict):
+            reading_engine.admission.reserve_transition("acquisition")
+    finally:
+        release.set()
+        await reading_engine._lifecycle_tasks[("read", "acquisition")]
+    reading_engine._acquisition.handle_start_stream.assert_called_once()
+    reading_engine._acquisition.prepare_processing.assert_called_once()

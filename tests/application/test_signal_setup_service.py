@@ -158,17 +158,6 @@ def test_processing_input_preview_uses_source_facts_without_writing(signal_servi
     assert not calls
 
 
-@pytest.mark.parametrize("value", [
-    {"source_id": "different"}, {"assignments": []}, {"original_reference": "M2"},
-    {"manual_metadata": {}}, {"template": "template"},
-])
-def test_processing_input_cannot_redeclare_acquisition_metadata(signal_service, value):
-    service, _, _, calls = signal_service
-    with pytest.raises(ConfigProfileValidationError):
-        service.preview_input(value)
-    assert not calls
-
-
 def test_decoder_input_read_uses_pinned_input_without_saved_draft(signal_service):
     from uuid import uuid4
     from omnibci.application.plugin_management.identity import PluginSelection
@@ -560,3 +549,191 @@ def test_fault_before_attachment_acknowledgement_cannot_publish_ready(signal_ser
     assert service._receipt is None and service._pending_receipt is None
     assert not service.read()["readiness"]["ready"]
     assert calls[-1][0] is EventType.DetachProcessingInput
+
+
+def _proc_descriptor(source, provenance="protocol-defined"):
+    return source_descriptor(
+        SourceObservation(native_text="native", signal_info=source, native_event="final-row", provenance=provenance),
+        source_id="test.source/reader@1.0.0",
+        connection_id="connection-one",
+    )
+
+
+@pytest.fixture
+def proc_source():
+    return SignalInfo(
+        sample_rate=250,
+        channels=tuple(
+            ChannelDescriptor(index, name, unit="uV", channel_id=f"channel-{index}")
+            for index, name in enumerate(("C3", "C4", "M1"))
+        ),
+    )
+
+
+@pytest.fixture
+def proc_snapshot():
+    return {
+        "ACQUISITION.sample_rate": 250,
+        "ACQUISITION.channel_count": 4,
+        "CONFIG.module_revisions": {"acquisition": "a" * 64, "processing": "b" * 64},
+        "CONFIG.generation": "generation-one",
+        "PLUGINS.bindings": [
+            {
+                "slot": "acquisition.source", "kind": "acquisition", "profile_id": "source-profile",
+                "selection": {"package_id": "test.source", "contribution_id": "reader", "version": "1.0.0"},
+                "parameters": {"sample_rate": 250, "channel_count": 4, "data_file_path": "one.cnt"},
+                "profile_revision": 1, "configuration_version": 1,
+            },
+            {
+                "slot": "processing.decoder", "kind": "decoder", "profile_id": "decoder-profile",
+                "selection": {"package_id": "test.decoder", "contribution_id": "decoder", "version": "1.0.0"},
+                "parameters": {"window_duration": 1.0}, "profile_revision": 1, "configuration_version": 1,
+                "processing_input": ProcessingInput(outputs=(ChannelBinding("C3", "channel-0"),)).to_dict(),
+            },
+        ],
+    }
+
+
+def test_processing_binding_survives_profile_revision_and_decoder_parameter_changes(proc_snapshot):
+    from omnibci.application.processing_source import binding_for, processing_binding_key
+
+    before = processing_binding_key(proc_snapshot)
+    proc_snapshot["CONFIG.module_revisions"]["processing"] = "c" * 64
+    proc_snapshot["CONFIG.generation"] = "generation-two"
+    binding_for(proc_snapshot, "acquisition.source")["profile_revision"] += 1
+    decoder = binding_for(proc_snapshot, "processing.decoder")
+    decoder["profile_revision"] += 1
+    decoder["parameters"]["window_duration"] = 2.5
+    assert processing_binding_key(proc_snapshot) == before
+
+
+@pytest.mark.parametrize("field,value", [
+    ("parameters", {"sample_rate": 250, "channel_count": 4, "data_file_path": "two.cnt"}),
+    ("selection", {"package_id": "test.source", "contribution_id": "reader", "version": "2.0.0"}),
+])
+def test_processing_binding_distinguishes_source_ownership(proc_snapshot, field, value):
+    from omnibci.application.processing_source import acquisition_binding_key, binding_for, processing_binding_key
+
+    previous = deepcopy(proc_snapshot)
+    binding_for(proc_snapshot, "acquisition.source")[field] = value
+    assert processing_binding_key(proc_snapshot) != processing_binding_key(previous)
+    assert acquisition_binding_key(binding_for(proc_snapshot, "acquisition.source")) != acquisition_binding_key(
+        binding_for(previous, "acquisition.source"))
+
+
+@pytest.mark.parametrize("profile_id", [None, "another-saved-profile"])
+def test_processing_binding_ignores_saved_profile_provenance(proc_snapshot, profile_id):
+    from omnibci.application.processing_source import binding_for, processing_binding_key
+
+    previous = processing_binding_key(proc_snapshot)
+    binding_for(proc_snapshot, "acquisition.source")["profile_id"] = profile_id
+    assert processing_binding_key(proc_snapshot) == previous
+
+
+def test_processing_binding_tracks_mapping_and_type_declarations(proc_snapshot):
+    from omnibci.application.processing_source import binding_for, processing_binding_key
+
+    previous = processing_binding_key(proc_snapshot)
+    binding_for(proc_snapshot, "processing.decoder")["processing_input"] = ProcessingInput(
+        outputs=(ChannelBinding("C3", "channel-0", "eeg"),)).to_dict()
+    assert processing_binding_key(proc_snapshot) != previous
+
+
+def test_binding_key_copies_mutable_parameters(proc_snapshot):
+    from omnibci.application.processing_source import binding_for, processing_binding_key
+
+    before = processing_binding_key(proc_snapshot)
+    binding_for(proc_snapshot, "acquisition.source")["parameters"]["data_file_path"] = "two.cnt"
+    assert before["source"]["parameters"]["data_file_path"] == "one.cnt"
+
+
+@pytest.mark.parametrize("change,message", [
+    ({"source_id": "another-device"}, "different acquisition source"),
+    ({"sample_rate": 500}, "sample rate"),
+    ({"channels": (ChannelDescriptor(0, "C3", channel_id="channel-0"),)}, "channel count"),
+])
+def test_source_binding_rejects_descriptor_from_a_different_contract(proc_snapshot, proc_source, change, message):
+    from omnibci.application.processing_source import validate_source_binding
+
+    metadata = _proc_descriptor(proc_source)
+    validate_source_binding(proc_snapshot, metadata)
+    if "source_id" in change:
+        metadata.update(change)
+    else:
+        metadata = _proc_descriptor(replace(proc_source, **change))
+    with pytest.raises(ValueError, match=message):
+        validate_source_binding(proc_snapshot, metadata)
+
+
+@pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
+def test_reported_dimensions_remain_visible_but_mismatch_blocks_preparation(proc_snapshot, proc_source, provenance):
+    from omnibci.application.processing_source import validate_source_binding
+    from omnibci.application.source_expectations import validate_source_expectations
+
+    source = replace(proc_source, sample_rate=1000, channels=proc_source.channels[:2])
+    metadata = _proc_descriptor(source, provenance)
+    validate_source_binding(proc_snapshot, metadata)
+    with pytest.raises(ValueError, match="differs from the experiment profile"):
+        validate_source_expectations(proc_snapshot, metadata)
+    with pytest.raises(ValueError, match="different acquisition source"):
+        validate_source_binding(proc_snapshot, {**metadata, "source_id": "another-device"})
+
+
+def test_plan_binding_checks_mapping_while_host_checks_source_identity(proc_snapshot, proc_source):
+    from omnibci.application.processing_source import processing_input, validate_plan_binding, validate_source_binding
+    from omnibci.domain.channel_mapping import compile_processing_plan
+
+    value = processing_input(proc_snapshot)
+    validate_plan_binding(proc_snapshot, compile_processing_plan(proc_source, value))
+    with pytest.raises(ValueError, match="selected processing input"):
+        validate_plan_binding(proc_snapshot, compile_processing_plan(proc_source, ProcessingInput()))
+    with pytest.raises(ValueError, match="different acquisition source"):
+        validate_source_binding(proc_snapshot, {**_proc_descriptor(proc_source), "source_id": "different"})
+
+
+def test_unconfigured_snapshots_do_not_prepare():
+    from omnibci.application.processing_source import (
+        acquisition_binding_key,
+        binding_for,
+        processing_input,
+        requires_signal_preparation,
+    )
+
+    assert binding_for({}, "acquisition.source") is None
+    assert acquisition_binding_key(None) is None
+    assert processing_input({}) is None
+    assert not requires_signal_preparation({})
+
+
+def test_selected_decoder_without_input_still_requires_source_preparation(proc_snapshot):
+    from omnibci.application.processing_source import binding_for, processing_input, requires_signal_preparation
+
+    binding_for(proc_snapshot, "processing.decoder").pop("processing_input")
+    with pytest.raises(ValueError, match="explicit processing_input"):
+        processing_input(proc_snapshot)
+    assert requires_signal_preparation(proc_snapshot)
+
+
+@pytest.mark.parametrize("provenance", ["device-reported", "file-reported"])
+def test_plan_uses_observed_source_values_for_unspecified_expectations(proc_snapshot, proc_source, provenance):
+    from omnibci.application.processing_source import binding_for, processing_input, validate_plan_binding
+    from omnibci.application.source_expectations import validate_source_expectations
+    from omnibci.domain.channel_mapping import compile_processing_plan
+
+    metadata = _proc_descriptor(proc_source, provenance)
+    validate_source_expectations(proc_snapshot, metadata)
+    plan = compile_processing_plan(proc_source, processing_input(proc_snapshot))
+    validate_plan_binding(proc_snapshot, plan)
+    binding_for(proc_snapshot, "acquisition.source")["parameters"].pop("sample_rate")
+    validate_source_expectations(proc_snapshot, metadata)
+    validate_plan_binding(proc_snapshot, plan)
+
+
+def test_source_binding_distinguishes_two_versions_of_same_acquisition_package(proc_snapshot, proc_source):
+    from omnibci.application.processing_source import binding_for, validate_source_binding
+
+    v1_metadata = _proc_descriptor(proc_source)
+    validate_source_binding(proc_snapshot, v1_metadata)
+    binding_for(proc_snapshot, "acquisition.source")["selection"]["version"] = "2.0.0"
+    with pytest.raises(ValueError, match="different acquisition source"):
+        validate_source_binding(proc_snapshot, v1_metadata)

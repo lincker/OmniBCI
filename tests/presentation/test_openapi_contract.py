@@ -106,6 +106,11 @@ def _operations(spec) -> set:
 
 
 class TestOperationSurface:
+    def test_healthz_returns_200(self, api_client):
+        resp = api_client.get("/healthz")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
     def test_exact_operation_set(self, spec):
         assert _operations(spec) == EXPECTED_OPERATIONS
 
