@@ -85,3 +85,12 @@ def test_callbacks_run_on_calling_thread():
     renderer.end_frame.side_effect = lambda: threads.append(threading.get_ident())
     asyncio.run(loop.run_async())
     assert threads == [threading.get_ident()] * 3
+
+
+def test_refresh_rate_change_during_loop_aborts_before_drawing():
+    loop, renderer, paradigm = _make_loop(2)
+    paradigm.required_refresh_rate_hz = 60.0
+    renderer.refresh_rate_hz.side_effect = [60.0, 120.0]
+    with pytest.raises(RuntimeError, match="60 Hz.*120 Hz"):
+        asyncio.run(loop.run_async())
+    assert paradigm.render_frame.call_count == 1

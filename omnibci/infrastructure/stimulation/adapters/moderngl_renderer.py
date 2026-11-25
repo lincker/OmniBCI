@@ -23,6 +23,7 @@ import glfw
 from omnibci.domain.ports.renderer import (
     Color, Rect, TextureHandle,
 )
+from omnibci.infrastructure.stimulation.ui.window import window_refresh_rate_hz
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +191,10 @@ class ModernGLRenderer:
     def should_close(self) -> bool:
         self._ensure_open()
         return glfw.window_should_close(self._window)
+
+    def refresh_rate_hz(self) -> float | None:
+        self._ensure_open()
+        return window_refresh_rate_hz(self._window)
 
     def end_frame(self) -> None:
         self._ensure_open()

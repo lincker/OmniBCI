@@ -399,8 +399,7 @@ def test_installed_zip_is_complete_and_executes_without_source_resources(tmp_pat
         instance.render_frame(0.0)
         trigger.send.assert_called_once_with(11)
         instance.present_result({"target_id": 10})
-        for _ in range(240):
-            instance.render_frame(0.0)
+        instance.render_frame(4.0)
         assert trigger.clear.call_count == 2
     finally:
         instance.teardown()

@@ -39,7 +39,7 @@ from OpenGL.GL.shaders import compileShader, compileProgram
 from omnibci.domain.ports.renderer import (
     Color, Rect, TextureHandle,
 )
-from omnibci.infrastructure.stimulation.ui.window import UIWindow
+from omnibci.infrastructure.stimulation.ui.window import UIWindow, window_refresh_rate_hz
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +155,10 @@ class PyOpenGLRenderer:
     def should_close(self) -> bool:
         self._ensure_open()
         return self._win.should_close()
+
+    def refresh_rate_hz(self) -> float | None:
+        self._ensure_open()
+        return window_refresh_rate_hz(self._win.get_window())
 
     # -- Texture management --------------------------------------------------
 

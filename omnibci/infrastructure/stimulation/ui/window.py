@@ -10,6 +10,31 @@ import glfw
 logger = logging.getLogger(__name__)
 
 
+def window_refresh_rate_hz(window) -> float | None:
+    """Return the refresh rate (Hz) of the monitor containing most of *window*."""
+    if not window:
+        return None
+    monitors = glfw.get_monitors()
+    if not monitors:
+        return None
+    x, y = glfw.get_window_pos(window)
+    w, h = glfw.get_window_size(window)
+    best = None
+    for monitor in monitors:
+        mx, my = glfw.get_monitor_pos(monitor)
+        mode = glfw.get_video_mode(monitor)
+        if mode is None:
+            continue
+        area = max(0, min(x + w, mx + mode.size.width) - max(x, mx)) * max(
+            0, min(y + h, my + mode.size.height) - max(y, my)
+        )
+        if best is None or area > best[0]:
+            best = (area, mode.refresh_rate)
+    if best is None or best[1] <= 0:
+        return None
+    return float(best[1])
+
+
 class UIWindow:
     def __init__(self, window_name, width, height):
         self.window = None

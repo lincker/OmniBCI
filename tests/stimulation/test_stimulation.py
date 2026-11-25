@@ -115,6 +115,44 @@ class TestStimulatorStart:
             asyncio.run(s.start_async())
         assert call_order == ["trigger", "paradigm"]
 
+    @pytest.mark.parametrize("observed_hz", [None, 59, 59.94, 75, 120, 144])
+    def test_unsupported_or_missing_display_rate_fails_before_trigger_or_paradigm_setup(self, observed_hz):
+        s, mock_renderer, mock_paradigm, mock_trigger, mock_loop = _make_stimulator()
+        mock_paradigm.required_refresh_rate_hz = 60.0
+        mock_renderer.refresh_rate_hz.return_value = observed_hz
+        with patch(
+            "omnibci.infrastructure.stimulation.stimulator._create_renderer",
+            return_value=mock_renderer,
+        ), patch(
+            "omnibci.infrastructure.stimulation.stimulator.RenderLoop",
+            return_value=mock_loop,
+        ):
+            with pytest.raises(RuntimeError, match="60 Hz"):
+                asyncio.run(s.start_async())
+        mock_trigger.setup.assert_not_called()
+        mock_paradigm.setup.assert_not_called()
+        mock_renderer.shutdown.assert_called_once()
+
+    def test_fixed_60hz_paradigm_starts_and_rejects_trial_if_display_rate_changes(self):
+        s, mock_renderer, mock_paradigm, _, mock_loop = _make_stimulator()
+        s._payload_schemas = {"trial": {"type": "object", "properties": {}, "additionalProperties": False}}
+        mock_paradigm.required_refresh_rate_hz = 60.0
+        mock_renderer.refresh_rate_hz.return_value = 60.0
+        with patch(
+            "omnibci.infrastructure.stimulation.stimulator._create_renderer",
+            return_value=mock_renderer,
+        ), patch(
+            "omnibci.infrastructure.stimulation.stimulator.RenderLoop",
+            return_value=mock_loop,
+        ):
+            asyncio.run(s.start_async())
+        s.paradigm = mock_paradigm
+        s._renderer = mock_renderer
+        mock_renderer.refresh_rate_hz.return_value = 120.0
+        with pytest.raises(RuntimeError, match="120 Hz"):
+            s.present_trial({})
+        mock_paradigm.present_trial.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # stop()

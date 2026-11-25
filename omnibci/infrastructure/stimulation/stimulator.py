@@ -12,7 +12,10 @@ from omnibci.application.configuration.definitions import MODULE_SETTING_DEFAULT
 from omnibci.application.plugin_management.schema import validate_parameters
 from omnibci.domain.ports.acquisition import TriggerEmitter
 from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.infrastructure.stimulation.render_loop import RenderLoop
+from omnibci.infrastructure.stimulation.render_loop import (
+    RenderLoop,
+    validate_display_refresh_rate,
+)
 
 # ---------------------------------------------------------------------------
 # Renderer registry
@@ -111,6 +114,7 @@ class Stimulator:
         self._renderer_started = True
         self._require_none(self._renderer.initialize(width=1920, height=1080, title="OmniBCI Stimulation"),
                            "Renderer.initialize")
+        validate_display_refresh_rate(self._renderer, self.paradigm)
         self._trigger_started = True
         self._require_none(self.trigger.setup(), "TriggerEmitter.setup")
         self._trigger_ready = True
@@ -190,6 +194,7 @@ class Stimulator:
         self._check_owner()
         if self.paradigm is None:
             raise RuntimeError("Stimulation paradigm has not been initialized")
+        validate_display_refresh_rate(self._renderer, self.paradigm)
         payload = validate_parameters(self._payload_schemas["trial"], parameters, apply_defaults=False)
         self._require_none(self.paradigm.present_trial(payload), "Paradigm.present_trial")
 

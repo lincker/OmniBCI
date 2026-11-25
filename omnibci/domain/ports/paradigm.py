@@ -14,6 +14,10 @@ from omnibci.domain.ports.acquisition import TriggerOutput
 
 
 class Paradigm(ABC):
+    # Optional fixed display refresh rate (Hz) required by this paradigm.
+    # When set, the host validates the active display mode at startup, on
+    # trial admission, and during rendering.
+    required_refresh_rate_hz: float | None = None
 
     @abstractmethod
     def setup(self, *, renderer: RenderSurface, trigger: TriggerOutput) -> None:

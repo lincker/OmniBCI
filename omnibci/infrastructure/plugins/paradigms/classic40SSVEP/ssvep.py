@@ -4,7 +4,7 @@
 """Classic 40-target SSVEP paradigm — RenderSurface-protocol edition.
 
 Rendering is driven by an external RenderLoop that calls ``render_frame``
-once per VSync.  Trial control methods (``present_trial``,
+with monotonic elapsed seconds.  Trial control methods (``present_trial``,
 ``present_result``) run on the renderer owner thread.
 """
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from collections.abc import Mapping
 import logging
+import math
 import string
 import threading
 from enum import Enum, auto
@@ -34,8 +35,9 @@ _PACK_NAME = "classic40_ssvep.ofp"
 # emit 1-based ids (result + 1).
 _N_TARGETS     = 40
 
-_CUE_FRAMES    = 60   # ~1 s at 60 Hz
-_RESULT_FRAMES = 90   # ~1.5 s feedback display
+_REFRESH_RATE_HZ = 60
+_CUE_FRAMES      = 60   # 1 s at 60 Hz
+_RESULT_FRAMES   = 90   # 1.5 s feedback display
 
 
 def _frame_pack_path(resource_root: Path) -> Path:
@@ -74,6 +76,7 @@ class _State(Enum):
 # ---------------------------------------------------------------------------
 
 class Classic40SSVEP_2(Paradigm):
+    required_refresh_rate_hz = float(_REFRESH_RATE_HZ)
 
     def __init__(
         self, *, parameters: Mapping[str, object], resource_root: Path,
@@ -100,10 +103,12 @@ class Classic40SSVEP_2(Paradigm):
         self._lock             = threading.Lock()
         self._state            = _State.IDLE
         self._current_event    = 0
-        self._cue_countdown    = 0
-        self._stim_frame_idx   = 0
+        self._phase_start_time: float | None = None
+        self._last_slot        = -1
+        self._cue_frames       = 0
+        self._marker_sent      = False
+        self._missed_frames    = 0
         self._result_target_id = 0
-        self._result_countdown = 0
 
     # ── Paradigm port ──────────────────────────────────────────────────────
 
@@ -126,10 +131,12 @@ class Classic40SSVEP_2(Paradigm):
 
         with self._lock:
             self._state = _State.IDLE
-            self._cue_countdown = 0
-            self._stim_frame_idx = 0
+            self._phase_start_time = None
+            self._last_slot = -1
+            self._cue_frames = 0
+            self._marker_sent = False
+            self._missed_frames = 0
             self._result_target_id = 0
-            self._result_countdown = 0
 
     def teardown(self) -> None:
         """Attempt every safe release, including after partial texture upload."""
@@ -164,52 +171,90 @@ class Classic40SSVEP_2(Paradigm):
     # ── RenderLoop interface ───────────────────────────────────────────────
 
     def render_frame(self, t: float = 0.0) -> None:
-        """Draw current frame.  Called by RenderLoop on the GL thread."""
+        """Draw current frame using monotonic *t* without extending missed trials."""
         r = self._renderer
         if r is None:
             return
-
-        r.clear()
+        if isinstance(t, bool) or not isinstance(t, (int, float)):
+            raise TypeError("elapsed_seconds must be a real number")
+        t = float(t)
+        if not math.isfinite(t) or t < 0:
+            raise ValueError("elapsed_seconds must be finite and nonnegative")
 
         with self._lock:
             if self._state == _State.IDLE:
+                r.clear()
                 self._draw_idle(r)
+                return
 
-            elif self._state == _State.CUE:
-                r.draw_texture(self._cue_textures[self._current_event-1], _STIM_RECT)
-                self._text_view.draw(r)
-                self._cue_countdown -= 1
-                if self._cue_countdown <= 0:
-                    # CUE -> STIM: send EEG trigger
+            if self._phase_start_time is None:
+                self._phase_start_time = t
+            slot = math.floor((t - self._phase_start_time) * _REFRESH_RATE_HZ + 0.5)
+            if slot <= self._last_slot:
+                return
+            if self._state in (_State.CUE, _State.STIM) and self._last_slot >= 0 and slot > self._last_slot + 1:
+                missed_start = max(self._last_slot + 1, self._cue_frames)
+                missed_end = min(slot, self._cue_frames + len(self._stim_textures))
+                if missed_end > missed_start:
+                    self._missed_frames += missed_end - missed_start
+            self._last_slot = slot
+            r.clear()
+
+            if self._state == _State.CUE and slot >= self._cue_frames:
+                self._state = _State.STIM
+                stim_idx = slot - self._cue_frames
+                if stim_idx < len(self._stim_textures):
+                    logging.warning("Classic40 start marker delayed by %d frames", stim_idx + 1)
                     self.trigger.clear()
                     self.trigger.send(self._current_event)
-                    self._stim_frame_idx = 0
+                    self._marker_sent = True
+                else:
+                    logging.warning("Classic40 stimulus interval elapsed before its start marker")
+
+            if self._state == _State.CUE:
+                r.draw_texture(self._cue_textures[self._current_event - 1], _STIM_RECT)
+                self._text_view.draw(r)
+                if slot == self._cue_frames - 1:
+                    # Preserve last-cue marker placement on nominal 60 Hz pacing.
+                    self.trigger.clear()
+                    self.trigger.send(self._current_event)
+                    self._marker_sent = True
                     self._state = _State.STIM
 
             elif self._state == _State.STIM:
-                if self._stim_frame_idx < len(self._stim_textures):
-                    r.draw_texture(
-                        self._stim_textures[self._stim_frame_idx], _STIM_RECT
-                    )
+                stim_idx = slot - self._cue_frames
+                if stim_idx < len(self._stim_textures):
+                    r.draw_texture(self._stim_textures[stim_idx], _STIM_RECT)
                     self._text_view.draw(r)
-                    self._stim_frame_idx += 1
                 else:
-                    # All frames shown — clear trigger and return to IDLE
-                    self.trigger.clear()
+                    if self._missed_frames:
+                        logging.warning(
+                            "Classic40 stimulus missed %d of %d frames",
+                            self._missed_frames,
+                            len(self._stim_textures),
+                        )
+                    if self._marker_sent:
+                        self.trigger.clear()
                     self._state = _State.IDLE
                     self._draw_idle(r)
 
             elif self._state == _State.RESULT:
-                r.draw_texture(
-                    self._result_textures[self._result_target_id - 1], _STIM_RECT
-                )
-                self._text_view.draw(r)
-                self._result_countdown -= 1
-                if self._result_countdown <= 0:
+                if slot < _RESULT_FRAMES:
+                    r.draw_texture(self._result_textures[self._result_target_id - 1], _STIM_RECT)
+                    self._text_view.draw(r)
+                else:
+                    self._draw_idle(r)
+                if slot >= _RESULT_FRAMES - 1:
                     self._result_target_id = 0
                     self._state = _State.IDLE
 
     # ── Trial control (application thread) ────────────────────────────────
+
+    @property
+    def missed_frames(self) -> int:
+        """Number of omitted stimulus slots observed during the latest trial."""
+        with self._lock:
+            return self._missed_frames
 
     def is_presenting(self) -> bool:
         """True while a trial is mid-sequence (cue/stim/result) — not IDLE.
@@ -229,15 +274,20 @@ class Classic40SSVEP_2(Paradigm):
         with self._lock:
             self._current_event = event_id
             self._result_target_id = 0
+            self._phase_start_time = None
+            self._last_slot = -1
+            self._missed_frames = 0
             if 0 < event_id <= _N_TARGETS:
-                self._cue_countdown = _CUE_FRAMES
-                self._state         = _State.CUE
+                self._cue_frames = _CUE_FRAMES
+                self._marker_sent = False
+                self._state = _State.CUE
             else:
                 # No cue — go straight to STIM
                 self.trigger.clear()
                 self.trigger.send(event_id)
-                self._stim_frame_idx = 0
-                self._state          = _State.STIM
+                self._cue_frames = 0
+                self._marker_sent = True
+                self._state = _State.STIM
 
     def present_result(self, result: Mapping[str, object]) -> None:
         """Update feedback for the explicitly selected target."""
@@ -253,8 +303,9 @@ class Classic40SSVEP_2(Paradigm):
             else:
                 self._text_view.add_text(text)
             self._result_target_id = target_id
-            self._result_countdown = _RESULT_FRAMES
-            self._state            = _State.RESULT
+            self._phase_start_time = None
+            self._last_slot = -1
+            self._state = _State.RESULT
 
     # ── Private ────────────────────────────────────────────────────────────
 

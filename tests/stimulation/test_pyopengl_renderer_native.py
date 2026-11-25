@@ -45,6 +45,7 @@ def test_start_draw_and_close_fresh_context(renderer, run):
     renderer.draw_texture(texture, Rect(-1, -1, 2, 2))
     np.testing.assert_array_equal(_center_pixel(renderer), [0, 255, 0])
     renderer.end_frame()
+    assert renderer.refresh_rate_hz() > 0
     renderer.release_texture(texture)
     assert glGetError() == GL_NO_ERROR
     renderer.shutdown()

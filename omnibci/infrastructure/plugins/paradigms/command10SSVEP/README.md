@@ -43,10 +43,12 @@ pixels apart. Four arrows and six letters are supplied as transparent PNGs.
 ## Trial, timing and feedback
 
 Submit `{"cue_target_id": 1}` to cue target 1; IDs 1 through 10 are accepted.
-The selected target has a red cue border for 60 frames (1 second at 60 Hz).
-Then all ten targets stimulate together for 240 frames (4 seconds at 60 Hz).
+The selected target has a red cue border for 1 second (60 slots at 60 Hz).
+Then all ten targets stimulate together for 4 seconds (240 slots at 60 Hz).
 Submit `{"cue_target_id": 0}` for free choice: there is no cue interval and
-stimulation starts at the next frame callback.
+stimulation starts at the next frame callback. The host checks
+`required_refresh_rate_hz = 60.0` at startup, before starting trials, and during
+rendering, rejecting unsupported modes such as 75 Hz, 120 Hz, or 144 Hz.
 
 The target background uses sampled sinusoidal grayscale values:
 
@@ -55,19 +57,22 @@ brightness(i, n) = 0.5 + 0.5 * sin(2 * pi * frequency[i] * n / 60 + phase[i])
 ```
 
 White labels remain static over the varying background. The center never
-flickers. Every trial resets its stimulus phase origin. The index `n` (`0..239`)
-advances once per VSync-paced `render_frame` callback.
+flickers. Every trial resets its stimulus timeline origin. The index `n` (`0..239`)
+is computed from monotonic `elapsed_seconds` so missed callbacks skip expired
+slots rather than extending the stimulus interval or shifting phase.
 
 `present_trial` clears the trigger baseline before starting the trial. At the
-first stimulus frame, the plugin requests one start marker: the cued ID (1..10),
-or **11** for free choice. Zero is the hardware baseline; it never starts an
-epoch. The trigger is cleared when that interval ends. For level-based
-acquisition, the host's trigger-edge preprocessing keeps the first sample of
-the nonzero run, including across chunks.
+first serviced stimulus slot, the plugin requests one start marker: the cued ID
+(1..10), or **11** for free choice. Zero is the hardware baseline; it never
+starts an epoch. If the entire 4-second stimulus interval elapses before a frame
+callback runs, the expired start marker is omitted. The trigger is cleared when
+that interval ends. For level-based acquisition, the host's trigger-edge
+preprocessing keeps the first sample of the nonzero run, including across
+chunks.
 
 Feedback accepts exactly `{"target_id": 1..10}`. An early result is cached
-until the fixed stimulus interval ends. Feedback then lasts 90 frames
-(1.5 seconds at 60 Hz), with the predicted target's entire background filled red, its
+until the fixed stimulus interval ends. Feedback then lasts 1.5 seconds (90 slots
+at 60 Hz), with the predicted target's entire background filled red, its
 white label preserved, and the same label shown in the center. A result may
 also arrive during this feedback interval without
 extending it. With no result, the center remains a dash and the trial still
@@ -114,8 +119,9 @@ when stopping or cleaning up. Labels use Pillow's bundled font and can be
 regenerated with `python scripts/build_command10_assets.py`; runtime rendering
 does not depend on system fonts.
 
-Headless tests check the protocol, grayscale values, per-frame countdowns,
-phase resets, marker requests, malformed payloads, feedback and cleanup.
+Headless tests check the protocol, grayscale values, monotonic timelines and
+missed-slot skipping, phase resets, marker requests, malformed payloads,
+feedback and cleanup.
 Installation tests load the package from its ZIP and verify packaged resources.
 These tests do not establish EEG accuracy, physical trigger delivery, display
 gamma/luminance or photon timing. Measure those on the intended 60 Hz display

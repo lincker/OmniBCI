@@ -155,6 +155,10 @@ class Renderer(RenderSurface, Protocol):
         """Return True when the window has been requested to close."""
         ...
 
+    def refresh_rate_hz(self) -> float | None:
+        """Return the active display mode refresh rate in Hz for this window, or None if unavailable."""
+        ...
+
     # -- Frame submission ----------------------------------------------------
 
     def end_frame(self) -> None:

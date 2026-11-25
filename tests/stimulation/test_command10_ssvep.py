@@ -2,6 +2,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, call
 import math
+import weakref
 
 import numpy as np
 import pytest
@@ -26,9 +27,14 @@ EXPECTED = (
 )
 
 
+_CLOCKS: weakref.WeakKeyDictionary[Command10SSVEP, list[float]] = weakref.WeakKeyDictionary()
+
+
 def tick(paradigm, count=1):
+    state = _CLOCKS.setdefault(paradigm, [0.0])
     for _ in range(count):
-        paradigm.render_frame(0.0)
+        paradigm.render_frame(state[0])
+        state[0] += 1 / 60
 
 
 def target_rect(row, column):
@@ -56,6 +62,10 @@ def paradigm(surface, trigger):
     instance.teardown()
 
 
+def test_requires_fixed_60hz_display_mode():
+    assert Command10SSVEP.required_refresh_rate_hz == 60.0
+
+
 def test_target_protocol_matches_approved_layout():
     assert len(TARGETS) == 10
     for target, (identifier, label, row, column, frequency, phase_pi) in zip(TARGETS, EXPECTED):
@@ -70,7 +80,7 @@ def test_all_target_luminances_follow_display_refreshes(paradigm, surface, trigg
     if index:
         tick(paradigm, index)
         surface.draw_rect.reset_mock()
-    paradigm.render_frame(0.0)
+    tick(paradigm, 1)
     rectangles = {entry.args[0]: entry.args[1] for entry in surface.draw_rect.call_args_list}
     for _, _, row, column, frequency, phase_pi in EXPECTED:
         color = rectangles[target_rect(row, column)]
@@ -235,3 +245,74 @@ def test_unconfigured_or_unready_usage_is_rejected(surface, trigger):
     with pytest.raises(RuntimeError, match='initialized'):
         instance.setup(renderer=surface, trigger=trigger)
     instance.teardown()
+
+
+def test_short_gap_preserves_sinusoidal_phase_and_records_misses(paradigm, surface, trigger):
+    paradigm.present_trial({'cue_target_id': 0})
+    paradigm.render_frame(0.0)
+    surface.draw_rect.reset_mock()
+    paradigm.render_frame(3 / 60)
+    rectangles = {entry.args[0]: entry.args[1] for entry in surface.draw_rect.call_args_list}
+    for _, _, row, column, frequency, phase_pi in EXPECTED:
+        color = rectangles[target_rect(row, column)]
+        brightness = .5 + .5 * math.sin(2 * math.pi * frequency * 3 / 60 + phase_pi * math.pi)
+        assert (color.r, color.g, color.b) == pytest.approx((brightness,) * 3)
+    assert paradigm.missed_frames == 2
+
+
+def test_one_second_gap_ends_stimulus_at_four_seconds(paradigm, surface, trigger):
+    paradigm.present_trial({'cue_target_id': 0})
+    for i in range(60):
+        paradigm.render_frame(i / 60)
+    for i in range(120, 240):
+        paradigm.render_frame(i / 60)
+    assert paradigm.is_presenting()
+    paradigm.render_frame(4.0)
+    assert paradigm._state.name == 'RESULT'
+    assert paradigm.missed_frames == 60
+    assert trigger.mock_calls == [call.clear(), call.send(11), call.clear()]
+    paradigm.render_frame(5.5)
+    assert not paradigm.is_presenting()
+
+
+def test_gap_across_cue_boundary_emits_single_delayed_marker(paradigm, surface, trigger):
+    paradigm.present_trial({'cue_target_id': 5})
+    paradigm.render_frame(0.0)
+    surface.draw_rect.reset_mock()
+    paradigm.render_frame(63 / 60)
+    rectangles = {entry.args[0]: entry.args[1] for entry in surface.draw_rect.call_args_list}
+    assert rectangles[target_rect(1, 3)].r == pytest.approx(.5 + .5 * math.sin(2 * math.pi * 8 * 3 / 60))
+    trigger.send.assert_called_once_with(5)
+    assert paradigm.missed_frames == 3
+
+
+def test_gap_across_stimulus_end_clears_trigger_and_enters_result(paradigm, trigger):
+    paradigm.present_trial({'cue_target_id': 0})
+    paradigm.render_frame(0.0)
+    paradigm.render_frame(4.25)
+    assert paradigm._state.name == 'RESULT'
+    assert trigger.mock_calls == [call.clear(), call.send(11), call.clear()]
+    paradigm.render_frame(5.5)
+    assert not paradigm.is_presenting()
+
+
+def test_gap_past_entire_stimulus_omits_expired_start_marker(paradigm, trigger):
+    paradigm.present_trial({'cue_target_id': 5})
+    paradigm.render_frame(0.0)
+    paradigm.render_frame(5.5)
+    trigger.send.assert_not_called()
+    with pytest.raises(ValueError, match='active'):
+        paradigm.present_result({'target_id': 1})
+    paradigm.render_frame(6.5)
+    assert not paradigm.is_presenting()
+
+
+def test_duplicate_or_regressed_timestamp_does_not_advance(paradigm, surface, trigger):
+    paradigm.present_trial({'cue_target_id': 0})
+    paradigm.render_frame(1.0)
+    surface.reset_mock()
+    paradigm.render_frame(1.0)
+    paradigm.render_frame(0.5)
+    surface.clear.assert_not_called()
+    surface.draw_rect.assert_not_called()
+    trigger.send.assert_called_once_with(11)
