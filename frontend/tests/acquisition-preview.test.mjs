@@ -567,22 +567,18 @@ test("preview client methods retain identity in API requests through the shared 
     const body = { generation: "generation", connection_id: "connection", expected_revision: "a".repeat(64),
       selection: { rows: [0], sample_start: 0, sample_count: 2, chunk_count: 32, include_trigger: true } };
     await api.acqPreviewStart(body);
-    await api.acqPreviewStop("generation", "capture");
     await api.acqPreview("generation");
     await api.acqPreview("generation", "capture");
     await api.acqPreviewChunk("generation", "capture", 41);
     assert.equal(calls[0].url.pathname, "/api/v1/acquisition/preview/start");
     assert.equal(calls[0].options.method, "POST");
     assert.deepEqual(JSON.parse(calls[0].options.body), body);
-    assert.equal(calls[1].url.pathname, "/api/v1/acquisition/preview/stop");
-    assert.equal(calls[1].options.method, "POST");
-    assert.deepEqual(JSON.parse(calls[1].options.body), { generation: "generation", capture_id: "capture" });
-    assert.equal(calls[2].url.searchParams.get("generation"), "generation");
-    assert.equal(calls[2].url.searchParams.has("capture_id"), false);
+    assert.equal(calls[1].url.searchParams.get("generation"), "generation");
+    assert.equal(calls[1].url.searchParams.has("capture_id"), false);
+    assert.equal(calls[2].url.searchParams.get("capture_id"), "capture");
+    assert.equal(calls[3].url.pathname, "/api/v1/acquisition/preview/chunks/41");
+    assert.equal(calls[3].url.searchParams.get("generation"), "generation");
     assert.equal(calls[3].url.searchParams.get("capture_id"), "capture");
-    assert.equal(calls[4].url.pathname, "/api/v1/acquisition/preview/chunks/41");
-    assert.equal(calls[4].url.searchParams.get("generation"), "generation");
-    assert.equal(calls[4].url.searchParams.get("capture_id"), "capture");
   } finally { globalThis.fetch = previous; }
 });
 

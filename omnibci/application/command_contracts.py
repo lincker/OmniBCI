@@ -78,9 +78,7 @@ def _preview_request(value, *, action):
     fields = {"generation"}
     if action == "start":
         fields |= {"expected_revision", "connection_id", "capture_id"}
-    elif action == "stop":
-        fields.add("capture_id")
-    optional = {"selection", "continuous"} if action == "start" else {"capture_id"} if action == "get" else ()
+    optional = {"selection", "continuous"} if action == "start" else {"capture_id"}
     data = _record(value, fields, optional)
     for key in fields - {"selection", "continuous"}:
         _text(data[key])
@@ -229,7 +227,6 @@ _CONTRACTS = {
     EventType.StartStream: CommandContract("acquisition", ("acquisition",), _none, _none),
     EventType.StopAndDrain: CommandContract("acquisition", ("acquisition",), _none, _drain_receipt),
     EventType.StartAcquisitionPreview: CommandContract("acquisition", ("acquisition",), partial(_preview_request, action="start"), _preview_receipt),
-    EventType.StopAcquisitionPreview: CommandContract("acquisition", ("acquisition",), partial(_preview_request, action="stop"), _preview_receipt),
     EventType.GetAcquisitionPreview: CommandContract("acquisition", (), partial(_preview_request, action="get"), _preview_receipt),
     EventType.AttachProcessingInput: CommandContract("acquisition", ("processing",), _preparation_receipt, _attachment_receipt),
     EventType.DetachProcessingInput: CommandContract("acquisition", ("processing",), _detach_input_request, _drain_receipt),

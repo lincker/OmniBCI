@@ -34,9 +34,6 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/engine/start", "post"),
     ("/api/v1/engine/stop", "post"),
     ("/api/v1/engine/status", "get"),
-    ("/api/v1/engine/modules/{module}/start", "post"),
-    ("/api/v1/engine/modules/{module}/prepare", "post"),
-    ("/api/v1/engine/modules/{module}/stop", "post"),
     # acquisition
     ("/api/v1/acquisition/connect", "post"),
     ("/api/v1/acquisition/disconnect", "post"),
@@ -46,14 +43,22 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/acquisition/metadata", "get"),
     ("/api/v1/acquisition/metadata/refresh", "post"),
     ("/api/v1/acquisition/preview/start", "post"),
-    ("/api/v1/acquisition/preview/stop", "post"),
     ("/api/v1/acquisition/preview", "get"),
     ("/api/v1/acquisition/preview/chunks/{sequence_id}", "get"),
+    # processing
+    ("/api/v1/processing/start", "post"),
+    ("/api/v1/processing/stop", "post"),
     # stimulation
     ("/api/v1/stimulation/status", "get"),
     ("/api/v1/stimulation/start", "post"),
+    ("/api/v1/stimulation/prepare", "post"),
     ("/api/v1/stimulation/stop", "post"),
     ("/api/v1/stimulation/trial/start", "post"),
+    # actuation
+    ("/api/v1/actuation/status", "get"),
+    ("/api/v1/actuation/start", "post"),
+    ("/api/v1/actuation/prepare", "post"),
+    ("/api/v1/actuation/stop", "post"),
     # Current decoded results
     ("/api/v1/results", "get"),
     ("/api/v1/results/epochs", "get"),
@@ -66,10 +71,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/config/plugin-catalog/{kind}", "get"),
     ("/api/v1/config/plugin-profiles", "get"),
     ("/api/v1/config/plugin-profiles", "post"),
-    ("/api/v1/config/plugin-profiles/{profile_id}", "get"),
     ("/api/v1/config/plugin-profiles/{profile_id}", "put"),
     ("/api/v1/config/plugin-profiles/{profile_id}", "delete"),
-    ("/api/v1/config/modules", "get"),
     ("/api/v1/config/modules/{module}", "get"),
     ("/api/v1/config/modules/{module}/history", "get"),
     ("/api/v1/config/modules/{module}/history/{entry_id}", "get"),
@@ -157,7 +160,7 @@ class TestResponseDtos:
         assert props["desktop_api_version"]["const"] == 1
 
     def test_engine_configuration_and_node_identity_contract(self, spec):
-        assert set(_schema(spec, "ModulesResponse")["properties"]) == {"modules", "engine", "errors"}
+        assert "ModulesResponse" not in spec["components"]["schemas"]
         assert set(_schema(spec, "EngineSettingsResponse")["properties"]) == {"revision", "settings"}
         scopes = _schema(spec, "RuntimePlanRequest")["properties"]["module"]["enum"]
         assert set(scopes) == {"acquisition", "processing", "stimulation", "actuation", "engine"}
@@ -199,14 +202,16 @@ class TestResponseDtos:
         assert {"operations", "recovery"} <= set(schema["required"])
         operation = _schema(spec, "RuntimeOperationResponse")
         assert {"module", "affected_modules", "operation_id"} <= set(operation["required"])
-        prepare = spec["paths"]["/api/v1/engine/modules/{module}/prepare"]["post"]
-        module = next(parameter for parameter in prepare["parameters"] if parameter["name"] == "module")
-        assert set(module["schema"]["enum"]) == {"stimulation", "actuation"}
+        assert "/api/v1/stimulation/prepare" in spec["paths"]
+        assert "/api/v1/actuation/prepare" in spec["paths"]
+        assert "/api/v1/engine/modules/{module}/prepare" not in spec["paths"]
 
     def test_engine_status_fields(self, spec):
         props = _schema(spec, "EngineStatusResponse")["properties"]
-        assert set(props) == {"running", "acquisition_alive", "processor_alive", "stimulation_connected",
-                              "actuation_alive", "actuation_connected"}
+        assert set(props) == {"running", "acquisition_alive", "processor_alive",
+                              "stimulation_connected", "actuation_connected"}
+        actuation = _schema(spec, "ActuationStatusResponse")["properties"]
+        assert set(actuation) == {"active", "process_alive", "engine_connected", "effector"}
 
     def test_acquisition_status_fields(self, spec):
         props = _schema(spec, "AcquisitionStatusResponse")["properties"]

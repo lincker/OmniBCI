@@ -624,7 +624,6 @@ class NeuroEngine:
             EventType.DisconnectDataProvider:         (acq, AcquisitionCommand.disconnect),
             EventType.StartStream:                    (acq, AcquisitionCommand.start_stream),
             EventType.StartAcquisitionPreview:        (acq, AcquisitionCommand.start_preview),
-            EventType.StopAcquisitionPreview:         (acq, AcquisitionCommand.stop_preview),
             EventType.GetAcquisitionPreview:          (acq, AcquisitionCommand.get_preview),
             EventType.GetSourceMetadata:              (acq, AcquisitionCommand.get_metadata),
             EventType.StopAndDrain:                   (acq, AcquisitionCommand.stop_and_drain),

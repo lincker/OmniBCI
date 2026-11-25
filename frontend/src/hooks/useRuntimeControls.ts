@@ -28,6 +28,7 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
   acquisition: AcquisitionController, engine: ReturnType<typeof usePoll<EngineStatus>>) {
   const { t } = useI18n();
   const stimulation = usePoll(api.stimulationStatus);
+  const actuation = usePoll(api.actuationStatus);
   const signal = usePoll(signalConfigApi.get);
   const [actions, setActions] = useState<Partial<Record<ActionName, ActionState>>>({});
   const values = useRef(actions);
@@ -46,18 +47,18 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     try { await action(); }
     catch (cause) { update(name, { pending: true, error: cause instanceof ApiError ? `[${cause.code}] ${cause.message}` : String(cause) }); }
     finally {
-      if (module === "engine") await Promise.all([engine.refresh(), runtime.refresh(), acquisition.refresh(), stimulation.refresh(), signal.refresh()]);
+      if (module === "engine") await Promise.all([engine.refresh(), runtime.refresh(), acquisition.refresh(), stimulation.refresh(), actuation.refresh(), signal.refresh()]);
       else if (module === "acquisition") await acquisition.refresh();
       else if (module === "stimulation") await Promise.all([stimulation.refresh(), runtime.refresh()]);
-      else await Promise.all([engine.refresh(), runtime.refresh(), ...(module === "processing" ? [signal.refresh()] : [])]);
+      else if (module === "actuation") await Promise.all([actuation.refresh(), runtime.refresh()]);
+      else await Promise.all([engine.refresh(), runtime.refresh(), signal.refresh()]);
       update(name, { pending: false, error: values.current[name]?.error ?? null });
     }
   };
-  const startModule = async (module: ConfigurationModule) => {
-    if (module === "acquisition") throw new Error("Use Connect to start acquisition.");
+  const startModule = async (module: Exclude<ConfigurationModule, "acquisition">) => {
     const configuration = current.request(module);
     const result = await runtime.execute(module, configuration,
-      module === "stimulation" ? api.stimStart : (body) => api.moduleStart(module, body),
+      (body) => api.moduleStart(module, body),
       (operation) => current.acknowledge(module, configuration, operation.target_revisions[module]));
     if (result.status !== "succeeded") throw new Error(result.error ?? "Module startup failed.");
     if (result.result?.action === "prepared" && module !== "processing") {
@@ -67,7 +68,7 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
   const action = <A extends unknown[],>(name: ActionName, fn: (...args: A) => Promise<unknown>, stop = false) => ({
     ...(actions[name] ?? { pending: false, error: null }), run: (...args: A) => run(name, () => fn(...args), stop),
   });
-  const controls = { stimulation, signal, notices, pending,
+  const controls = { stimulation, actuation, signal, notices, pending,
     busy: Object.values(actions).some((state) => state.pending) || acquisition.pending,
     enginePending: !!actions.start?.pending || !!actions.stop?.pending,
     start: action("start", async () => api.engineStart()),
@@ -79,7 +80,7 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
       await startModule("stimulation");
     }),
     stopStim: action("stopStim", async () => {
-      setNotices((previous) => ({ ...previous, stimulation: undefined })); await api.stimStop();
+      setNotices((previous) => ({ ...previous, stimulation: undefined })); await api.moduleStop("stimulation");
     }, true),
     trigger: action("trigger", api.trialStart),
     readCurrent: action("readCurrent", async () => {
@@ -127,18 +128,20 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     const external = current.settings[name]?.[`${name.toUpperCase()}.auto_spawn`] === false;
     const acceptedExternal = matches(name) && accepted?.settings[`${name.toUpperCase()}.auto_spawn`] === false;
     const connected = name === "acquisition" ? !!acquisition.data?.connected
-      : name === "stimulation" ? !!stimulation.data?.engine_connected : !!engine.data?.actuation_connected;
+      : name === "stimulation" ? !!stimulation.data?.engine_connected : !!actuation.data?.engine_connected;
     const active = running && (name === "acquisition" ? connected : name === "processing" ? !!engine.data?.processor_alive
-      : name === "stimulation" ? !!stimulation.data?.active && connected : !!engine.data?.actuation_alive && connected);
+      : name === "stimulation" ? !!stimulation.data?.active && connected : !!actuation.data?.active && connected);
     const runtimeState = runtime.state(name);
     const available = engineAvailable && !runtime.error && !!runtime.status && !runtime.status.errors?.[name] && !runtime.status.errors?.engine && (name === "acquisition"
-      ? acquisition.data !== null && !acquisition.error : name === "stimulation" ? stimulation.data !== null && !stimulation.error : true);
+      ? acquisition.data !== null && !acquisition.error : name === "stimulation" ? stimulation.data !== null && !stimulation.error
+        : name === "actuation" ? actuation.data !== null && !actuation.error : true);
     const confirmed = available && engine.data?.running === runtime.status?.running && !runtimeState.uncertain && !runtimeState.recoveryRequired
       && !runtime.status?.recovery?.[name] && !runtime.status?.recovery?.engine;
     const recover = acceptedExternal && !!runtime.status?.recovery?.[name] && !connected;
     const engineReason = !engineAvailable ? t("run.reason.engineUnavailable") : null;
     const availabilityReason = engineReason ?? (name === "acquisition" && !available ? t("run.reason.acquisitionUnavailable")
-      : name === "stimulation" && !available ? t("run.reason.stimulationUnavailable") : null);
+      : name === "stimulation" && !available ? t("run.reason.stimulationUnavailable")
+        : name === "actuation" && !available ? t("run.reason.engineUnavailable") : null);
     const validation = () => {
       const moduleError = current.validationError(name);
       if (moduleError) return moduleError;
@@ -195,13 +198,13 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
       startReason ??= !running ? t("run.reason.startEngine") : null;
       startReason ??= recover ? null : currentReason(name) ?? validation()
         ?? (changed && connected && (acceptedExternal || external) ? t("run.reason.disconnectExternal")
-          : engine.data?.actuation_alive ? t("run.reason.actuationActive") : !has("effector") ? t("run.reason.selectEffector") : null);
-      stopReason = stopAction.pending ? t("feedback.busy") : engineReason
-        ?? (!engine.data?.actuation_alive && !connected && !startAction.pending && !notices.actuation && !runtime.status?.recovery?.actuation ? t("run.reason.actuationStopped") : null);
+          : actuation.data?.active && (actuation.data.process_alive || connected) ? t("run.reason.actuationActive") : !has("effector") ? t("run.reason.selectEffector") : null);
+      stopReason = stopAction.pending ? t("feedback.busy") : availabilityReason
+        ?? (!(actuation.data?.process_alive || actuation.data?.active || connected || startAction.pending || notices.actuation || runtime.status?.recovery?.actuation) ? t("run.reason.actuationStopped") : null);
     }
     const status = !confirmed ? t("runtime.statusUnknown") : active ? t(name === "acquisition" ? "run.sourceConnected" : "run.running")
       : name === "acquisition" ? t("run.sourceNotConnected") : !running ? t("runtime.stopped")
-      : name === "stimulation" && stimulation.data?.process_alive || name === "actuation" && engine.data?.actuation_alive ? t("runtime.waitingConnection")
+      : name === "stimulation" && stimulation.data?.process_alive || name === "actuation" && actuation.data?.process_alive ? t("runtime.waitingConnection")
       : (name === "stimulation" || name === "actuation") && connected ? t("runtime.connected") : t("runtime.stopped");
     const parameters = !confirmed || runtimeState.inProgress || pending(name) ? t("runtime.parametersUnconfirmed")
       : active ? !accepted?.revision || !readyFor(name) || !matches(name, true) ? t("runtime.parametersUnconfirmed")

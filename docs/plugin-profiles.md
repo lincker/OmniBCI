@@ -17,17 +17,23 @@ Package or create an Instance. The workflows below describe the current implemen
   page. Stimulation also owns its renderer; Actuation owns watchdog and command
   age limits. Saving or loading a plugin Profile leaves these module settings intact.
 - Save current values as a new Profile when they should be reusable. Load a
-  Profile to copy its values into the editor. Neither action applies a module.
+  Profile to copy its values into the editor. When a saved Profile is loaded,
+  **Save profile** (`Ctrl/⌘+S` when modified) updates that Profile in place as a
+  new integer revision while **Save as profile** creates an independent copy.
+  Neither action applies a module.
 - Setup / Acquisition keeps a compact **Connect / Disconnect** runtime panel so
   source metadata can be inspected live; starting and stopping reading happen on
-  Run. Setup / Signal Processing, Stimulation, and Actuation show a read-only
+  Run. Cached metadata for an active connection hydrates automatically via
+  read-only `GET /acquisition/metadata` across page navigation and streaming,
+  while **Get Metadata** refreshes the stopped source (`POST /acquisition/metadata/refresh`).
+  Setup / Signal Processing, Stimulation, and Actuation show a read-only
   module status strip with an **Operate in Run** link. In all Setup pages, the
   current parameter editor remains separate from the running instance. Loading a
   Profile is labeled **Loaded**; editing it changes the feedback to
   **Modified**. Neither label means the module is using those values. Saving
   remains optional.
 - **Connect** applies the current Acquisition values, starts the engine when
-  needed, and connects. Metadata inspection is a separate action.
+  needed, and connects. Explicit metadata refresh is a separate stopped-source action.
 - **Start reading** requires a source connection and starts Acquisition data flow.
   It prepares Processing only if that module is already running. It does not
   apply Processing or Actuation edits. Stop reading keeps the source connected.
@@ -46,11 +52,11 @@ Package or create an Instance. The workflows below describe the current implemen
   Changing a connected external node's configuration requires disconnecting it.
   An Engine rebuild also requires disconnecting external nodes.
 
-There is no global **Apply current configuration** or **Update saved profile**
-button. Engine settings retain explicit review; module settings, including
-Processing's pre-trigger duration, travel with that module's current values.
-Editing, loading and saving remain independent of runtime application. Browsing a different plugin
-or Profile does not silently change running parameters.
+There is no global **Apply current configuration** button. Engine settings
+retain explicit review; module settings, including Processing's pre-trigger
+duration, travel with that module's current values. Editing, loading and saving
+remain independent of runtime application. Browsing a different plugin or
+Profile does not silently change running parameters.
 
 The status area reports actual module activity separately from parameter changes.
 A retained applied revision does not mean the module is running. Stopped modules

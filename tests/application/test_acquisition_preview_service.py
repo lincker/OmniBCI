@@ -88,15 +88,6 @@ def test_worker_rejection_does_not_start_a_signal_stream(harness):
     cache.assert_not_called()
 
 
-def test_stop_only_stops_the_matching_capture(harness):
-    service, executor, _, _, state = harness
-    state["reason"] = "user_stop"
-    result = service.stop_preview(generation="generation", capture_id="capture")
-    executor.request.assert_called_once_with(EventType.StopAcquisitionPreview,
-                                            {"generation": "generation", "capture_id": "capture"})
-    assert result["reason"] == "user_stop" and result["received"] == 1
-
-
 def test_read_does_not_query_metadata_or_hide_pending_delivery(harness):
     service, executor, _, _, _ = harness
     result = service.get_preview(generation="generation")

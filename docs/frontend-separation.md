@@ -90,19 +90,25 @@ operations are:
 | --- | --- | --- |
 | POST | `/engine/start` | Start shared infrastructure without starting modules |
 | POST | `/engine/stop` | Stop all modules and the engine |
-| POST | `/engine/modules/{module}/start` | Submit current Processing or Actuation and start/prepare it |
-| POST | `/engine/modules/{module}/stop` | Stop the specified module |
-| GET | `/engine/status` | Read foundation readiness, A/P workers, and output availability |
+| GET | `/engine/status` | Read foundation readiness, A/P workers, and peer connection state |
 | POST | `/acquisition/connect` | Submit current Acquisition and connect in one owned operation |
 | POST | `/acquisition/disconnect` | Disconnect the source and stop Acquisition |
 | POST | `/acquisition/stream/start` | Validate source revision, generation and connection ID before reading |
 | POST | `/acquisition/stream/stop` | Stop reading and drain Processing if running |
 | GET | `/acquisition/status` | Read connection and stream state |
-| GET | `/acquisition/metadata` | Read the current source descriptor |
-| POST | `/acquisition/metadata/refresh` | Refresh descriptor while stopped |
+| GET | `/acquisition/metadata` | Read cached source metadata and descriptor without device I/O |
+| POST | `/acquisition/metadata/refresh` | Actively refresh source metadata while stopped |
+| POST | `/processing/start` | Submit current Processing and start its worker |
+| POST | `/processing/stop` | Stop Processing while leaving Acquisition running |
+| GET | `/stimulation/status` | Read Stimulation state, process liveness, peer connection, and paradigm |
 | POST | `/stimulation/start` | Submit current Stimulation and launch it or prepare its external listener |
-| POST | `/stimulation/stop` | Stop stimulation |
+| POST | `/stimulation/prepare` | Republish retained Stimulation listener during recovery |
+| POST | `/stimulation/stop` | Stop Stimulation |
 | POST | `/stimulation/trial/start` | Request trials using the selected paradigm controls |
+| GET | `/actuation/status` | Read Actuation state, process liveness, peer connection, and effector |
+| POST | `/actuation/start` | Submit current Actuation and start it or prepare its external listener |
+| POST | `/actuation/prepare` | Republish retained Actuation listener during recovery |
+| POST | `/actuation/stop` | Stop Actuation |
 | GET | `/results` | Read current live decoded results |
 | GET | `/results/epochs` | Page through every processed epoch in the current engine run |
 

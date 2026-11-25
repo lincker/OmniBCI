@@ -143,3 +143,31 @@ test("Disconnect sends scoped recovery even when the acquisition worker is alrea
   assert.equal(harness.render().disconnect.error, null);
   assert.equal(state.calls.filter(([path]) => path.endsWith("/disconnect")).length, 1);
 });
+
+test("acqMetadata uses read-only GET while inspect.run uses POST /metadata/refresh", async () => {
+  const calls = [];
+  let connectionId = "source-1";
+  globalThis.fetch = async (path, options = {}) => {
+    calls.push([path, options.method ?? "GET"]);
+    if (path === "/api/v1/acquisition/status") {
+      return Response.json({ success: true, message: "ok", data: { connected: Boolean(connectionId), streaming: false, connection_id: connectionId, metadata_available: true } });
+    }
+    if (path === "/api/v1/acquisition/metadata" || path === "/api/v1/acquisition/metadata/refresh") {
+      return Response.json({ success: true, message: "ok", data: { source_id: "curry8", connection_id: connectionId, metadata: options.method ?? "GET", descriptor: null } });
+    }
+    return assert.fail(`Unexpected request: ${path}`);
+  };
+  const readOnly = await api.acqMetadata();
+  assert.equal(readOnly.metadata, "GET");
+  assert.deepEqual(calls, [["/api/v1/acquisition/metadata", "GET"]]);
+
+  const harness = controllerHarness();
+  await harness.render().refresh();
+  await harness.render().inspect.run();
+  assert.equal(harness.render().metadata.metadata, "POST");
+  assert.ok(calls.some(([path, method]) => path === "/api/v1/acquisition/metadata/refresh" && method === "POST"));
+
+  connectionId = "source-2";
+  await harness.render().refresh();
+  assert.equal(harness.render().metadata, null);
+});

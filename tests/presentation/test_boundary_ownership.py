@@ -22,10 +22,10 @@ def test_profile_route_distinguishes_input_validation_from_internal_errors(error
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router)
-    service = SimpleNamespace(get_profile=Mock(side_effect=error))
+    service = SimpleNamespace(list_profiles=Mock(side_effect=error))
     app.dependency_overrides[get_configuration_service] = lambda: service
     with TestClient(app, raise_server_exceptions=False) as client:
-        response = client.get("/config/plugin-profiles/profile-id")
+        response = client.get("/config/plugin-profiles")
     assert response.status_code == status
     assert response.json()["code"] == code
     if status == 500:

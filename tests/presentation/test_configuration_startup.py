@@ -126,7 +126,8 @@ def test_fresh_lifespan_leaves_module_configuration_unselected(startup_environme
 
     with TestClient(create_app()) as client:
         _assert_management_available(client)
-        assert all(item["revision"] is None for item in _data(client, "/config/modules")["modules"].values())
+        assert all(_data(client, f"/config/modules/{m}")["revision"] is None
+                   for m in ("acquisition", "processing", "stimulation", "actuation"))
         assert _data(client, "/config/plugin-profiles") == []
         assert all(value is None for value in _data(client, "/config/runtime")["accepted"].values())
         environment.builder.assert_not_called()
@@ -140,7 +141,8 @@ def test_initial_module_configuration_can_be_applied_without_restarting_server(
     environment = startup_environment
     with TestClient(create_app()) as client:
         _assert_management_available(client)
-        assert all(item["revision"] is None for item in _data(client, "/config/modules")["modules"].values())
+        assert all(_data(client, f"/config/modules/{m}")["revision"] is None
+                   for m in ("acquisition", "processing", "stimulation", "actuation"))
         runtime = _data(client, "/config/runtime")
         assert all(value is None for value in runtime["accepted"].values())
         assert runtime["applied"] is None
@@ -302,7 +304,8 @@ def test_engine_start_does_not_require_any_module_selection(startup_environment,
         environment.builder.assert_called_once()
         status = _data(client, "/engine/status")
         assert status["running"] is True
-        assert status["acquisition_alive"] is status["processor_alive"] is status["actuation_alive"] is False
+        assert status["acquisition_alive"] is status["processor_alive"] is False
+        assert _data(client, "/actuation/status")["active"] is False
         if missing_slot in (None, "acquisition.source"):
             response = _connect_current(client)
             assert response.status_code == 200, response.text

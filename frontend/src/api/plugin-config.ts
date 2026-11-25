@@ -13,7 +13,6 @@ export type PluginDefinition = Omit<S["PluginConfigurationResponse"], "schema"> 
 export type PluginProfile = S["PluginProfileResponse"];
 export type ModuleActivation = S["ModuleActivationResponse"];
 export type ConfigurationModule = ModuleActivation["module"];
-type ModulesResponse = S["ModulesResponse"];
 export type ModuleHistory = S["ModuleHistoryResponse"];
 export type ProfileHistory = S["ProfileHistoryResponse"];
 export type RevisionMap = Record<string, string | null>;
@@ -34,7 +33,6 @@ export async function configRequest<T>(path: string, method = "GET", data?: unkn
 export const pluginConfigApi = {
   catalog: (kind: PluginKind) => configRequest<PluginDefinition[]>(`/plugin-catalog/${kind}`),
   profiles: (kind?: PluginKind) => configRequest<PluginProfile[]>(`/plugin-profiles${kind ? `?kind=${kind}` : ""}`),
-  modules: () => configRequest<ModulesResponse>("/modules"),
   module: (module: ConfigurationModule) => configRequest<ModuleActivation>(`/modules/${module}`),
   engine: () => configRequest<S["EngineSettingsResponse"]>("/engine"),
   moduleHistory: (module: ConfigurationModule) => configRequest<ModuleHistory[]>(`/modules/${module}/history`),
@@ -45,6 +43,11 @@ export const pluginConfigApi = {
   create: (kind: PluginKind, selection: PluginSelection, name: string, parameters: Record<string, unknown>, processing_input?: ProcessingInput) =>
     configRequest<PluginProfile>("/plugin-profiles", "POST", { kind, selection, name, parameters,
       ...(processing_input === undefined ? {} : { processing_input }) }),
+  update: (profile: PluginProfile, name: string, parameters: Record<string, unknown>, processing_input?: ProcessingInput | null) =>
+    configRequest<PluginProfile>(`/plugin-profiles/${encodeURIComponent(profile.profile_id)}`, "PUT", {
+      name, parameters, expected_revision: profile.revision,
+      ...(processing_input === undefined ? {} : { processing_input }),
+    }),
   delete: (profile: PluginProfile) => configRequest<null>(
     `/plugin-profiles/${encodeURIComponent(profile.profile_id)}?expected_revision=${profile.revision}`, "DELETE"),
 };

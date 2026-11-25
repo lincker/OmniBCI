@@ -17,7 +17,6 @@ class EventType(IntEnum):
     StartStream = 111
     StopAndDrain = 113  # acquisition stop followed by an ordered processing barrier
     StartAcquisitionPreview = 114
-    StopAcquisitionPreview = 115
     GetAcquisitionPreview = 116
     AttachProcessingInput = 117
     DetachProcessingInput = 118

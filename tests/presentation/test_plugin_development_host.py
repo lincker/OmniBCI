@@ -78,6 +78,9 @@ def test_cli_starts_fresh_real_hosts_and_cleans_up_only_after_shutdown(tmp_path,
                         try:
                             with opener.open(f"http://127.0.0.1:{port}/api/v1/engine/status", timeout=1) as response:
                                 status = json.load(response)["data"]
+                            if target == "effector":
+                                with opener.open(f"http://127.0.0.1:{port}/api/v1/actuation/status", timeout=1) as response:
+                                    actuation_status = json.load(response)["data"]
                             break
                         except OSError:
                             pass
@@ -85,7 +88,7 @@ def test_cli_starts_fresh_real_hosts_and_cleans_up_only_after_shutdown(tmp_path,
                     time.sleep(.1)
                 identities.append(json.loads(ready[0].read_text())["pid"])
                 assert status["running"]
-                assert status["actuation_alive" if target == "effector" else "processor_alive"]
+                assert actuation_status["active"] if target == "effector" else status["processor_alive"]
                 records = [json.loads(path.read_text()) for path in (run / "configuration/execution-history").glob("*.json")]
                 assert records, log.read_text()
                 assert '"origin": "development"' in json.dumps(records)

@@ -16,9 +16,9 @@ def available_runtime(api_client):
 
 @pytest.mark.parametrize("path,module,action", [
     ("/acquisition/connect", "acquisition", "connect"),
-    ("/engine/modules/processing/start", "processing", "start"),
-    ("/engine/modules/actuation/start", "actuation", "start"),
+    ("/processing/start", "processing", "start"),
     ("/stimulation/start", "stimulation", "start"),
+    ("/actuation/start", "actuation", "start"),
 ])
 def test_current_action_uses_single_server_operation(api_client, path, module, action):
     operation_id = "00000000-0000-0000-0000-000000000001"
@@ -44,7 +44,7 @@ def test_current_action_uses_single_server_operation(api_client, path, module, a
     )
 
 
-@pytest.mark.parametrize("path", ["/acquisition/connect", "/engine/modules/processing/start", "/stimulation/start"])
+@pytest.mark.parametrize("path", ["/acquisition/connect", "/processing/start", "/stimulation/start", "/actuation/start"])
 def test_current_action_requires_its_configuration(api_client, path):
     assert api_client.post(f"/api/v1{path}").status_code == 422
 

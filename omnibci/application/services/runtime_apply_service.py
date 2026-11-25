@@ -39,12 +39,14 @@ class _RestoreState:
 
 class RuntimeApplyCoordinator:
     def __init__(self, engine, profiles, acquisition, stimulation, commands, *,
-                 repository: ConfigurationRepository, signal_preparer=None, signal_detacher=None):
+                 repository: ConfigurationRepository, actuation=None,
+                 signal_preparer=None, signal_detacher=None):
         self.engine = engine
         self.profiles = profiles
         self.repository = repository
         self.acquisition = acquisition
         self.stimulation = stimulation
+        self.actuation = actuation
         self.commands = commands
         self.signal_preparer = signal_preparer
         self.signal_detacher = signal_detacher
@@ -67,6 +69,8 @@ class RuntimeApplyCoordinator:
         return kinds
 
     def _actuation_active(self):
+        if self.actuation is not None:
+            return self.actuation.is_active or self.actuation.process_alive
         return (getattr(self.engine, "actuation_process_alive", False) is True
                 or self.engine.is_peer_connected("actuation"))
 

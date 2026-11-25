@@ -75,7 +75,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   current: CurrentConfigurationController;
 }) {
   const { t } = useI18n();
-  const { stimulation, signal, start, stop, trigger, operationReason, currentReason, readyFor, matches } = runtimeControls;
+  const { stimulation, actuation, signal, start, stop, trigger, operationReason, currentReason, readyFor, matches } = runtimeControls;
   const [selectedParadigm, setSelectedParadigm] = useState<PluginDefinition | null>(null);
   const [controls, setControls] = useState<Record<string, TrialControl>>({});
   const [loadError, setLoadError] = useState<string | { key: TranslationKey; params?: TranslationParams } | null>(null);
@@ -386,7 +386,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       </section>)}
       {stepPanel("actuation", <section className="card"><h2><Icon name="monitor" />{t("run.actuation")}</h2>
         {pluginInUse("actuation")}
-        {engine.data?.actuation_alive && engine.data.actuation_connected && matches("actuation", true)
+        {actuation.data?.active && actuation.data.engine_connected && matches("actuation", true)
           && <p className="meta">{selectedName("actuation.effector")}</p>}
         <ModuleRuntime module="actuation" controls={runtimeControls} />
         {stepHelp(t("run.actuationHelp"))}

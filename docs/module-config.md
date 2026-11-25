@@ -324,13 +324,14 @@ All routes use the normal `/api/v1` prefix and response envelope.
 | `GET /config/plugin-catalog/{kind}` | Plugin selections, schemas, availability and trial controls for one kind |
 | `POST /engine/start` | Start shared infrastructure only |
 | `POST /engine/stop` | Stop every module and shared infrastructure |
-| `POST /engine/modules/{module}/start` | Apply current Processing or Actuation and start/prepare that module |
-| `POST /engine/modules/{module}/stop` | Stop the specified module |
-| `POST /engine/modules/{module}/prepare` | Prepare retained Stimulation or Actuation configuration for recovery; no draft |
+| `GET /engine/status` | Foundation readiness, A/P worker liveness, and peer connection state |
 | `POST /acquisition/connect` | Apply current Acquisition, start its worker, and connect in one operation |
 | `POST /acquisition/stream/start` | Validate source revision, engine generation and connection ID, then start reading |
-| `POST /stimulation/start` | Apply current Stimulation and start it, or prepare its external listener |
-| `GET /config/modules` | Accepted modules plus engine, with errors reported per section |
+| `POST /processing/{start,stop}` | Apply current Processing and start its worker, or stop Processing |
+| `GET /stimulation/status` | Stimulation active state, managed process liveness, peer connection, and paradigm |
+| `POST /stimulation/{start,prepare,stop}` | Launch/prepare Stimulation, republish retained recovery listener, or stop Stimulation |
+| `GET /actuation/status` | Actuation active state, managed process liveness, peer connection, and effector |
+| `POST /actuation/{start,prepare,stop}` | Start/prepare Actuation, republish retained recovery listener, or stop Actuation |
 | `GET /config/modules/{module}` | One module; revision is null when absent |
 | `POST /config/apply-plan` | Plan current values for the required module |
 | `POST /config/apply` | Execute a reviewed plan |
@@ -341,6 +342,7 @@ All routes use the normal `/api/v1` prefix and response envelope.
 | `GET /config/engine` | Accepted shared settings |
 | `GET /config` | Server saved values, startup values, restart flags, and Server save revision |
 | `PATCH /config` | Save Server startup values with `expected_revision`; does not apply Engine settings |
+| `PUT /config/plugin-profiles/{profile_id}` | Update a saved Profile in place (`expected_revision`), recording a new Profile revision |
 | `GET /config/plugin-profiles/{profile_id}/history` | Saved Profile revisions |
 | `POST /config/plugin-profiles/{profile_id}/revert` | Copy a historical Profile into a new revision |
 

@@ -1,7 +1,7 @@
 """
 /api/v1/stimulation — Stimulation paradigm control endpoints.
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 
 from omnibci.presentation.dependencies import (
     get_engine_service, get_runtime_configuration, get_stimulation_service,
@@ -17,10 +17,7 @@ from omnibci.presentation.schemas.stimulation import (
     StartTrialRequest,
     StimulationStatusResponse,
 )
-from omnibci.application.commands.stimulation_commands import (
-    StopStimulationCommand,
-    StartStimTrialCommand,
-)
+from omnibci.application.commands.stimulation_commands import StartStimTrialCommand
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.ports.engine_port import STIMULATION_PEER
@@ -45,7 +42,12 @@ def stimulation_status(
     ))
 
 
-@router.post("/start", response_model=ApiResponse[RuntimeOperationResponse], summary="Apply current stimulation and prepare or start it")
+@router.post(
+    "/start",
+    response_model=ApiResponse[RuntimeOperationResponse],
+    responses=COMMAND_EXECUTION_RESPONSES,
+    summary="Apply current stimulation and prepare or start it",
+)
 async def start_stimulation(
     body: ModuleActionRequest,
     runtime=Depends(get_runtime_configuration),
@@ -56,14 +58,25 @@ async def start_stimulation(
 
 
 @router.post(
+    "/prepare",
+    response_model=ApiResponse,
+    summary="Prepare stimulation for an external connection",
+)
+async def prepare_stimulation(svc: NeuroEngineService = Depends(get_engine_service)):
+    with command_errors(runtime_status=status.HTTP_409_CONFLICT):
+        await svc.prepare_output("stimulation")
+        return ApiResponse(message="Stimulation ready for a connection")
+
+
+@router.post(
     "/stop",
     response_model=ApiResponse,
     responses=COMMAND_EXECUTION_RESPONSES,
     summary="Stop stimulation",
 )
-def stop_stimulation(svc: StimulationAppService = Depends(get_stimulation_service)):
+async def stop_stimulation(engine_service: NeuroEngineService = Depends(get_engine_service)):
     with command_errors():
-        svc.handle_stop_stimulation(StopStimulationCommand())
+        await engine_service.stop_module("stimulation")
         return ApiResponse(message="Stimulation stopped")
 
 

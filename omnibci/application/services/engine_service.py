@@ -64,6 +64,7 @@ class NeuroEngineService(EnginePort):
         admission: RuntimeAdmission | None = None,
         stimulation_process_manager: OutputProcess | None = None,
         plugin_preparer: Callable[[dict, tuple[str, ...]], dict] | None = None,
+        actuation: ActuationAppService | None = None,
     ) -> None:
         # The composition root supplies a fresh graph factory and, for managed
         # configuration, the snapshot to pin before constructing any worker.
@@ -73,7 +74,7 @@ class NeuroEngineService(EnginePort):
         self._plugin_preparer = plugin_preparer
         self._graph_snapshot: dict | None = None
         self._applied_snapshot: dict | None = None
-        self._actuation = ActuationAppService(self, actuation_process_manager)
+        self._actuation = actuation or ActuationAppService(self, actuation_process_manager)
         self._stimulation_manager = stimulation_process_manager
         self._stimulation = None
         self._acquisition = None
@@ -207,10 +208,13 @@ class NeuroEngineService(EnginePort):
             self._accepting_commands = True
         logger.info("NeuroEngine started")
 
-    def configure_modules(self, acquisition, commands, signal_setup, snapshot_provider, *, stimulation=None):
+    def configure_modules(self, acquisition, commands, signal_setup, snapshot_provider,
+                          *, stimulation=None, actuation=None):
         """Wire module-specific preparation after the application services exist."""
         self._acquisition = acquisition
         self._commands = commands
+        if actuation is not None:
+            self._actuation = actuation
         self._actuation.commands = commands
         self._signal_setup = signal_setup
         self._module_snapshot_provider = snapshot_provider
@@ -314,9 +318,14 @@ class NeuroEngineService(EnginePort):
         await asyncio.shield(task)
 
     async def stop_module(self, module: str) -> None:
-        if module not in ("acquisition", "processing", "actuation"):
+        if module not in ("acquisition", "processing", "stimulation", "actuation"):
             raise ValueError(f"Unknown module: {module}")
         async def stop():
+            if module == "stimulation":
+                if self._stimulation is None:
+                    raise RuntimeError("Stimulation is unavailable")
+                await asyncio.to_thread(self._stimulation.handle_stop_stimulation, StopStimulationCommand())
+                return
             if module == "actuation":
                 await self.stop_module_for_configuration(module)
                 return
@@ -522,7 +531,6 @@ class NeuroEngineService(EnginePort):
             acquisition_alive=self.is_module_running("acquisition"),
             processor_alive=self.is_module_running("processing"),
             stimulation_connected=self.is_peer_connected(STIMULATION_PEER),
-            actuation_alive=self.is_module_running("actuation"),
             actuation_connected=self.is_peer_connected("actuation"),
         )
 

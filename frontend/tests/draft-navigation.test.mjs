@@ -76,9 +76,8 @@ const navigation = (h, label) => elements(h.tree).find((item) => item.type === "
 async function withApp(action, { desktopMode = false, applying = false, connected = true } = {}) {
   const original = Object.fromEntries(["window", "document", "location", "localStorage", "WebSocket", "fetch"].map((key) => [key, globalThis[key]]));
   const originalStatus = runtimeConfigApi.status;
-  const originalActivation = pluginConfigApi.modules, originalModule = pluginConfigApi.module;
-  pluginConfigApi.modules = async () => moduleConfiguration();
-  pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
+  const originalModule = pluginConfigApi.module;
+  pluginConfigApi.module = async (module) => moduleConfiguration().modules[module];
   const listeners = new Map(), editorStates = [], resultSubscriptions = [];
   const location = { hash: "#acquisition", protocol: "http:", host: "localhost" };
   const localStorage = { getItem: () => null, setItem: () => {} };
@@ -101,7 +100,7 @@ async function withApp(action, { desktopMode = false, applying = false, connecte
   const content = { querySelector: () => heading, focus: () => focusEvents.push("main") };
   const h = harness(App, { connected }, (tree) => { elements(tree).find((item) => item.type === "main").ref.current = content; });
   try { await h.settle(); await action({ h, listeners, editorStates, state, focusEvents, heading, resultSubscriptions }); }
-  finally { h.dispose(); runtimeConfigApi.status = originalStatus; pluginConfigApi.modules = originalActivation; pluginConfigApi.module = originalModule; Object.assign(globalThis, original); }
+  finally { h.dispose(); runtimeConfigApi.status = originalStatus; pluginConfigApi.module = originalModule; Object.assign(globalThis, original); }
 }
 
 const currentSource = {
@@ -276,19 +275,18 @@ const currentRequest = () => ({ settings: {}, expected_revision: "rev-1", bindin
 }] });
 
 async function withSharedAcquisition(action) {
-  const original = { ...api }, originalActivation = pluginConfigApi.modules, originalRuntime = { ...runtimeConfigApi };
+  const original = { ...api }, originalRuntime = { ...runtimeConfigApi };
   const source = { connected: false, streaming: false, connection_id: null }, calls = [];
   const server = { status: async () => ({ ...source }) };
   let engineState;
   api.engineStatus = async () => ({ running: engineState?.running ?? false });
   api.acquisitionStatus = () => server.status();
   try {
-    await withApp(async ({ h, state }) => {
+    await withApp(async ({ h, state, listeners }) => {
       engineState = state;
       Object.assign(state, { running: true, generation: "engine-1", accepted: revisionMap("rev-1"), applied: revisionMap("rev-1") });
-      pluginConfigApi.modules = async () => moduleConfiguration({ revision: "rev-1", bindings: [{ slot: "acquisition.source",
-        kind: "acquisition", selection: currentSource.selection, parameters: {} }] });
-      pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
+      pluginConfigApi.module = async (module) => moduleConfiguration({ revision: "rev-1", bindings: [{ slot: "acquisition.source",
+        kind: "acquisition", selection: currentSource.selection, parameters: {} }] }).modules[module];
       runtimeConfigApi.operation = async () => {
         if (!state.operations.acquisition) throw new Error("Operation is not yet visible");
         return state.operations.acquisition;
@@ -305,9 +303,9 @@ async function withSharedAcquisition(action) {
       api.acqStreamStop = async () => { calls.push("stop"); source.streaming = false; };
       const controller = () => (component(h, "PluginProfiles") ?? component(h, "RunConsole")).props.acquisition;
       await controller().refresh(); await h.settle();
-      await action({ h, source, calls, controller, server, state });
+      await action({ h, source, calls, controller, server, state, listeners });
     });
-  } finally { Object.assign(api, original); pluginConfigApi.modules = originalActivation; Object.assign(runtimeConfigApi, originalRuntime); }
+  } finally { Object.assign(api, original); Object.assign(runtimeConfigApi, originalRuntime); }
 }
 
 test("Setup and Run share connection state through connect, reading, stop and disconnect", async () => {
@@ -398,6 +396,7 @@ test("module stop ownership survives navigation and rejects duplicate Stop", asy
     signalConfigApi.get = async () => null;
     await withSharedAcquisition(async ({ h }) => {
       api.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
+      api.actuationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, effector: null });
       let finish, stops = 0;
       api.moduleStop = async () => { stops++; await new Promise((resolve) => { finish = resolve; }); };
       navigation(h, "Run").props.onClick(); await h.settle();
@@ -422,6 +421,7 @@ test("Engine Stop and its pending state survive navigation during a connection r
   signalConfigApi.get = async () => null;
   try { await withSharedAcquisition(async ({ h, controller, calls }) => {
     api.stimulationStatus = async () => null;
+    api.actuationStatus = async () => null;
     let finishConnect, finishStop;
     const connect = api.acqConnect;
     api.acqConnect = async (body) => { await new Promise((resolve) => { finishConnect = resolve; }); return connect(body); };
@@ -450,6 +450,47 @@ test("offline desktop controls retain the result subscription used to reconnect"
   }, { desktopMode: true, connected: false });
 });
 
+
+test("connected source with cached metadata hydrates once via GET and survives page navigation", async () => {
+  await withSharedAcquisition(async ({ h, source, calls, controller, listeners }) => {
+    const cached = {
+      source_id: "example.source/main@1.0.0",
+      connection_id: "source-1",
+      metadata: "Cached amplifier info",
+      descriptor: {
+        source_id: "example.source/main@1.0.0",
+        connection_id: "source-1",
+        sample_rate: 500,
+        signal_channel_count: 2,
+        output_row_count: 3,
+        trigger_row_index: 2,
+        channels: [],
+        native_event: "final-row",
+        provenance: "device-reported",
+      },
+      comparison: null,
+    };
+    api.acqMetadata = async () => { calls.push("metadata-get"); return structuredClone(cached); };
+    api.acqMetadataRefresh = async () => assert.fail("Hydration must not trigger active metadata refresh");
+    Object.assign(source, { connected: true, streaming: true, connection_id: "source-1", metadata_available: true });
+    await controller().refresh(); await h.settle();
+    assert.deepEqual(controller().metadata, cached);
+    assert.deepEqual(calls, ["metadata-get"]);
+
+    // Navigate to Processing and Run, then return to Acquisition: metadata stays cached without re-fetching.
+    window.location.hash = "#processing"; listeners.get("hashchange")(); await h.settle();
+    navigation(h, "Run").props.onClick(); await h.settle();
+    component(h, "RunConsole").props.onEditSetup(); await h.settle();
+    assert.deepEqual(controller().metadata, cached);
+    assert.deepEqual(calls, ["metadata-get"]);
+
+    // Disconnecting clears cached metadata immediately.
+    source.streaming = false;
+    await controller().refresh(); await h.settle();
+    await controller().disconnect.run(); await h.settle();
+    assert.equal(controller().metadata, null);
+  });
+});
 
 test("reconnect retries failed module reads without replacing edited current values", async () => {
   await withApp(async ({ h }) => {

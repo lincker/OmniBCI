@@ -19,7 +19,7 @@ from omnibci.presentation.schemas.common import ApiResponse, ErrorCode
 from omnibci.presentation.schemas.acquisition import (
     AcquisitionMetadataResponse, AcquisitionStatusResponse,
     AcquisitionPreviewResponse, AcquisitionPreviewChunkResponse,
-    StartAcquisitionPreviewRequest, StopAcquisitionPreviewRequest,
+    StartAcquisitionPreviewRequest,
     StartReadingRequest,
 )
 from omnibci.application.commands.acquisition_commands import (
@@ -133,13 +133,6 @@ def _preview_response(callback, *args, **kwargs):
 def start_preview(body: StartAcquisitionPreviewRequest,
                   svc: AcquisitionAppService = Depends(get_acquisition_service)):
     return _preview_response(svc.start_preview, **body.model_dump())
-
-
-@router.post("/preview/stop", response_model=ApiResponse[AcquisitionPreviewResponse],
-             responses=COMMAND_EXECUTION_RESPONSES, summary="Stop the preview capture and retain captured chunks")
-def stop_preview(body: StopAcquisitionPreviewRequest,
-                 svc: AcquisitionAppService = Depends(get_acquisition_service)):
-    return _preview_response(svc.stop_preview, **body.model_dump())
 
 
 @router.get("/preview", response_model=ApiResponse[AcquisitionPreviewResponse],

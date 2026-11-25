@@ -147,7 +147,8 @@ async function withScenario({ activation = async () => null, acceptedRevision = 
   profiles = async () => [], catalog = async () => [paradigm], running = false, appliedRevisions,
   current, processingRunning = running, actuationRunning = false, actuationConnected = false,
   sourceStatus = { connected: false, streaming: false },
-  stimulationStatus = { active: false, process_alive: false, engine_connected: false, paradigm: null } } = {}, action) {
+  stimulationStatus = { active: false, process_alive: false, engine_connected: false, paradigm: null },
+  actuationStatus = { active: actuationRunning, process_alive: actuationRunning, engine_connected: actuationConnected || actuationRunning, effector: null } } = {}, action) {
   const original = { api: { ...api }, plugin: { ...pluginConfigApi }, signal: { ...signalConfigApi },
     runtime: { ...runtimeConfigApi }, document: globalThis.document };
   const calls = [];
@@ -155,26 +156,26 @@ async function withScenario({ activation = async () => null, acceptedRevision = 
     running, recovery: {}, generation: running ? "generation-1" : null, operations: {} };
   globalThis.document = { hidden: false };
   api.stimulationStatus = async () => stimulationStatus;
+  api.actuationStatus = async () => actuationStatus;
   signalConfigApi.get = async () => ({ readiness: { ready: true }, active_input: null });
-  pluginConfigApi.modules = async () => moduleConfiguration(await activation() ?? {});
-  pluginConfigApi.module = async (module) => (await pluginConfigApi.modules()).modules[module];
+  pluginConfigApi.module = async (module) => moduleConfiguration(await activation() ?? {}).modules[module];
   pluginConfigApi.profiles = profiles;
   pluginConfigApi.catalog = catalog;
   runtimeConfigApi.status = async () => structuredClone(serverStatus);
-  for (const name of ["engineStart", "engineStop", "acqConnect", "acqDisconnect", "acqStreamStart", "acqStreamStop", "stimStart", "stimStop", "trialStart", "moduleStart", "moduleStop", "modulePrepare"]) {
+  for (const name of ["engineStart", "engineStop", "acqConnect", "acqDisconnect", "acqStreamStart", "acqStreamStop", "trialStart", "moduleStart", "moduleStop", "modulePrepare"]) {
     api[name] = async (...args) => {
       calls.push([name, ...args]);
-      if (name !== "moduleStart" && name !== "stimStart") return;
-      const module = name === "stimStart" ? "stimulation" : args[0];
+      if (name !== "moduleStart") return;
+      const module = args[0];
       const body = args.at(-1);
       const external = body.configuration.settings[`${module.toUpperCase()}.auto_spawn`] === false;
-      const connected = module === "stimulation" ? stimulationStatus.engine_connected : actuationConnected;
+      const connected = module === "stimulation" ? stimulationStatus.engine_connected : actuationStatus.engine_connected;
       return { operation_id: body.operation_id, module, status: "succeeded", target_revisions: { [module]: acceptedRevision },
         result: { configuration_applied: true, action: external && !connected ? "prepared" : "started" } };
     };
   }
   const props = {
-    engine: { data: { running, acquisition_alive: running, processor_alive: processingRunning, actuation_alive: actuationRunning, actuation_connected: actuationConnected }, error: null, refresh: async () => {} },
+    engine: { data: { running, acquisition_alive: running, processor_alive: processingRunning, stimulation_connected: stimulationStatus.engine_connected, actuation_connected: actuationStatus.engine_connected }, error: null, refresh: async () => {} },
     acquisition: { data: { connection_id: sourceStatus.connected ? "source-connection" : null, ...sourceStatus }, error: null, pending: false, refresh: async () => { props.runtime.status = structuredClone(serverStatus); },
       ...Object.fromEntries(["connect", "disconnect", "read", "stopRead"].map((name) => [name,
         { pending: false, error: null, run: async (...args) => { calls.push([name, ...args]); } }])) },
@@ -470,8 +471,8 @@ test("a changed acquisition revision does not prevent foundation startup", async
     });
 });
 
-for (const [label, actionName, streaming] of [["Disconnect", "disconnect", false], ["Stop reading", "stopRead", true],
-  ["Stop engine", "engineStop", true], ["Stop stimulation", "stimStop", true]]) {
+for (const [label, expectedCall, streaming] of [["Disconnect", ["disconnect"], false], ["Stop reading", ["stopRead"], true],
+  ["Stop engine", ["engineStop"], true], ["Stop stimulation", ["moduleStop", "stimulation"], true]]) {
   test(`${label} does not submit edited current values`, async () => {
     const current = currentConfiguration({ acquisition: [{ ...source, parameters: { host: "another-device" } }],
       processing: [decoder, detector], stimulation: [{ slot: "stimulation.paradigm", selection: paradigm.selection, parameters: {} }] });
@@ -484,7 +485,7 @@ for (const [label, actionName, streaming] of [["Disconnect", "disconnect", false
       assert.equal(action.props.disabled, false);
       action.props.onClick();
       await harness.settle();
-      assert.deepEqual(calls, [[actionName]]);
+      assert.deepEqual(calls, [expectedCall]);
     });
   });
 }
@@ -588,7 +589,7 @@ test("Stop reading remains available while the read request is pending", async (
 });
 
 for (const [label, command, module] of [["Start processing", "moduleStart", "processing"],
-  ["Launch stimulation", "stimStart", "stimulation"], ["Start actuation", "moduleStart", "actuation"]]) {
+  ["Launch stimulation", "moduleStart", "stimulation"], ["Start actuation", "moduleStart", "actuation"]]) {
   test(`${label} submits its current configuration in one request on an unprepared foundation`, async () => {
     const saved = { ...complete, bindings: complete.bindings.map((binding) => binding.slot === "processing.decoder"
       ? { ...binding, processing_input: { schema_version: 2, outputs: [] } } : binding) };
@@ -600,7 +601,7 @@ for (const [label, command, module] of [["Start processing", "moduleStart", "pro
       await start.props.onClick(); await harness.settle();
       assert.equal(calls.length, 1);
       assert.equal(calls[0][0], command);
-      if (command === "moduleStart") assert.equal(calls[0][1], module);
+      assert.equal(calls[0][1], module);
       const body = calls[0].at(-1);
       assert.match(body.operation_id, /^[0-9a-f-]{36}$/);
       assert.equal(body.configuration.expected_revision, saved.revision);
@@ -619,7 +620,8 @@ test("stimulation command completion does not wait for acquisition or processing
     signalConfigApi.get = async () => assert.fail("Stimulation must not refresh processing");
     await button(harness.tree, "Launch stimulation").props.onClick(); await harness.settle();
     assert.equal(calls.length, 1);
-    assert.equal(calls[0][0], "stimStart");
+    assert.equal(calls[0][0], "moduleStart");
+    assert.equal(calls[0][1], "stimulation");
     assert.equal(alerts(harness.tree), "");
   });
 });
@@ -643,7 +645,7 @@ test("Stop engine remains available while the foundation is starting", async () 
 });
 
 for (const [module, label, command] of [["acquisition", "Disconnect", "disconnect"], ["processing", "Stop processing", "moduleStop"],
-  ["stimulation", "Stop stimulation", "stimStop"], ["actuation", "Stop actuation", "moduleStop"]]) {
+  ["stimulation", "Stop stimulation", "moduleStop"], ["actuation", "Stop actuation", "moduleStop"]]) {
   test(`${label} recovers only its module even when the foundation and worker are stopped`, async () => {
     await withScenario({ activation: async () => complete, acceptedRevision: complete.revision }, async ({ harness, calls, serverStatus }) => {
       serverStatus.recovery = { [module]: "The module needs recovery" };
@@ -700,8 +702,9 @@ for (const connected of [false, true]) {
         assert.equal(start.props.disabled, false);
         await start.props.onClick(); await harness.settle();
         assert.equal(calls.length, 1);
-        assert.equal(calls[0][0], "stimStart");
-        assert.equal(calls[0][1].configuration.settings["STIMULATION.auto_spawn"], false);
+        assert.equal(calls[0][0], "moduleStart");
+        assert.equal(calls[0][1], "stimulation");
+        assert.equal(calls[0][2].configuration.settings["STIMULATION.auto_spawn"], false);
       });
   });
 }
@@ -778,7 +781,8 @@ for (const [module, setting, prepareLabel, startLabel] of [["stimulation", "STIM
         assert.equal(prepare.props.disabled, false);
         await prepare.props.onClick(); await harness.settle();
         assert.equal(calls.length, 1);
-        assert.equal(calls[0][0], module === "stimulation" ? "stimStart" : "moduleStart");
+        assert.equal(calls[0][0], "moduleStart");
+        assert.equal(calls[0][1], module);
         const body = calls[0].at(-1).configuration;
         assert.deepEqual(body.settings, { [setting]: false, [`${prefix}.server_ip`]: "127.0.0.1", [`${prefix}.server_port`]: 9023 });
         assert.ok(body.bindings.length > 0);
@@ -920,7 +924,7 @@ for (const [name, prepareLabel, stopLabel] of [["stimulation", "Prepare external
       await button(state, stopLabel).props.onClick();
       await harness.settle();
       assert.doesNotMatch(text(moduleRuntime(harness.tree, prepareLabel)), /configuration was prepared/);
-      assert.ok(calls.some(([action]) => action === (name === "stimulation" ? "stimStop" : "moduleStop")));
+      assert.ok(calls.some(([action, target]) => action === "moduleStop" && target === name));
     });
   });
 }

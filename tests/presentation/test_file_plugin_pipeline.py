@@ -72,7 +72,7 @@ def test_file_starter_decoder_and_logger_preserve_trial_and_execution_identity(t
         engine.subscribe(EventType.TrialCompleted, lambda event: trials.append(event.data))
         engine.subscribe(EventType.ActuationAck, acknowledged)
         for module, configuration in configurations.items():
-            path = "/acquisition/connect" if module == "acquisition" else f"/engine/modules/{module}/start"
+            path = "/acquisition/connect" if module == "acquisition" else f"/{module}/start"
             response = client.post("/api/v1" + path, json={
                 "operation_id": str(uuid4()), "configuration": configuration,
             })

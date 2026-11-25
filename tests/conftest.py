@@ -117,6 +117,12 @@ def stimulation_service(engine_service):
     return StimulationAppService(engine_service)
 
 
+@pytest.fixture()
+def actuation_service(engine_service, command_executor):
+    from omnibci.application.services.actuation_service import ActuationAppService
+    return ActuationAppService(engine_service, commands=command_executor)
+
+
 # ---------------------------------------------------------------------------
 # FastAPI TestClient
 # Overrides app.state services with mock-backed instances so no real engine
@@ -124,7 +130,7 @@ def stimulation_service(engine_service):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def api_client(engine_service, acquisition_service, stimulation_service):
+def api_client(engine_service, acquisition_service, stimulation_service, actuation_service):
     from omnibci.presentation.main import create_app
 
     # Patch lifespan so it does NOT start real processes
@@ -139,7 +145,10 @@ def api_client(engine_service, acquisition_service, stimulation_service):
 
         # Inject mock services before first request
         with TestClient(app, raise_server_exceptions=True) as client:
+            engine_service._stimulation = stimulation_service
+            engine_service._actuation = actuation_service
             app.state.engine_service = engine_service
             app.state.acquisition_service = acquisition_service
             app.state.stimulation_service = stimulation_service
+            app.state.actuation_service = actuation_service
             yield client

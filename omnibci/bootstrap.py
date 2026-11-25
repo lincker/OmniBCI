@@ -12,6 +12,7 @@ from omnibci.application.configuration.models import MODULE_KINDS
 from omnibci.application.processing_source import binding_for
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
+from omnibci.application.services.actuation_service import ActuationAppService
 from omnibci.application.services.stimulation_service import StimulationAppService
 from omnibci.application.services.command_result_service import CommandResultBroker
 from omnibci.application.configuration.service import ConfigurationService
@@ -75,6 +76,7 @@ class AppContainer:
     results_service: ResultsService
     # The composition root supplies the manager; lightweight service fixtures may omit it.
     actuation_process_manager: ActuationProcessManager | None = None
+    actuation_service: ActuationAppService | None = None
     # Shared correlation rendezvous for commands that must report actual worker
     # execution before REST returns success.
     command_results: CommandResultBroker | None = None
@@ -119,6 +121,12 @@ def assemble(
         generation_provider=lambda: engine_service.generation,
     )
     process_manager = stimulation_process_manager or StimulationProcessManager()
+    actuation_service = ActuationAppService(
+        engine_service,
+        actuation_process_manager,
+        commands=command_results,
+    )
+    engine_service._actuation = actuation_service
 
     return AppContainer(
         engine_service=engine_service,
@@ -132,6 +140,7 @@ def assemble(
         stimulation_process_manager=process_manager,
         results_service=ResultsService(lambda: engine_service.generation),
         actuation_process_manager=actuation_process_manager,
+        actuation_service=actuation_service,
         command_results=command_results,
     )
 
@@ -194,7 +203,6 @@ async def _build_container_services(host_settings, allow_process_termination, pa
             execution_history_root=repository.root,
         ).build(),
         snapshot_provider=startup_snapshot,
-        actuation_process_manager=actuation_manager,
         stimulation_process_manager=stimulation_manager,
         plugin_preparer=prepare_plugins,
     )
@@ -215,6 +223,7 @@ async def _build_container_services(host_settings, allow_process_termination, pa
         container.acquisition_service, container.command_results, container.signal_setup_service,
         lambda module: accepted_runtime_settings(profiles=configuration, active_kinds=MODULE_KINDS[module]),
         stimulation=container.stimulation_service,
+        actuation=container.actuation_service,
     )
     container.node_configuration = NodeConfigurationService(engine_service, configuration)
     container.runtime_configuration = RuntimeConfigurationService(
@@ -223,6 +232,7 @@ async def _build_container_services(host_settings, allow_process_termination, pa
         executor=RuntimeApplyCoordinator(engine_service, configuration, container.acquisition_service,
                                           container.stimulation_service,
                                           container.command_results, repository=repository,
+                                          actuation=container.actuation_service,
                                           signal_preparer=container.signal_setup_service.prepare,
                                           signal_detacher=container.signal_setup_service.detach),
     )

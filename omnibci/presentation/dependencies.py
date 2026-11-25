@@ -8,6 +8,7 @@ from fastapi import Request
 
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.acquisition_service import AcquisitionAppService
+from omnibci.application.services.actuation_service import ActuationAppService
 from omnibci.application.configuration.service import ConfigurationService
 from omnibci.application.plugin_management.market_service import PluginMarketService
 from omnibci.application.plugin_management.package_service import PluginPackageService
@@ -38,6 +39,10 @@ def get_acquisition_service(request: Request) -> AcquisitionAppService:
 
 def get_stimulation_service(request: Request) -> StimulationAppService:
     return request.app.state.stimulation_service
+
+
+def get_actuation_service(request: Request) -> ActuationAppService:
+    return request.app.state.actuation_service
 
 
 def get_results_service(request: Request) -> ResultsService:

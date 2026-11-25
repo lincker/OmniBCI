@@ -17,7 +17,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
 
-from omnibci.presentation.routers import engine, acquisition, stimulation, results, config
+from omnibci.presentation.routers import (
+    engine, acquisition, processing, stimulation, actuation, results, config,
+)
 from omnibci.presentation.routers import plugin_config, runtime_config, plugin_packages, plugin_market
 from omnibci.presentation.routers import signal_setup
 from omnibci.presentation.routers import server
@@ -86,6 +88,7 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         app.state.engine_service = container.engine_service
         app.state.acquisition_service = container.acquisition_service
         app.state.stimulation_service = container.stimulation_service
+        app.state.actuation_service = container.actuation_service
         app.state.plugin_package_service = container.plugin_package_service
         app.state.plugin_market_service = container.plugin_market_service
 
@@ -156,7 +159,9 @@ def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAP
     app.include_router(server.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(engine.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(acquisition.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(processing.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(stimulation.router, prefix=prefix, responses=ERROR_RESPONSES)
+    app.include_router(actuation.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(results.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(config.router, prefix=prefix, responses=ERROR_RESPONSES)
     app.include_router(signal_setup.router, prefix=prefix, responses=ERROR_RESPONSES)

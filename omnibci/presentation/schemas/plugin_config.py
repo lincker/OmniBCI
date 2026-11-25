@@ -91,12 +91,6 @@ class EngineSettingsResponse(BaseModel):
     settings: dict[str, Any]
 
 
-class ModulesResponse(BaseModel):
-    modules: dict[ConfigurationModule, ModuleActivationResponse]
-    engine: EngineSettingsResponse | None
-    errors: dict[str, str] = Field(default_factory=dict)
-
-
 class ModuleHistoryResponse(BaseModel):
     entry_id: str
     revision: str

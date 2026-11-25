@@ -95,13 +95,6 @@ class StartAcquisitionPreviewRequest(BaseModel):
     continuous: bool = False
 
 
-class StopAcquisitionPreviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    generation: str = Field(min_length=1, max_length=128)
-    capture_id: str = Field(min_length=1, max_length=128)
-
-
 class AcquisitionPreviewLimitsModel(BaseModel):
     max_chunks: int
     max_rows: int

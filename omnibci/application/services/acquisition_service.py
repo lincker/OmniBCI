@@ -277,14 +277,6 @@ class AcquisitionAppService:
             })
             return {**result, **self._read_preview_cache(generation, result["capture_id"])}
 
-    @admitted(scopes="acquisition", recovery=True)
-    def stop_preview(self, *, generation: str, capture_id: str) -> dict:
-        self._require_capture_id(capture_id)
-        with self.lifecycle_lock:
-            result = self._preview_request(EventType.StopAcquisitionPreview,
-                                           {"generation": generation, "capture_id": capture_id})
-            return {**result, **self._read_preview_cache(generation, capture_id)}
-
     def get_preview(self, *, generation: str, capture_id: str | None = None) -> dict:
         if capture_id is not None:
             self._require_capture_id(capture_id)

@@ -17,7 +17,7 @@ def preview_service(acquisition_service):
              "oversized": 0, "enqueued_bytes": 128, "limits": limits(),
              "stream_chunk_count": 3, "stream_sample_count": 384, "last_sequence": 2,
              "available": True, "cache_errors": 0, "received": 0, "retained_bytes": 0, "chunks": []}
-    for method in ("start_preview", "stop_preview", "get_preview"):
+    for method in ("start_preview", "get_preview"):
         setattr(acquisition_service, method, MagicMock(return_value=state))
     acquisition_service.get_preview_chunk = MagicMock(return_value={
         "capture_id": "capture", "generation": "generation", "acquisition_revision": "a" * 64, "engine_revision": "engine",
@@ -61,12 +61,6 @@ def test_invalid_start_input_returns_validation_envelope(api_client, preview_ser
     assert response.status_code == 422
     assert response.json()["code"] == "VALIDATION_ERROR"
     preview_service.start_preview.assert_not_called()
-
-
-def test_stop_only_calls_preview_use_case(api_client, preview_service):
-    response = api_client.post("/api/v1/acquisition/preview/stop", json={"generation": "generation", "capture_id": "capture"})
-    assert response.status_code == 200
-    preview_service.stop_preview.assert_called_once_with(generation="generation", capture_id="capture")
 
 
 def test_capture_timeout_is_data_not_http_timeout(api_client, preview_service):
@@ -119,7 +113,7 @@ def test_detail_errors_follow_existing_api_conventions(api_client, preview_servi
 
 def test_openapi_publishes_bounds_and_confirmation_timeouts(api_client):
     spec = api_client.get("/openapi.json").json()
-    for path, method in (("/preview/start", "post"), ("/preview/stop", "post"),
+    for path, method in (("/preview/start", "post"),
                          ("/preview", "get"), ("/preview/chunks/{sequence_id}", "get")):
         assert "504" in spec["paths"]["/api/v1/acquisition" + path][method]["responses"]
     selection = spec["components"]["schemas"]["AcquisitionPreviewSelectionModel"]
