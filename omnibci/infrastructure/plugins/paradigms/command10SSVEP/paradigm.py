@@ -1,8 +1,8 @@
-"""Ten-command SSVEP driven by the host's fixed 60 Hz display timeline.
+"""Ten-command SSVEP driven by VSync-paced host rendering callbacks.
 
 The host serializes setup, trial/result callbacks, rendering and teardown on
 the renderer owner thread. Only small label textures are uploaded; stimulus
-luminance is selected from refresh indices, including gaps between callbacks.
+luminance is stepped per VSync frame callback.
 """
 from collections.abc import Mapping
 from enum import Enum, auto
@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from omnibci.sdk import Color, FrameTiming, Paradigm, Rect, RenderSurface, TextureHandle, TriggerOutput
+from omnibci.sdk import Color, Paradigm, Rect, RenderSurface, TextureHandle, TriggerOutput
 from .targets import CUE_FRAMES, FREE_CHOICE_EVENT_ID, REFRESH_RATE_HZ, RESULT_FRAMES, STIM_FRAMES, TARGETS
 
 
@@ -59,8 +59,9 @@ class Command10SSVEP(Paradigm):
         self._textures: dict[int, TextureHandle] = {}
         self._ready = False
         self._state = _State.IDLE
-        self._phase_start_refresh: int | None = None
-        self._last_refresh = -1
+        self._cue_countdown = 0
+        self._stim_frame_idx = 0
+        self._result_countdown = 0
         self._cue_target_id = 0
         self._result_target_id: int | None = None
         self._marker_sent = False
@@ -77,8 +78,9 @@ class Command10SSVEP(Paradigm):
                 pixels = np.ascontiguousarray(pixels[::-1])
             self._textures[target_id] = renderer.upload_texture(pixels)
         self._state = _State.IDLE
-        self._phase_start_refresh = None
-        self._last_refresh = -1
+        self._cue_countdown = 0
+        self._stim_frame_idx = 0
+        self._result_countdown = 0
         self._result_target_id = None
         self._marker_sent = False
         self._ready = True
@@ -115,7 +117,9 @@ class Command10SSVEP(Paradigm):
         self._cue_target_id = target_id
         self._result_target_id = None
         self._marker_sent = False
-        self._phase_start_refresh = None
+        self._cue_countdown = CUE_FRAMES if target_id else 0
+        self._stim_frame_idx = 0
+        self._result_countdown = 0
         self._state = _State.CUE if target_id else _State.STIM
 
     def present_result(self, result: Mapping[str, object]) -> None:
@@ -131,36 +135,25 @@ class Command10SSVEP(Paradigm):
     def is_presenting(self) -> bool:
         return self._state is not _State.IDLE
 
-    def render_frame(self, frame: FrameTiming) -> bool:
+    def render_frame(self, t: float = 0.0) -> None:
         if not self._ready:
-            return False
-        if not math.isclose(1 / frame.refresh_period, REFRESH_RATE_HZ, rel_tol=0, abs_tol=.01):
-            raise ValueError("Command10 requires a fixed 60 Hz display mode")
-        if frame.refresh_index <= self._last_refresh:
-            return False
-        self._last_refresh = frame.refresh_index
-        if self._phase_start_refresh is None:
-            self._phase_start_refresh = frame.refresh_index
-        elapsed = frame.refresh_index - self._phase_start_refresh
-
-        if self._state is _State.CUE and elapsed >= CUE_FRAMES:
-            self._phase_start_refresh += CUE_FRAMES
-            elapsed -= CUE_FRAMES
+            return
+        if self._state is _State.CUE and self._cue_countdown <= 0:
+            self._stim_frame_idx = 0
             self._state = _State.STIM
 
         if self._state is _State.STIM:
-            if elapsed >= STIM_FRAMES:
+            if self._stim_frame_idx >= STIM_FRAMES:
                 if self._marker_sent:
                     self._trigger.clear()
-                self._phase_start_refresh += STIM_FRAMES
-                elapsed -= STIM_FRAMES
+                self._result_countdown = RESULT_FRAMES
                 self._state = _State.RESULT
             elif not self._marker_sent:
                 # A request before drawing is not a physical presentation receipt.
                 self._trigger.send(self._cue_target_id or FREE_CHOICE_EVENT_ID)
                 self._marker_sent = True
 
-        if self._state is _State.RESULT and elapsed >= RESULT_FRAMES:
+        if self._state is _State.RESULT and self._result_countdown <= 0:
             self._state = _State.IDLE
 
         renderer = self._renderer
@@ -174,7 +167,7 @@ class Command10SSVEP(Paradigm):
                 color = _RESULT_COLOR
             elif self._state is _State.STIM:
                 brightness = .5 + .5 * math.sin(
-                    2 * math.pi * target.frequency_hz * elapsed / REFRESH_RATE_HZ + target.phase_rad,
+                    2 * math.pi * target.frequency_hz * self._stim_frame_idx / REFRESH_RATE_HZ + target.phase_rad,
                 )
                 color = Color(brightness, brightness, brightness)
             renderer.draw_rect(_rect(cx, cy, 200, 200), color)
@@ -185,4 +178,10 @@ class Command10SSVEP(Paradigm):
             renderer.draw_texture(self._textures[self._result_target_id], _FEEDBACK_TARGET)
         else:
             renderer.draw_rect(_FEEDBACK_EMPTY, _TEXT_COLOR)
-        return True
+
+        if self._state is _State.CUE:
+            self._cue_countdown -= 1
+        elif self._state is _State.STIM:
+            self._stim_frame_idx += 1
+        elif self._state is _State.RESULT:
+            self._result_countdown -= 1

@@ -37,10 +37,9 @@ from OpenGL.GL import (
 from OpenGL.GL.shaders import compileShader, compileProgram
 
 from omnibci.domain.ports.renderer import (
-    Color, FrameTiming, Rect, TextureHandle,
+    Color, Rect, TextureHandle,
 )
 from omnibci.infrastructure.stimulation.ui.window import UIWindow
-from omnibci.infrastructure.stimulation.frame_clock import create_frame_clock
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +97,6 @@ class PyOpenGLRenderer:
 
     def __init__(self) -> None:
         self._win = None
-        self._clock = None
         self._ebo = self._prog_texture = self._prog_color = None
         self._textures: dict[TextureHandle, int] = {}
         self._texture_owner = object()
@@ -118,7 +116,6 @@ class PyOpenGLRenderer:
         self._setup_programs()
         self._setup_shared_ebo()
 
-        self._clock = create_frame_clock(self._win.get_window())
         self._ready = True
 
     def shutdown(self) -> None:
@@ -127,11 +124,6 @@ class PyOpenGLRenderer:
         if self._closed:
             return
         errors = []
-        if self._clock is not None:
-            try:
-                self._clock.close()
-            except Exception as exc:
-                errors.append(exc)
         for tex in self._textures.values():
             try:
                 glDeleteTextures(1, [tex])
@@ -270,16 +262,9 @@ class PyOpenGLRenderer:
 
     # -- Frame submission ----------------------------------------------------
 
-    def begin_frame(self) -> FrameTiming | None:
+    def end_frame(self) -> None:
         self._ensure_open()
-        return self._clock.begin_frame()
-
-    def end_frame(self, frame: FrameTiming, *, submit: bool) -> bool:
-        self._ensure_open()
-        if not self._clock.end_frame(frame, submit=submit):
-            return False
         self._win.flip()
-        return True
 
     # -- Internal setup ------------------------------------------------------
 

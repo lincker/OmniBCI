@@ -69,7 +69,7 @@ class Stimulus(Base, Paradigm):
     def teardown(self): pass
     def present_trial(self, parameters): pass
     def present_result(self, result): pass
-    def render_frame(self, frame): return False
+    def render_frame(self, elapsed_seconds): pass
     def is_presenting(self): return False
 
 class Trigger(Base, TriggerEmitter):

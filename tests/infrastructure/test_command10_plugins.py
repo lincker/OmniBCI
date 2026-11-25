@@ -23,7 +23,6 @@ from omnibci.infrastructure.signal_processing.epoch.epoch_processor import Epoch
 from omnibci.sdk import (
     ChannelDescriptor,
     Decoder,
-    FrameTiming,
     Paradigm,
     RenderSurface,
     SignalInfo,
@@ -397,10 +396,12 @@ def test_installed_zip_is_complete_and_executes_without_source_resources(tmp_pat
         instance.setup(renderer=renderer, trigger=trigger)
         assert renderer.upload_texture.call_count == 11
         instance.present_trial({"cue_target_id": 0})
-        assert instance.render_frame(FrameTiming(refresh_index=0, target_time=0, refresh_period=1 / 60))
+        instance.render_frame(0.0)
         trigger.send.assert_called_once_with(11)
         instance.present_result({"target_id": 10})
-        instance.render_frame(FrameTiming(refresh_index=240, target_time=4, refresh_period=1 / 60))
+        for _ in range(240):
+            instance.render_frame(0.0)
+        assert trigger.clear.call_count == 2
     finally:
         instance.teardown()
     assert renderer.release_texture.call_count == 11

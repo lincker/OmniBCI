@@ -43,10 +43,10 @@ pixels apart. Four arrows and six letters are supplied as transparent PNGs.
 ## Trial, timing and feedback
 
 Submit `{"cue_target_id": 1}` to cue target 1; IDs 1 through 10 are accepted.
-The selected target has a red cue border for 60 refreshes (1 second).
-Then all ten targets stimulate together for 240 refreshes (4 seconds).
+The selected target has a red cue border for 60 frames (1 second at 60 Hz).
+Then all ten targets stimulate together for 240 frames (4 seconds at 60 Hz).
 Submit `{"cue_target_id": 0}` for free choice: there is no cue interval and
-stimulation starts at the next usable display opportunity.
+stimulation starts at the next frame callback.
 
 The target background uses sampled sinusoidal grayscale values:
 
@@ -55,22 +55,19 @@ brightness(i, n) = 0.5 + 0.5 * sin(2 * pi * frequency[i] * n / 60 + phase[i])
 ```
 
 White labels remain static over the varying background. The center never
-flickers. Every trial resets its stimulus phase origin. The index `n` follows
-`FrameTiming.refresh_index`, not callback counts. Missed opportunities skip
-expired images without extending the stimulus interval. Unsupported refresh
-rates, including 59.94 Hz, are rejected; the tolerance is 0.01 Hz around 60.
+flickers. Every trial resets its stimulus phase origin. The index `n` (`0..239`)
+advances once per VSync-paced `render_frame` callback.
 
-`present_trial` clears the trigger baseline before starting the display
-timeline. At the first usable stimulus opportunity, the plugin requests one
-start marker: the cued ID (1..10), or **11** for free choice. Zero is the
-hardware baseline; it never starts an epoch. A completely missed stimulus
-interval does not replay a marker. The trigger is cleared when that interval
-ends. For level-based acquisition, the host's trigger-edge preprocessing keeps
-the first sample of the nonzero run, including across chunks.
+`present_trial` clears the trigger baseline before starting the trial. At the
+first stimulus frame, the plugin requests one start marker: the cued ID (1..10),
+or **11** for free choice. Zero is the hardware baseline; it never starts an
+epoch. The trigger is cleared when that interval ends. For level-based
+acquisition, the host's trigger-edge preprocessing keeps the first sample of
+the nonzero run, including across chunks.
 
 Feedback accepts exactly `{"target_id": 1..10}`. An early result is cached
-until the fixed stimulus interval ends. Feedback then lasts 90 refreshes
-(1.5 seconds), with the predicted target's entire background filled red, its
+until the fixed stimulus interval ends. Feedback then lasts 90 frames
+(1.5 seconds at 60 Hz), with the predicted target's entire background filled red, its
 white label preserved, and the same label shown in the center. A result may
 also arrive during this feedback interval without
 extending it. With no result, the center remains a dash and the trial still
@@ -117,7 +114,7 @@ when stopping or cleaning up. Labels use Pillow's bundled font and can be
 regenerated with `python scripts/build_command10_assets.py`; runtime rendering
 does not depend on system fonts.
 
-Headless tests check the protocol, grayscale values, skipped/duplicate refreshes,
+Headless tests check the protocol, grayscale values, per-frame countdowns,
 phase resets, marker requests, malformed payloads, feedback and cleanup.
 Installation tests load the package from its ZIP and verify packaged resources.
 These tests do not establish EEG accuracy, physical trigger delivery, display

@@ -3,8 +3,8 @@
 # @Author   : lincker <haolin.d.wu@gmail.com>
 """Classic 40-target SSVEP paradigm — RenderSurface-protocol edition.
 
-Rendering follows display opportunities supplied by the external RenderLoop.
-Expired images are skipped. Trial control methods (``present_trial``,
+Rendering is driven by an external RenderLoop that calls ``render_frame``
+once per VSync.  Trial control methods (``present_trial``,
 ``present_result``) run on the renderer owner thread.
 """
 from __future__ import annotations
@@ -12,12 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 from collections.abc import Mapping
 import logging
-import math
 import string
 import threading
 from enum import Enum, auto
 
-from omnibci.sdk import FrameTiming, Paradigm, Rect, RenderSurface, TextureHandle, TriggerOutput
+from omnibci.sdk import Paradigm, Rect, RenderSurface, TextureHandle, TriggerOutput
 from .feedback_display import FeedbackDisplay
 from .frame_pack import FramePack
 
@@ -101,9 +100,10 @@ class Classic40SSVEP_2(Paradigm):
         self._lock             = threading.Lock()
         self._state            = _State.IDLE
         self._current_event    = 0
-        self._phase_start_refresh: int | None = None
-        self._last_refresh = -1
+        self._cue_countdown    = 0
+        self._stim_frame_idx   = 0
         self._result_target_id = 0
+        self._result_countdown = 0
 
     # ── Paradigm port ──────────────────────────────────────────────────────
 
@@ -126,9 +126,10 @@ class Classic40SSVEP_2(Paradigm):
 
         with self._lock:
             self._state = _State.IDLE
+            self._cue_countdown = 0
+            self._stim_frame_idx = 0
             self._result_target_id = 0
-            self._phase_start_refresh = None
-            self._last_refresh = -1
+            self._result_countdown = 0
 
     def teardown(self) -> None:
         """Attempt every safe release, including after partial texture upload."""
@@ -162,73 +163,51 @@ class Classic40SSVEP_2(Paradigm):
 
     # ── RenderLoop interface ───────────────────────────────────────────────
 
-    def render_frame(self, frame: FrameTiming) -> bool:
-        """Select this refresh's image without replaying missed images."""
+    def render_frame(self, t: float = 0.0) -> None:
+        """Draw current frame.  Called by RenderLoop on the GL thread."""
         r = self._renderer
         if r is None:
-            return False
-        if not math.isclose(1 / frame.refresh_period, 60, rel_tol=0, abs_tol=.01):
-            raise ValueError("Classic40 requires a fixed 60 Hz display mode")
+            return
+
+        r.clear()
 
         with self._lock:
-            if frame.refresh_index <= self._last_refresh:
-                return False
-            self._last_refresh = frame.refresh_index
-            if self._phase_start_refresh is None:
-                self._phase_start_refresh = frame.refresh_index
-            elapsed = frame.refresh_index - self._phase_start_refresh
-            r.clear()
-
-            if self._state == _State.CUE and elapsed >= _CUE_FRAMES:
-                self._phase_start_refresh += _CUE_FRAMES
-                elapsed -= _CUE_FRAMES
-                self._state = _State.STIM
-                # The last-cue marker opportunity was missed. Never replay a
-                # start marker for a stimulus interval that has already ended.
-                if elapsed < len(self._stim_textures):
-                    logging.warning("Classic40 start marker delayed by %d display refreshes", elapsed + 1)
-                    self.trigger.clear()
-                    self.trigger.send(self._current_event)
-                else:
-                    logging.warning("Classic40 stimulus interval elapsed before its start marker")
-
             if self._state == _State.IDLE:
                 self._draw_idle(r)
 
             elif self._state == _State.CUE:
                 r.draw_texture(self._cue_textures[self._current_event-1], _STIM_RECT)
                 self._text_view.draw(r)
-                if elapsed == _CUE_FRAMES - 1:
-                    # Preserve the existing last-cue marker placement.
+                self._cue_countdown -= 1
+                if self._cue_countdown <= 0:
+                    # CUE -> STIM: send EEG trigger
                     self.trigger.clear()
                     self.trigger.send(self._current_event)
-                    self._phase_start_refresh += _CUE_FRAMES
+                    self._stim_frame_idx = 0
                     self._state = _State.STIM
 
             elif self._state == _State.STIM:
-                if elapsed < len(self._stim_textures):
+                if self._stim_frame_idx < len(self._stim_textures):
                     r.draw_texture(
-                        self._stim_textures[elapsed], _STIM_RECT
+                        self._stim_textures[self._stim_frame_idx], _STIM_RECT
                     )
                     self._text_view.draw(r)
+                    self._stim_frame_idx += 1
                 else:
-                    # The assigned interval ended, even if some images were missed.
+                    # All frames shown — clear trigger and return to IDLE
                     self.trigger.clear()
                     self._state = _State.IDLE
                     self._draw_idle(r)
 
             elif self._state == _State.RESULT:
-                if elapsed < _RESULT_FRAMES:
-                    r.draw_texture(
-                        self._result_textures[self._result_target_id - 1], _STIM_RECT
-                    )
-                    self._text_view.draw(r)
-                else:
-                    self._draw_idle(r)
-                if elapsed >= _RESULT_FRAMES - 1:
+                r.draw_texture(
+                    self._result_textures[self._result_target_id - 1], _STIM_RECT
+                )
+                self._text_view.draw(r)
+                self._result_countdown -= 1
+                if self._result_countdown <= 0:
                     self._result_target_id = 0
                     self._state = _State.IDLE
-            return True
 
     # ── Trial control (application thread) ────────────────────────────────
 
@@ -250,13 +229,14 @@ class Classic40SSVEP_2(Paradigm):
         with self._lock:
             self._current_event = event_id
             self._result_target_id = 0
-            self._phase_start_refresh = None
             if 0 < event_id <= _N_TARGETS:
+                self._cue_countdown = _CUE_FRAMES
                 self._state         = _State.CUE
             else:
                 # No cue — go straight to STIM
                 self.trigger.clear()
                 self.trigger.send(event_id)
+                self._stim_frame_idx = 0
                 self._state          = _State.STIM
 
     def present_result(self, result: Mapping[str, object]) -> None:
@@ -273,7 +253,7 @@ class Classic40SSVEP_2(Paradigm):
             else:
                 self._text_view.add_text(text)
             self._result_target_id = target_id
-            self._phase_start_refresh = None
+            self._result_countdown = _RESULT_FRAMES
             self._state            = _State.RESULT
 
     # ── Private ────────────────────────────────────────────────────────────

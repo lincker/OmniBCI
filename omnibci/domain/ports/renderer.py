@@ -43,29 +43,6 @@ def _finite(value: float, name: str) -> float:
 
 
 @dataclass(frozen=True, slots=True)
-class FrameTiming:
-    """Target display refresh, not a callback count or presentation receipt.
-
-    Times are monotonic seconds relative to the rendering-session origin.
-    Refresh indices preserve gaps when the render owner misses opportunities.
-    """
-    refresh_index: int
-    target_time: float
-    refresh_period: float
-
-    def __post_init__(self) -> None:
-        if type(self.refresh_index) is not int:
-            raise TypeError("refresh_index must be an integer")
-        if self.refresh_index < 0:
-            raise ValueError("refresh_index must be nonnegative")
-        for name in ("target_time", "refresh_period"):
-            value = _finite(getattr(self, name), name)
-            if value < 0 or (name == "refresh_period" and value == 0):
-                raise ValueError(f"{name} is outside its valid range")
-            object.__setattr__(self, name, value)
-
-
-@dataclass(frozen=True, slots=True)
 class Rect:
     """Axis-aligned rectangle in NDC space.
 
@@ -180,18 +157,10 @@ class Renderer(RenderSurface, Protocol):
 
     # -- Frame submission ----------------------------------------------------
 
-    def begin_frame(self) -> FrameTiming | None:
-        """Acquire the latest usable display opportunity without blocking.
+    def end_frame(self) -> None:
+        """Swap front/back buffers and block until the next VSync.
 
-        None means no new opportunity. Clock failure raises, never invents ticks.
-        Poll events before acquiring; end each acquired opportunity exactly once.
-        """
-        ...
-
-    def end_frame(self, frame: FrameTiming, *, submit: bool) -> bool:
-        """Submit ready content only while its opportunity remains current.
-
-        Discard unavailable/expired content. True means the submission call
-        completed, not that the image appeared at its target display time.
+        This is the synchronisation point that gates frame rate to the
+        display refresh rate.  Must be called once at the end of each frame.
         """
         ...

@@ -8,7 +8,7 @@ import pytest
 
 from omnibci.infrastructure.plugins.paradigms.command10SSVEP.paradigm import Command10SSVEP
 from omnibci.infrastructure.plugins.paradigms.command10SSVEP.targets import TARGETS
-from omnibci.sdk import FrameTiming, Rect, RenderSurface, TextureHandle, TriggerOutput
+from omnibci.sdk import Rect, RenderSurface, TextureHandle, TriggerOutput
 
 
 PACKAGE = Path(__file__).resolve().parents[2] / 'omnibci/infrastructure/plugins/paradigms/command10SSVEP'
@@ -26,8 +26,9 @@ EXPECTED = (
 )
 
 
-def timing(index, rate=60):
-    return FrameTiming(refresh_index=index, target_time=index / rate, refresh_period=1 / rate)
+def tick(paradigm, count=1):
+    for _ in range(count):
+        paradigm.render_frame(0.0)
 
 
 def target_rect(row, column):
@@ -66,10 +67,10 @@ def test_target_protocol_matches_approved_layout():
 @pytest.mark.parametrize('index', [0, 1, 7, 59, 100, 239])
 def test_all_target_luminances_follow_display_refreshes(paradigm, surface, trigger, index):
     paradigm.present_trial({'cue_target_id': 0})
-    paradigm.render_frame(timing(100))
     if index:
+        tick(paradigm, index)
         surface.draw_rect.reset_mock()
-        paradigm.render_frame(timing(100 + index))
+    paradigm.render_frame(0.0)
     rectangles = {entry.args[0]: entry.args[1] for entry in surface.draw_rect.call_args_list}
     for _, _, row, column, frequency, phase_pi in EXPECTED:
         color = rectangles[target_rect(row, column)]
@@ -80,103 +81,62 @@ def test_all_target_luminances_follow_display_refreshes(paradigm, surface, trigg
 
 def test_cue_marker_is_requested_at_stimulus_start(paradigm, trigger):
     paradigm.present_trial({'cue_target_id': 5})
-    paradigm.render_frame(timing(100))
-    paradigm.render_frame(timing(159))
+    tick(paradigm, 60)
     trigger.send.assert_not_called()
-    paradigm.render_frame(timing(160))
-    paradigm.render_frame(timing(161))
+    tick(paradigm, 2)
     assert trigger.mock_calls == [call.clear(), call.send(5)]
-
-
-def test_skipped_cue_boundary_keeps_original_stimulus_phase(paradigm, surface, trigger):
-    paradigm.present_trial({'cue_target_id': 5})
-    paradigm.render_frame(timing(100))
-    surface.draw_rect.reset_mock()
-    paradigm.render_frame(timing(163))
-    rectangles = {entry.args[0]: entry.args[1] for entry in surface.draw_rect.call_args_list}
-    assert rectangles[target_rect(1, 3)].r == pytest.approx(.5 + .5 * math.sin(2 * math.pi * 8 * 3 / 60))
-    trigger.send.assert_called_once_with(5)
-
-
-def test_skipping_whole_stimulus_never_replays_a_marker(paradigm, trigger):
-    paradigm.present_trial({'cue_target_id': 5})
-    paradigm.render_frame(timing(100))
-    paradigm.render_frame(timing(490))
-    trigger.send.assert_not_called()
-    assert not paradigm.is_presenting()
-
-
-@pytest.mark.parametrize('index', [100, 99])
-def test_duplicate_or_old_refresh_is_ignored(paradigm, surface, trigger, index):
-    paradigm.present_trial({'cue_target_id': 0})
-    paradigm.render_frame(timing(100))
-    surface.reset_mock()
-    assert paradigm.render_frame(timing(index)) is False
-    surface.clear.assert_not_called()
-    surface.draw_rect.assert_not_called()
-    trigger.send.assert_called_once_with(11)
-
-
-@pytest.mark.parametrize('rate', [30, 59.94, 75, 120])
-def test_non_60_hz_display_is_rejected_before_drawing(paradigm, surface, trigger, rate):
-    paradigm.present_trial({'cue_target_id': 0})
-    with pytest.raises(ValueError, match='60 Hz'):
-        paradigm.render_frame(timing(100, rate))
-    surface.draw_rect.assert_not_called()
-    trigger.send.assert_not_called()
 
 
 def test_early_result_is_cached_until_fixed_stimulus_end(paradigm, surface, trigger):
     paradigm.present_trial({'cue_target_id': 0})
-    paradigm.render_frame(timing(100))
+    tick(paradigm, 1)
     paradigm.present_result({'target_id': 8})
+    tick(paradigm, 238)
     surface.reset_mock()
-    paradigm.render_frame(timing(339))
+    tick(paradigm, 1)
     assert surface.draw_texture.call_count == 11  # Ten labels and feedback caption.
     trigger.clear.assert_called_once()
     surface.reset_mock()
-    paradigm.render_frame(timing(340))
+    tick(paradigm, 1)
     assert surface.draw_texture.call_count == 12  # Result adds a central target label.
     assert surface.draw_texture.call_args_list[-1].args[0] == surface.draw_texture.call_args_list[7].args[0]
     assert trigger.clear.call_count == 2
-    paradigm.render_frame(timing(429))
+    tick(paradigm, 89)
     assert paradigm.is_presenting()
-    paradigm.render_frame(timing(430))
+    tick(paradigm, 1)
     assert not paradigm.is_presenting()
 
 
 def test_no_result_finishes_after_feedback_interval(paradigm, trigger):
     paradigm.present_trial({'cue_target_id': 0})
-    paradigm.render_frame(timing(100))
-    paradigm.render_frame(timing(340))
+    tick(paradigm, 241)
     assert paradigm.is_presenting()
-    paradigm.render_frame(timing(430))
+    tick(paradigm, 90)
     assert not paradigm.is_presenting()
     assert trigger.mock_calls == [call.clear(), call.send(11), call.clear()]
 
 
 def test_result_can_arrive_during_feedback(paradigm, surface):
     paradigm.present_trial({'cue_target_id': 0})
-    paradigm.render_frame(timing(100))
-    paradigm.render_frame(timing(340))
+    tick(paradigm, 241)
     paradigm.present_result({'target_id': 9})
     surface.reset_mock()
-    paradigm.render_frame(timing(341))
+    tick(paradigm, 1)
     assert surface.draw_texture.call_count == 12
     with pytest.raises(ValueError, match='already'):
         paradigm.present_result({'target_id': 9})
 
 
 def test_repeated_cued_trials_reset_marker_and_phase(paradigm, surface, trigger):
-    for start in (100, 600):
+    for _ in range(2):
         paradigm.present_trial({'cue_target_id': 3})
-        paradigm.render_frame(timing(start))
+        tick(paradigm, 60)
         surface.draw_rect.reset_mock()
-        paradigm.render_frame(timing(start + 60))
+        tick(paradigm, 1)
         rectangles = {entry.args[0]: entry.args[1] for entry in surface.draw_rect.call_args_list}
         assert rectangles[target_rect(1, 3)].r == pytest.approx(.5)
         assert rectangles[target_rect(2, 4)].r == pytest.approx(0)
-        paradigm.render_frame(timing(start + 390))
+        tick(paradigm, 330)
         assert not paradigm.is_presenting()
     assert trigger.mock_calls == [call.clear(), call.send(3), call.clear()] * 2
 
@@ -196,7 +156,7 @@ def test_invalid_trial_cannot_send_or_change_state(paradigm, trigger, payload):
                                    {'target_id': 1.0}, {'target_id': '1'}, {'target_id': 1, 'extra': 2}])
 def test_invalid_result_keeps_trial_active(paradigm, payload):
     paradigm.present_trial({'cue_target_id': 0})
-    paradigm.render_frame(timing(100))
+    paradigm.render_frame(0.0)
     with pytest.raises(ValueError):
         paradigm.present_result(payload)
     assert paradigm.is_presenting()
@@ -235,8 +195,7 @@ def test_assets_upload_once_without_runtime_font_lookup(paradigm, surface):
         assert pixels[:, :, 3].min() == 0
     surface.upload_texture.reset_mock()
     paradigm.present_trial({'cue_target_id': 0})
-    for index in range(5):
-        paradigm.render_frame(timing(index))
+    tick(paradigm, 5)
     surface.upload_texture.assert_not_called()
 
 
@@ -248,7 +207,7 @@ def test_texture_cleanup_is_complete_and_repeatable(surface, trigger):
     assert len({entry.args[0] for entry in surface.release_texture.call_args_list}) == 11
     instance.teardown()
     assert surface.release_texture.call_count == 11
-    assert not instance.render_frame(timing(0))
+    assert instance.render_frame(0.0) is None
 
 
 def test_partial_setup_and_failed_release_can_be_cleaned_up(surface, trigger):

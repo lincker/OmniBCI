@@ -5,39 +5,6 @@ import pytest
 
 
 @pytest.mark.parametrize('adapter', ['pyopengl_renderer', 'moderngl_renderer'])
-def test_discarded_frame_never_swaps_and_clock_closes_before_window(adapter, monkeypatch):
-    import importlib
-    module = importlib.import_module('omnibci.infrastructure.stimulation.adapters.' + adapter)
-    implementation = module.PyOpenGLRenderer if adapter.startswith('py') else module.ModernGLRenderer
-    renderer = implementation()
-    renderer._ready = True
-    renderer._clock = Mock()
-    frame = renderer._clock.begin_frame.return_value
-    renderer._clock.end_frame.return_value = False
-    if adapter.startswith('py'):
-        renderer._win = Mock()
-        swap = renderer._win.flip
-    else:
-        renderer._window = object()
-        monkeypatch.setattr(module, 'glfw', Mock())
-        swap = module.glfw.swap_buffers
-    assert renderer.begin_frame() is frame
-    assert renderer.end_frame(frame, submit=False) is False
-    swap.assert_not_called()
-    renderer._clock.end_frame.return_value = True
-    assert renderer.end_frame(frame, submit=True) is True
-    swap.assert_called_once()
-    order = []
-    renderer._clock.close.side_effect = lambda: order.append('clock')
-    if adapter.startswith('py'):
-        renderer._win.teardown.side_effect = lambda: order.append('window')
-    else:
-        module.glfw.destroy_window.side_effect = lambda window: order.append('window')
-    renderer.shutdown()
-    assert order == ['clock', 'window']
-
-
-@pytest.mark.parametrize('adapter', ['pyopengl_renderer', 'moderngl_renderer'])
 def test_shutdown_before_initialization_is_safe(adapter):
     import importlib
     module = importlib.import_module('omnibci.infrastructure.stimulation.adapters.' + adapter)
