@@ -42,6 +42,7 @@ class AcquisitionWorker(mp.Process):
         log_queue=None,
         processing_active=None,
         runtime_counters=None,
+        stop_event=None,
     ) -> None:
         super().__init__()
         self.data_source: SignalSource
@@ -56,6 +57,7 @@ class AcquisitionWorker(mp.Process):
         self.log_queue = log_queue
         self.processing_active = processing_active
         self.runtime_counters = runtime_counters
+        self.stop_event = stop_event
 
     def run(self) -> None:
         try:
@@ -84,6 +86,7 @@ class AcquisitionWorker(mp.Process):
             engine_revision=snapshot.get("CONFIG.engine_revision"),
             processing_active=self.processing_active,
             runtime_counters=self.runtime_counters,
+            stop_event=self.stop_event,
             **({"preview_queue": self.preview_queue} if self.preview_queue is not None else {}),
         )
         forwarding = (AcquisitionLogForwarder(

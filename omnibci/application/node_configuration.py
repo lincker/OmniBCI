@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-import re
+from omnibci.application.plugin_management.identity import is_valid_sha256, valid_engine_revision
 
 from omnibci.application.configuration.definitions import SECTION_SETTING_KEYS, validate_module_settings
 from omnibci.application.configuration.errors import PluginProfileValidationError
@@ -59,7 +59,7 @@ class NodeConfiguration:
     """Role-owned module revisions, shared Engine identity and pinned runtime inputs."""
 
     role: str
-    engine_revision: str
+    engine_revision: str | None
     _module_revisions_json: str = field(repr=False)
     generation: str | None
     operation_id: str | None
@@ -67,7 +67,7 @@ class NodeConfiguration:
     _bindings_json: str = field(repr=False)
     format_version: int = 1
 
-    def __init__(self, role: str, module_revisions: dict[str, str], engine_revision: str,
+    def __init__(self, role: str, module_revisions: dict[str, str], engine_revision: str | None,
                  generation: str | None, settings: dict,
                  bindings: tuple[ProfileBinding, ...], format_version: int = 1,
                  *, operation_id: str | None = None):
@@ -76,9 +76,8 @@ class NodeConfiguration:
             raise PluginSchemaError("Unsupported node configuration format_version")
         if not isinstance(module_revisions, dict) or set(module_revisions) != _ROLE_MODULES[role]:
             raise PluginSchemaError("Node configuration requires exactly its owned module revisions")
-        for revision in (*module_revisions.values(), engine_revision):
-            if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{64}", revision) is None:
-                raise PluginSchemaError("Node configuration requires valid module and engine revisions")
+        if not all(is_valid_sha256(revision) for revision in module_revisions.values()) or not valid_engine_revision(role, engine_revision):
+            raise PluginSchemaError("Node configuration requires valid module and engine revisions")
         if generation is not None and (
             not isinstance(generation, str) or not generation or generation != generation.strip()
         ):

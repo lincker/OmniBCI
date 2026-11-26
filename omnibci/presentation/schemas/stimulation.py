@@ -23,10 +23,12 @@ class StimulationStatusResponse(BaseModel):
 
     active          — the application service has started stimulation.
     process_alive   — the Stimulation subprocess is currently running (auto_spawn only).
-    engine_connected — the Stimulation process has an active IPC connection to the engine.
+    connected       — the renderer has an active IPC connection to the server.
+    engine_linked   — closed-loop feedback is enabled.
     """
     active: bool
     process_alive: bool
-    engine_connected: bool
+    connected: bool
+    engine_linked: bool
     # Paradigm the running subprocess was spawned with (auto_spawn mode); None otherwise.
     paradigm: Optional[str] = None

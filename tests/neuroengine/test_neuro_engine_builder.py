@@ -22,7 +22,6 @@ from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 
 
 def _source_snapshot():
@@ -49,10 +48,6 @@ def patched_builder():
         patch(
             "omnibci.infrastructure.neuroengine.builder.SignalProcessingWorker",
             return_value=MagicMock(spec=SignalProcessingWorker),
-        ),
-        patch(
-            "omnibci.infrastructure.neuroengine.builder.PeerGateway",
-            return_value=MagicMock(spec=PeerGateway),
         ),
     ):
         yield NeuroEngineBuilder(settings_snapshot={})
@@ -131,7 +126,6 @@ class TestNeuroEngineBuilder:
         with (
             patch("omnibci.infrastructure.neuroengine.builder.AcquisitionWorker", return_value=MagicMock()),
             patch("omnibci.infrastructure.neuroengine.builder.SignalProcessingWorker", return_value=MagicMock()),
-            patch("omnibci.infrastructure.neuroengine.builder.PeerGateway", return_value=MagicMock()),
         ):
             eng = NeuroEngineBuilder(NeuroEngineConfig(queue_size=5), settings_snapshot={}).build()
         assert eng.acquisition_command_queue._maxsize == 5
@@ -154,7 +148,6 @@ class TestNeuroEngineBuilder:
                 b_mod, "SignalProcessingWorker",
                 side_effect=lambda **kw: (captured.update(sp_dm=kw["data_manager"]), MagicMock())[1],
             ),
-            patch("omnibci.infrastructure.neuroengine.builder.PeerGateway", return_value=MagicMock()),
         ):
             engine = NeuroEngineBuilder(settings_snapshot={}).build()
             for module in ("acquisition", "processing"):
@@ -175,7 +168,6 @@ class TestNeuroEngineBuilder:
                 b_mod, "SignalProcessingWorker",
                 side_effect=lambda **kw: (captured.update(sp_eb=kw["event_bus"]), MagicMock())[1],
             ),
-            patch("omnibci.infrastructure.neuroengine.builder.PeerGateway", return_value=MagicMock()),
         ):
             eng = NeuroEngineBuilder(settings_snapshot={}).build()
             channel = eng._worker_factory("processing", {})
@@ -229,7 +221,6 @@ def _debug_engine(debug: bool) -> NeuroEngine:
         acquisition_command_queue=MagicMock(),
         signal_processing_worker=MagicMock(),
         processor_command_queue=MagicMock(),
-        peer_gateway=MagicMock(),
         debug=debug,
     )
 
@@ -240,7 +231,6 @@ class TestEngineDebugFlag:
             event_bus=MagicMock(), data_manager=MagicMock(),
             acquisition_worker=MagicMock(), acquisition_command_queue=MagicMock(),
             signal_processing_worker=MagicMock(), processor_command_queue=MagicMock(),
-            peer_gateway=MagicMock(),
         )
         assert eng._debug is False
 

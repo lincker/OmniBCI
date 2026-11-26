@@ -21,7 +21,8 @@ def binding(slot, kind, parameters=None):
 
 
 @pytest.fixture
-def node_api():
+def node_api(stimulation_host, actuation_service):
+    from omnibci.application.services.stimulation_service import StimulationAppService
     snapshot = {
         "CONFIG.module_revisions": {'acquisition': "a" * 64, 'processing': "a" * 64, 'stimulation': "a" * 64, 'actuation': "a" * 64}, "CONFIG.engine_revision": "c" * 64,
         "STIMULATION.auto_spawn": False, "ACTUATION.auto_spawn": False, "ACTUATION.enabled": True,
@@ -40,7 +41,9 @@ def node_api():
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v1")
-    app.state.container = SimpleNamespace(node_configuration=NodeConfigurationService(engine, profiles))
+    stimulation = StimulationAppService(stimulation_host, admission=engine.admission)
+    app.state.container = SimpleNamespace(stimulation=stimulation, actuation=actuation_service,
+        node_configuration=NodeConfigurationService(profiles, stimulation=stimulation, actuation=actuation_service))
     with TestClient(app) as client:
         yield client, engine, snapshot, profiles
 
@@ -60,22 +63,30 @@ def test_node_api_selected_then_running_uses_applied_inputs(node_api, role, kind
     engine._running = engine._accepting_commands = True
     engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
     engine._applied_snapshot = {**saved, "CONFIG.generation": "run-1"}
+    owner = getattr(client.app.state.container, role)
+    owner.prepare_external(saved)
+    generation = owner.owner_identity()[1]
     profiles.materialize = Mock(side_effect=AssertionError("running publication read saved data"))
     data = client.get(f"/api/v1/config/nodes/{role}").json()["data"]
     assert data["state"] == "running"
-    assert data["configuration"]["generation"] == "run-1"
+    assert data["configuration"]["generation"] == generation
     assert data["configuration"]["module_revisions"] == {role: "a" * 64}
-    assert data["configuration"]["engine_revision"] == "c" * 64
+    assert data["configuration"]["engine_revision"] is None
 
 
 def test_transition_recovery_and_managed_modes_reject_node_publication(node_api):
     client, engine, saved, _ = node_api
     url = "/api/v1/config/nodes/stimulation"
     engine._transitioning = True
-    assert client.get(url).status_code == 409
+    assert client.get(url).status_code == 200
     engine._transitioning = False
-    engine.admission.quarantine("uncertain stop")
-    assert client.get(url).status_code == 409
+    engine.admission.quarantine("uncertain Engine stop", "engine")
+    assert client.get(url).status_code == 200
+    reservation = engine.admission.reserve_transition("stimulation")
+    try:
+        assert client.get(url).status_code == 409
+    finally:
+        engine.admission.release_reservation(reservation)
     engine.admission.clear_quarantine()
     saved["STIMULATION.auto_spawn"] = True
     assert client.get(url).status_code == 409
@@ -94,9 +105,12 @@ def test_output_node_configuration_is_available_with_no_acquisition_or_processin
     engine._running = engine._accepting_commands = True
     engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
     engine._applied_snapshot = {**saved, "CONFIG.generation": "foundation"}
+    owner = getattr(client.app.state.container, role)
+    owner.prepare_external(saved)
+    generation = owner.owner_identity()[1]
     response = client.get(f"/api/v1/config/nodes/{role}")
     assert response.status_code == 200
     configuration = response.json()["data"]["configuration"]
-    assert configuration["generation"] == "foundation"
+    assert configuration["generation"] == generation
     assert all(binding["slot"].startswith(f"{role}.") for binding in configuration["bindings"])
     assert not any(key.startswith("ACQUISITION.") for key in configuration["settings"])

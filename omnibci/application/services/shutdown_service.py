@@ -1,12 +1,15 @@
 """Stop producers and drain pending results before disposing the engine."""
 import asyncio
 import logging
+from contextlib import nullcontext
 
 logger = logging.getLogger(__name__)
 
 
 class ServerShutdownService:
-    def __init__(self, *, engine, configuration):
+    def __init__(self, *, engine, configuration, stimulation=None, actuation=None):
+        self.stimulation = stimulation
+        self.actuation = actuation
         self.engine = engine
         self.configuration = configuration
         self._lock = asyncio.Lock()
@@ -40,8 +43,16 @@ class ServerShutdownService:
             if self.configuration is not None:
                 report("waiting_for_configuration")
                 await attempt("configuration", self.configuration.wait_for_idle)
-            report("stopping_engine")
-            await attempt("engine", self.engine.shutdown)
+            guard = self.engine.admission.stop_transition("all") if self.stimulation is not None or self.actuation is not None else nullcontext()
+            async with guard:
+                if self.stimulation is not None:
+                    report("stopping_stimulation")
+                    await attempt("stimulation", lambda: asyncio.to_thread(self.stimulation.stop))
+                if self.actuation is not None:
+                    report("stopping_actuation")
+                    await attempt("actuation", self.actuation.stop)
+                report("stopping_engine")
+                await attempt("engine", self.engine.shutdown)
             self._complete = not errors
             if self._complete:
                 report("stopped")

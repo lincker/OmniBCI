@@ -48,7 +48,7 @@ const latestProfiles = [...new Map(completeActivation.bindings.map((binding) => 
   profile_id: binding.profile_id, name: `Saved ${binding.profile_id}`, revision: 99,
   selection: { package_id: "latest.package", contribution_id: "new-contribution", version: "9.9.9" },
 }])).values()];
-const ready = { active: true, process_alive: true, engine_connected: true, paradigm: paradigmId };
+const ready = { active: true, process_alive: true, connected: true, engine_linked: true, paradigm: paradigmId };
 const numericControls = { cue: { type: "int", field: "trial_params", payload_key: "event_id", default: 2, min: 1, max: 4 } };
 const sequenceControls = {
   trials: { type: "int", field: "n_trials", default: 1, min: 1 },
@@ -71,7 +71,7 @@ function text(tree) {
   return tree == null || typeof tree === "boolean" ? "" : String(tree);
 }
 function render({ stimulation = ready, stimulationError = null,
-  actuation = { active: false, process_alive: false, engine_connected: false, effector: null }, actuationError = null,
+  actuation = { active: false, process_alive: false, connected: false, effector: null }, actuationError = null,
   selectedParadigm = paradigm,
   loadError = null, runtime = {}, acquisition = { connected: false, streaming: false },
   selection = activation, engine = { running: true, processor_alive: true }, engineError = null, acquisitionError = null,
@@ -211,7 +211,7 @@ test("missing epoch detector blocks processing with a direct setup action while 
 
 test("external stimulation offers preparation before connecting and enabling its peer", () => {
   const selection = { ...sourceActivation, settings: { "STIMULATION.auto_spawn": false } };
-  const tree = render({ selection, stimulation: { ...ready, active: false, engine_connected: false, process_alive: false } });
+  const tree = render({ selection, stimulation: { ...ready, active: false, connected: false, process_alive: false } });
   const prepare = actionButton(tree, "Prepare external stimulation");
   assert.equal(prepare.props.disabled, false);
   assert.match(text(card(tree, "Stimulation")), /External stimulation mode/);
@@ -384,7 +384,7 @@ test("a failed stimulation launch refreshes status and displays its error next t
   let refreshes = 0;
   api.moduleStart = async () => { throw new Error("Renderer initialization failed"); };
   api.stimulationStatus = async () => ({ ...ready, active: false, process_alive: false });
-  api.actuationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, effector: null });
+  api.actuationStatus = async () => ({ active: false, process_alive: false, connected: false, effector: null });
   signalConfigApi.get = async () => null;
   runtimeConfigApi.status = async () => ({ running: true, accepted: revisionMap(revision), applied: revisionMap(revision),
     generation: "engine-1", recovery: {}, operations: {} });
@@ -492,10 +492,20 @@ test("Reset sequence restores the plugin default and clears the error while keep
   assert.equal(changes.get("trialError"), null);
 });
 
+test("Stimulation displays the renderer connection and the local Engine feedback link independently", () => {
+  for (const [active, connected, engine_linked] of [
+    [false, false, false], [false, true, false], [true, true, true], [true, true, false], [true, false, false],
+  ]) {
+    const panel = text(card(render({ stimulation: { ...ready, active, connected, engine_linked } }), "Stimulation"));
+    assert.ok(panel.includes("Local renderer · " + (connected ? "Connected" : "Disconnected")));
+    assert.ok(panel.includes("Local Engine feedback · " + (engine_linked ? "Connected" : "Disconnected")));
+  }
+});
+
 for (const [name, overrides] of [
   ["missing reported paradigm", { stimulation: { ...ready, paradigm: null } }],
   ["different reported paradigm", { stimulation: { ...ready, paradigm: "another_paradigm" } }],
-  ["disconnected engine", { stimulation: { ...ready, engine_connected: false } }],
+  ["disconnected renderer", { stimulation: { ...ready, connected: false } }],
   ["inactive stimulation", { stimulation: { ...ready, active: false } }],
   ["failed status request", { stimulationError: new Error("Stimulation is unavailable") }],
   ["unavailable selected plugin", { selectedParadigm: { ...paradigm, available: false } }],
@@ -519,7 +529,7 @@ for (const [label, overrides, reason] of [
   ["Disconnect", { acquisition: { connected: true, streaming: true } }, /Stop reading before changing the running connection/],
   ["Connect", {}, /Configure a source in Acquisition/],
   ["Connect", { acquisitionError: new Error("Unavailable") }, /Acquisition status is unavailable/],
-  ["Trigger trial", { stimulation: { ...ready, engine_connected: false } }, /Wait for stimulation to connect/],
+  ["Trigger trial", { stimulation: { ...ready, connected: false } }, /Wait for the renderer to connect to the server/],
   ["Trigger trial", { stimulation: { ...ready, paradigm: "other" } }, /running paradigm differs/],
   ["Trigger trial", { runtime: { status: { accepted: revisionMap(revision), applied: revisionMap("previous") } } }, /running module differs/],
 ]) {
@@ -545,7 +555,8 @@ test("failed status polls do not display cached active indicators or source meas
   const tree = render({ engine: { running: true, acquisition_alive: true, processor_alive: true },
     engineError: new Error("Engine request failed"),
     acquisition: { connected: true, streaming: true, source: "Cached source", sample_rate: 12345, channel_count: 99 },
-    acquisitionError: new Error("Acquisition request failed"), stimulationError: new Error("Stimulation request failed") });
+    acquisitionError: new Error("Acquisition request failed"), stimulationError: new Error("Stimulation request failed"),
+    actuationError: new Error("Actuation request failed") });
   const dots = elements(tree).filter((element) => element.type.name === "Dot");
   assert.equal(dots.length, 1);
   const modules = elements(tree).filter((element) => element.props.className === "module-runtime");

@@ -37,6 +37,10 @@ def is_valid_sha256(value: object, *, ignore_case: bool = False) -> bool:
     return bool(_SHA256_RE.fullmatch(candidate))
 
 
+def valid_engine_revision(module: str, value: object) -> bool:
+    return (module in {"stimulation", "actuation"} and value is None) or is_valid_sha256(value)
+
+
 @dataclass(frozen=True, slots=True)
 class PluginSelection:
     """Exact package, contribution and installed version identity."""

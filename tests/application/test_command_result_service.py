@@ -25,6 +25,10 @@ from omnibci.shared.events import Event, EventType
 class _Engine:
     is_engine_ready = True
 
+    @property
+    def is_ready(self):
+        return self.is_engine_ready
+
     def is_command_ready(self, event_type):
         return self.is_engine_ready
 

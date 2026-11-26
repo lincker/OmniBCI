@@ -160,7 +160,7 @@ async function connect(target: ConnectionTarget): Promise<void> {
       await connection.connect("owned", ready.url, owned.token, ready.instance_id);
     } catch (error) { await owned.force(); server = undefined; connection.failed((error as Error).message); throw error; }
   }
-  const value = { kind: target.kind, url: target.kind === "existing" ? connection.info.url : undefined };
+  const value = { kind: connection.info.kind, url: target.kind === "existing" ? connection.info.url : undefined };
   const temporary = preferencesPath + ".tmp";
   await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
   await rename(temporary, preferencesPath);

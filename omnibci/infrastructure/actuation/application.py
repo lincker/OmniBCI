@@ -2,7 +2,7 @@
 Actuation — main class of the actuation subsystem process.
 
 Mirrors stimulation's application.Stimulation: an EventBus + a PeerChannel
-that dials into the engine's actuation port, and an Actuator that drives the
+that dials into the server's Actuation port, and an Actuator that drives the
 loaded Effector plugin. Differences from stimulation:
 
   - the command stream is an *intent* stream: a one-slot latest-value mailbox
@@ -12,7 +12,7 @@ loaded Effector plugin. Differences from stimulation:
   - setup, execute, quiesce and teardown share one device thread, so a slow
     call cannot starve the event loop or overlap another device operation;
   - a heartbeat task publishes ActuationState every watchdog_timeout_s / 2 —
-    the engine's link watchdog treats inbound silence past the timeout as
+    the server's link watchdog treats inbound silence past the timeout as
     LINK_LOST, so a dialled-in peer must keep talking;
   - one failed command → ActuationFault + keep serving; only a failed
     setup() exits the process (with a Fault as its last word). SettleActuation
@@ -93,7 +93,7 @@ class Actuation:
         self.command_queue = Queue(maxsize=1)
         self.actuator = Actuator(settings_snapshot=self._runtime_snapshot)
         self._heartbeat_task = None
-        self._paused = False
+        self._paused = self._external_node
         self._execution_task = None
         self._settlement_tasks = set()
         self._settlement_lock = asyncio.Lock()
@@ -316,7 +316,7 @@ class Actuation:
                           make_actuation_fault("COMMAND_FAILED", command=command, message=str(exc)))
         finally:
             self._execution_task = None
-        # PeerChannel's outbound subscription forwards these to the engine.
+        # PeerChannel's outbound subscription forwards these to server IPC.
         self._publish_command_outcome(reply)
 
     def _publish_command_outcome(self, event):
@@ -515,7 +515,7 @@ class Actuation:
         return stop_event is not None and stop_event.is_set()
 
     async def _heartbeat(self):
-        """Keep the engine's link watchdog quiet while we are alive."""
+        """Keep the server's link watchdog quiet while we are alive."""
         while True:
             await asyncio.sleep(self._heartbeat_interval)
             self.event_bus.put_event(Event(

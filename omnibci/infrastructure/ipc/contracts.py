@@ -2,7 +2,7 @@
 Shared IPC Event message contract.
 
 This is the single source of truth for the *wire shape* and *protocol version*
-of every engine ↔ peer socket channel (currently stimulation and actuation).
+of every server IPC ↔ output peer socket channel.
 Both directions encode/decode through here, so the format cannot drift between
 ends — the class of bug that previously made a channel one-directional
 (``event_type`` vs ``type``, ``to_dict`` vs ``to_json``).
@@ -14,8 +14,8 @@ Wire format:
 Versioning:
     PROTOCOL_VERSION stamps every outgoing frame. Stream readers reject an
     unsupported header before reading its body; malformed Event bodies raise
-    protocol errors. Version 1 requires engine_revision
-    in peer identities; old identity fields are rejected.
+    protocol errors. Version 1 carries engine_revision in peer identities. Standalone
+    output sessions may use null. Engine-owned modules require a SHA-256 revision.
 
 The wire contract stays free of framework serializers; the outbound payload
 adapter is imported lazily only while encoding rich domain values.

@@ -773,6 +773,17 @@ from omnibci.infrastructure.neuroengine.gateway.peers import actuation_peer_conf
 from tests.execution_helpers import output_bindings
 
 
+@pytest.fixture
+def ipc_host():
+    from omnibci.infrastructure.ipc.runtime import IpcRuntime
+    runtime = IpcRuntime()
+    runtime.start()
+    try:
+        yield runtime
+    finally:
+        runtime.stop()
+
+
 @pytest_asyncio.fixture
 async def build_graph(monkeypatch):
     monkeypatch.setattr(builder.mp, "Queue", MagicMock())
@@ -788,15 +799,12 @@ async def build_graph(monkeypatch):
             "acquisition", "processing", "stimulation", "actuation")},
             "CONFIG.engine_revision": "c" * 64, "CONFIG.generation": "run-1", "PLUGINS.bindings": output_bindings(), **settings}
         engine = builder.NeuroEngineBuilder(settings_snapshot=snapshot).build()
-        assert not engine.peer_gateway._channels
+        assert not hasattr(engine, "peer_gateway")
         engine._loop = asyncio.get_running_loop()
         engine._started = True
-        await engine.peer_gateway.start()
         engines.append(engine)
         return engine, snapshot
     yield build
-    for engine in engines:
-        await engine.peer_gateway.stop()
 
 
 @pytest.mark.asyncio
@@ -804,29 +812,30 @@ async def build_graph(monkeypatch):
     (True, True), (False, True), (True, False), (False, False),
 ])
 async def test_prepared_listener_uses_its_own_external_identity(
-    build_graph, stim_managed, actuation_managed,
+    build_graph, ipc_host, stim_managed, actuation_managed,
 ):
     engine, snapshot = await build_graph(**{
         "STIMULATION.auto_spawn": stim_managed,
         "ACTUATION.auto_spawn": actuation_managed,
     })
     for role, managed in (("stimulation", stim_managed), ("actuation", actuation_managed)):
-        await engine.ensure_output_ready(role, snapshot)
-        server = engine.peer_gateway.peer(role)._transport._server
-        expected = None if managed else PeerIdentity(role, "a" * 64, "c" * 64, "run-1",
-                                                    engine.node_operation_id(role), bindings_fingerprint(output_bindings(), role))
+        ipc_host.ensure_peer_ready_sync(role, {**snapshot, "CONFIG.engine_revision": None, "CONFIG.operation_id": "prepare"})
+        server = ipc_host._gateway.peer(role)._transport._server
+        expected = None if managed else PeerIdentity(role, "a" * 64, None, "run-1", "prepare",
+                                                     bindings_fingerprint(output_bindings(), role))
         assert server.identity == expected
         assert server.max_clients == (None if role == "stimulation" and managed else 1)
 
 
 @pytest.mark.asyncio
-async def test_preparation_is_idempotent_and_does_not_prepare_another_role(build_graph):
+async def test_preparation_is_idempotent_and_does_not_prepare_another_role(build_graph, ipc_host):
     engine, snapshot = await build_graph()
-    await engine.ensure_output_ready("stimulation", snapshot)
-    channel = engine.peer_gateway.peer("stimulation")
-    await engine.ensure_output_ready("stimulation", snapshot)
-    assert engine.peer_gateway.peer("stimulation") is channel
-    assert "actuation" not in engine.peer_gateway._channels
+    ipc_host.ensure_peer_ready_sync("stimulation", {**snapshot, "CONFIG.operation_id": "prepare"})
+    channel = ipc_host._gateway.peer("stimulation")
+    ipc_host.ensure_peer_ready_sync("stimulation", {**snapshot, "CONFIG.operation_id": "prepare"})
+    assert ipc_host._gateway.peer("stimulation") is channel
+    assert "actuation" not in ipc_host._gateway._channels
+    assert not hasattr(engine, "peer_gateway")
     assert channel._transport._server.identity is None
 
 
@@ -835,36 +844,41 @@ async def test_preparation_is_idempotent_and_does_not_prepare_another_role(build
     ({}, ("127.0.0.1", 8765)),
     ({"STIMULATION.server_ip": "192.0.2.4", "STIMULATION.server_port": 9234}, ("192.0.2.4", 9234)),
 ])
-async def test_stimulation_listener_and_client_use_the_same_module_address(build_graph, settings, address):
+async def test_stimulation_listener_and_client_use_the_same_module_address(build_graph, ipc_host, settings, address):
     from omnibci.infrastructure.stimulation.application import Stimulation
 
     engine, snapshot = await build_graph(**settings)
-    await engine.ensure_output_ready("stimulation", snapshot)
-    server = engine.peer_gateway.peer("stimulation")._transport._server
+    ipc_host.ensure_peer_ready_sync("stimulation", {**snapshot, "CONFIG.operation_id": "prepare"})
+    server = ipc_host._gateway.peer("stimulation")._transport._server
     client = Stimulation(settings_snapshot=snapshot).peer_channel._transport._client
     assert (server.host, server.port) == address
     assert (client.server_ip, client.server_port) == address
 
 
 @pytest.mark.asyncio
-async def test_external_actuation_is_prepared_before_module_activation(build_graph):
+async def test_external_actuation_is_prepared_before_module_activation(build_graph, ipc_host):
+    from omnibci.application.services.actuation_service import ActuationAppService
     engine, snapshot = await build_graph(**{"ACTUATION.auto_spawn": False})
-    assert not engine.peer_gateway._channels
-    await engine.ensure_output_ready("actuation", snapshot)
-    assert engine.peer_gateway.peer("actuation")._transport._server.identity == PeerIdentity(
-        "actuation", "a" * 64, "c" * 64, "run-1",
-        engine.node_operation_id("actuation"), bindings_fingerprint(output_bindings(), "actuation"))
-    assert not engine._actuation_active
+    owner = ActuationAppService(ipc_host)
+    owner.prepare_external(snapshot)
+    assert not hasattr(engine, "peer_gateway") and not owner.is_active
+    assert ipc_host._gateway.peer("actuation")._transport._server.identity == PeerIdentity(
+        "actuation", "a" * 64, None, owner.owner_identity()[1],
+        ipc_host.node_operation_id("actuation"), bindings_fingerprint(output_bindings(), "actuation"))
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["stimulation", "actuation"])
 @pytest.mark.parametrize("missing", ["CONFIG.module_revisions", "CONFIG.engine_revision", "CONFIG.generation"])
-async def test_invalid_external_identity_fails_when_preparing_only_that_role(build_graph, role, missing):
+async def test_invalid_external_identity_fails_when_preparing_only_that_role(build_graph, ipc_host, role, missing):
     engine, snapshot = await build_graph(**{f"{role.upper()}.auto_spawn": False, missing: None})
-    with pytest.raises(ValueError, match="Peer identity"):
-        await engine.ensure_output_ready(role, snapshot)
-    assert not engine.peer_gateway._channels
+    if missing == "CONFIG.engine_revision":
+        ipc_host.ensure_peer_ready_sync(role, {**snapshot, "CONFIG.operation_id": "prepare"})
+        assert ipc_host._gateway.peer(role)._transport._server.identity.engine_revision is None
+    else:
+        with pytest.raises(ValueError, match="Peer identity"):
+            ipc_host.ensure_peer_ready_sync(role, {**snapshot, "CONFIG.operation_id": "prepare"})
+    assert not hasattr(engine, "peer_gateway")
     builder.AcquisitionWorker.assert_not_called()
     builder.SignalProcessingWorker.assert_not_called()
 
@@ -886,19 +900,16 @@ def test_peer_factories_preserve_routing_while_limiting_external_stimulation():
 
 
 @pytest.mark.asyncio
-async def test_replacing_a_listener_invalidates_its_operation_even_with_same_configuration(build_graph):
-    engine, snapshot = await build_graph(**{"ACTUATION.auto_spawn": False})
-    assert engine.node_operation_id("actuation") is None
-    await engine.ensure_output_ready("actuation", snapshot)
-    first = engine.node_operation_id("actuation")
-    assert first
-    await engine.ensure_output_ready("actuation", snapshot)
-    assert engine.node_operation_id("actuation") == first
-    await engine.reconfigure_output_modules(snapshot, ("actuation",))
-    assert engine.node_operation_id("actuation") not in (None, first)
-    await engine.peer_gateway.stop()
-    assert engine.node_operation_id("actuation") is None
-
-
-if __name__ == "__main__":
-    pytest.main(["-s", "-v", __file__])
+async def test_replacing_a_listener_invalidates_its_operation_even_with_same_configuration(build_graph, ipc_host):
+    from omnibci.application.services.actuation_service import ActuationAppService
+    _, snapshot = await build_graph(**{"ACTUATION.auto_spawn": False})
+    owner = ActuationAppService(ipc_host)
+    assert ipc_host.node_operation_id("actuation") is None
+    owner.prepare_external(snapshot)
+    first = ipc_host.node_operation_id("actuation")
+    owner.prepare_external(snapshot)
+    assert ipc_host.node_operation_id("actuation") == first
+    await owner.stop()
+    assert ipc_host.node_operation_id("actuation") is None
+    owner.prepare_external(snapshot)
+    assert ipc_host.node_operation_id("actuation") not in (None, first)

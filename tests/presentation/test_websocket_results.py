@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
+from threading import get_ident
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -121,6 +122,31 @@ class TestOnTrialCompleted:
         await b._broadcast('{"event":"TrialCompleted"}')
         assert dead not in b._clients
 
+    @pytest.mark.asyncio
+    async def test_stimulation_status_reads_process_state_off_the_websocket_loop(self):
+        broadcaster = ResultsBroadcaster()
+        received = asyncio.Queue()
+        ws = MagicMock()
+        ws.send_text = AsyncMock(side_effect=received.put_nowait)
+        broadcaster._clients.add(ws)
+        threads = []
+
+        def status():
+            threads.append(get_ident())
+            return {"active": False, "connected": True, "engine_linked": False,
+                    "process_alive": False, "paradigm": None}
+
+        publisher = asyncio.create_task(broadcaster.publish_stimulation_status(status))
+        try:
+            message = json.loads(await asyncio.wait_for(received.get(), 3))
+            assert message["event"] == "StimulationStatus"
+            assert message["data"]["connected"] and not message["data"]["engine_linked"]
+            assert threads[0] != get_ident()
+        finally:
+            publisher.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await publisher
+
 
 # ---------------------------------------------------------------------------
 # Schema tests
@@ -151,12 +177,13 @@ class TestPingMessage:
         assert json.loads(PingMessage().model_dump_json()) == {"event": "Ping"}
 
     def test_ping_is_in_the_frozen_union(self):
-        # Contract freeze: 3 ws message kinds. Changing this set must be a
+        # WebSocket contract freeze. Changing this set must be a
         # deliberate, same-commit change with frontend/src/api/ws-types.ts.
         import typing
         names = {m.__name__ for m in typing.get_args(WsMessage)}
         assert names == {
             "TrialCompletedMessage", "StimulationAckMessage", "PingMessage",
+            "LocalStimulationStatusMessage",
         }
 
 
@@ -225,3 +252,37 @@ class TestWebSocketEndpoint:
         assert payload["event"] == "TrialCompleted"
         assert payload["target_id"] == 9
         assert payload["event_id"] == 999
+
+
+@pytest.mark.asyncio
+async def test_stimulation_status_publisher_recovers_after_transient_error(monkeypatch):
+    b = ResultsBroadcaster()
+    b.set_loop(asyncio.get_running_loop())
+    sent = []
+    ws = MagicMock()
+    ws.send_text = AsyncMock(side_effect=sent.append)
+    b._clients.add(ws)
+    calls = 0
+
+    def status():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient read error")
+        return {"active": True, "process_alive": True, "connected": True, "engine_linked": False, "paradigm": None}
+
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr("omnibci.presentation.websockets.results.asyncio.sleep", lambda _: real_sleep(0.01))
+    task = asyncio.create_task(b.publish_stimulation_status(status))
+    try:
+        for _ in range(50):
+            if sent:
+                break
+            await real_sleep(0.01)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert calls >= 2
+    assert len(sent) == 1
+    assert json.loads(sent[0])["event"] == "StimulationStatus"

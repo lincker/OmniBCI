@@ -59,6 +59,7 @@ class AcquisitionCommand(Enum):
     get_preview       = 'get preview'
     attach_processing = 'attach processing input'
     detach_processing = 'detach processing input'
+    flush_processing_queue = 'flush processing queue'
 
 
 class AcquisitionCommandRejected(RuntimeError):
@@ -91,6 +92,9 @@ class AcquisitionRuntime:
     """
 
     FETCH_FINISH_TIMEOUT_S = 5.0
+    BARRIER_ENQUEUE_TIMEOUT_S = 0.5
+    FLUSH_ENQUEUE_TIMEOUT_S = 2.0
+    _BARRIER_POLL_S = 0.01
 
     def __init__(
         self,
@@ -106,6 +110,7 @@ class AcquisitionRuntime:
         preview_queue=None,
         processing_active=None,
         runtime_counters=None,
+        stop_event=None,
     ) -> None:
         self.data_source = data_source
         trigger_mode, resume_mode = data_source.trigger_mode, data_source.resume_mode
@@ -126,6 +131,7 @@ class AcquisitionRuntime:
         self.data_manager = data_manager
         self.event_bus = event_bus  # Optional for projection-free unit tests.
         self.should_exit = False
+        self._stop_event = stop_event
         self.source_id = source_id
         self.processing_active = processing_active
         self._processing_receipt = None
@@ -158,8 +164,24 @@ class AcquisitionRuntime:
         self.preview.finish("engine_stopped")
         await self._on_disconnect()
 
+    def _stop_requested(self) -> bool:
+        return self.should_exit or (self._stop_event is not None and self._stop_event.is_set())
+
+    async def _put_terminal_barrier(self, barrier: StreamBarrier, *, timeout_s: float | None = None) -> None:
+        """Give a terminal FIFO barrier a bounded async wait after production stops."""
+        budget = self.BARRIER_ENQUEUE_TIMEOUT_S if timeout_s is None else timeout_s
+        deadline = time.monotonic() + budget
+        while True:
+            try:
+                self.data_manager.put_data(barrier)
+                return
+            except Full:
+                if self._stop_requested() or time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(min(self._BARRIER_POLL_S, max(0.0, deadline - time.monotonic())))
+
     async def main_loop(self) -> None:
-        while not self.should_exit:
+        while not self._stop_requested():
             self.preview.expire()
             if not self.command_queue.empty():
                 await self.execute(self.command_queue.get())
@@ -168,6 +190,9 @@ class AcquisitionRuntime:
     async def execute(self, item) -> None:
         """Execute a command and emit one result for each correlated request."""
         command, raw_request = item
+        if command is AcquisitionCommand.flush_processing_queue:
+            await self._flush_processing_queue(raw_request)
+            return
         request = CommandRequest.from_value(raw_request)
         logger.debug('Acquisition command: %s', command)
         if request is not None and command in _COMMAND_RESULT_NAMES:
@@ -178,8 +203,11 @@ class AcquisitionRuntime:
                 self._emit_command_result(request, command, ok=False, message=str(exc),
                                           error_code="INVALID_COMMAND_PAYLOAD", failure_kind=CommandFailureKind.REJECTED)
                 return
-        if command in (AcquisitionCommand.attach_processing, AcquisitionCommand.detach_processing):
-            self._processing_input_command(command, request)
+        if command is AcquisitionCommand.attach_processing:
+            self._attach_processing_command(request)
+            return
+        if command is AcquisitionCommand.detach_processing:
+            await self._detach_processing_command(request)
             return
         if command in (AcquisitionCommand.get_checkpoint, AcquisitionCommand.restore_checkpoint):
             self._configuration_command(command, request)
@@ -233,7 +261,7 @@ class AcquisitionRuntime:
                     self._emit_command_result(request, command, ok=True, data=data)
                     return
                 try:
-                    self.data_manager.put_data(StreamBarrier(
+                    await self._put_terminal_barrier(StreamBarrier(
                         request.command_id, self.generation, self.acquisition_revision,
                         self._last_processing_sequence, engine_revision=self.engine_revision,
                         input_id=self._processing_receipt.input_id if self._processing_receipt else None,
@@ -386,7 +414,7 @@ class AcquisitionRuntime:
             # A joined reader permits cleanup even if the device stop command failed.
             self.connection_id = None
             self._clear_metadata()
-            self._publish_source_boundary(detach=True)
+            await self._publish_source_boundary(detach=True)
             if self.processing_active is not None:
                 self.processing_active.clear()
             await self.data_source.disconnect()
@@ -534,57 +562,89 @@ class AcquisitionRuntime:
             raise AcquisitionCommandRejected("SIGNAL_NOT_PREPARED", "Prepare the signal mapping for this source connection before attaching processing")
         return receipt
 
-    def _processing_input_command(self, command, request):
+    def _attach_processing_command(self, request):
+        if request is None:
+            return
+        receipt = None
+        try:
+            if self.processing_active is None:
+                raise ValueError("Processing input control is unavailable")
+            receipt = self._validate_signal_receipt(request.payload)
+            if self.processing_active.is_set():
+                raise ValueError("Detach the previous processing input before replacing it")
+            # This command and fetch() run on the same event loop. No await
+            # separates the FIFO marker, local identity and delivery gate.
+            self.data_manager.put_data(ProcessingInputStart(request.command_id, receipt, self._last_sequence))
+            self._last_processing_sequence = self._last_sequence
+            self._processing_receipt = receipt
+            self._processing_failed = False
+            self.processing_active.set()
+        except Full:
+            self._fail_processing_input("Processing input queue is full", receipt=receipt)
+            self._emit_command_result(request, AcquisitionCommand.attach_processing, ok=False,
+                                      message="Processing input queue is full; its boundary was not confirmed",
+                                      error_code="PROCESSING_INPUT_QUEUE_FULL",
+                                      failure_kind=CommandFailureKind.EXECUTION_FAILED)
+        except Exception as exc:
+            self._emit_command_result(request, AcquisitionCommand.attach_processing, ok=False, message=str(exc),
+                                      error_code="PROCESSING_INPUT_REJECTED",
+                                      failure_kind=CommandFailureKind.REJECTED)
+
+    async def _detach_processing_command(self, request):
         if request is None:
             return
         try:
             if self.processing_active is None:
                 raise ValueError("Processing input control is unavailable")
             payload = request.payload
-            if command is AcquisitionCommand.attach_processing:
-                receipt = self._validate_signal_receipt(payload)
-                if self.processing_active.is_set():
-                    raise ValueError("Detach the previous processing input before replacing it")
-                # This command and fetch() run on the same event loop. No await
-                # separates the FIFO marker, local identity and delivery gate.
-                self.data_manager.put_data(ProcessingInputStart(request.command_id, receipt, self._last_sequence))
-                self._last_processing_sequence = self._last_sequence
-                self._processing_receipt = receipt
-                self._processing_failed = False
-                self.processing_active.set()
+            expected = {"generation": self.generation, "engine_revision": self.engine_revision,
+                        "expected_revision": self.acquisition_revision}
+            if not isinstance(payload, dict) or any(payload.get(key) != value for key, value in expected.items()):
+                raise ValueError("Processing input belongs to another acquisition runtime")
+            if self._processing_failed and payload.get("drain", True):
+                raise ValueError("Processing input failed; drain was not confirmed")
+            # Close producer admission synchronously before any await so fetch()
+            # cannot enqueue further chunks ahead of the detach barrier.
+            attached = self.processing_active.is_set()
+            receipt = self._processing_receipt
+            self.processing_active.clear()
+            self._processing_receipt = None
+            if (attached or receipt is not None) and payload.get("drain", True):
+                await self._put_terminal_barrier(StreamBarrier(
+                    request.command_id, self.generation, self.acquisition_revision,
+                    self._last_processing_sequence, engine_revision=self.engine_revision,
+                    command=EventType.DetachProcessingInput.name,
+                    input_id=receipt.input_id if receipt else None,
+                ))
             else:
-                expected = {"generation": self.generation, "engine_revision": self.engine_revision,
-                            "expected_revision": self.acquisition_revision}
-                if not isinstance(payload, dict) or any(payload.get(key) != value for key, value in expected.items()):
-                    raise ValueError("Processing input belongs to another acquisition runtime")
-                if self._processing_failed and payload.get("drain", True):
-                    raise ValueError("Processing input failed; drain was not confirmed")
-                attached = self.processing_active.is_set()
-                self.processing_active.clear()
-                if (attached or self._processing_receipt is not None) and payload.get("drain", True):
-                    self.data_manager.put_data(StreamBarrier(
-                        request.command_id, self.generation, self.acquisition_revision,
-                        self._last_processing_sequence, engine_revision=self.engine_revision,
-                        command=EventType.DetachProcessingInput.name,
-                        input_id=self._processing_receipt.input_id if self._processing_receipt else None,
-                    ))
-                else:
-                    data = StreamDrainReceipt(self.generation, self.acquisition_revision,
-                                              self._last_sequence, 0, False,
-                                              engine_revision=self.engine_revision).to_dict()
-                    self._emit_command_result(request, command, ok=True, data=data)
-                self._processing_receipt = None
+                data = StreamDrainReceipt(self.generation, self.acquisition_revision,
+                                          self._last_sequence, 0, False,
+                                          engine_revision=self.engine_revision).to_dict()
+                self._emit_command_result(request, AcquisitionCommand.detach_processing, ok=True, data=data)
         except Full:
-            self._fail_processing_input("Processing input queue is full", receipt=receipt
-                                        if command is AcquisitionCommand.attach_processing else None)
-            self._emit_command_result(request, command, ok=False,
+            self._fail_processing_input("Processing input queue is full", receipt=receipt)
+            self._emit_command_result(request, AcquisitionCommand.detach_processing, ok=False,
                                       message="Processing input queue is full; its boundary was not confirmed",
                                       error_code="PROCESSING_INPUT_QUEUE_FULL",
                                       failure_kind=CommandFailureKind.EXECUTION_FAILED)
         except Exception as exc:
-            self._emit_command_result(request, command, ok=False, message=str(exc),
+            self._emit_command_result(request, AcquisitionCommand.detach_processing, ok=False, message=str(exc),
                                       error_code="PROCESSING_INPUT_REJECTED",
                                       failure_kind=CommandFailureKind.REJECTED)
+
+    async def _flush_processing_queue(self, token) -> None:
+        """Emit a FIFO cleanup sentinel after closing producer admission on this loop."""
+        if self.processing_active is not None:
+            self.processing_active.clear()
+        self._processing_receipt = None
+        try:
+            await self._put_terminal_barrier(StreamBarrier(
+                token, self.generation, self.acquisition_revision,
+                self._last_processing_sequence, engine_revision=self.engine_revision,
+                command="FlushProcessingQueue",
+            ), timeout_s=self.FLUSH_ENQUEUE_TIMEOUT_S)
+        except Full:
+            logger.warning("Timed out enqueuing processing queue flush sentinel")
 
     async def fetch(self) -> None:
         self.stream_chunk_count = 0
@@ -688,14 +748,16 @@ class AcquisitionRuntime:
                 logger.error('disconnect during fetch teardown failed: %s', exc)
             finally:
                 self._finishing_stream = False
-                self._publish_source_boundary()
+                await self._publish_source_boundary()
                 self._emit_state()
 
-    def _publish_source_boundary(self, *, detach=False):
+    async def _publish_source_boundary(self, *, detach=False):
         """End the old stream in FIFO order without waiting for its consumer."""
         if self.processing_active is not None and self.processing_active.is_set():
+            if detach:
+                self.processing_active.clear()
             try:
-                self.data_manager.put_data(StreamBarrier(
+                await self._put_terminal_barrier(StreamBarrier(
                     None, self.generation, self.acquisition_revision, self._last_processing_sequence,
                     engine_revision=self.engine_revision,
                     command=EventType.DetachProcessingInput.name if detach else EventType.StopAndDrain.name,

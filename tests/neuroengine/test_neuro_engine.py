@@ -31,9 +31,6 @@ def _make_engine(**overrides) -> NeuroEngine:
     event_bus = MagicMock()
     event_bus.start = AsyncMock()
     event_bus.stop = AsyncMock()
-    peer_gateway = MagicMock()
-    peer_gateway.start = AsyncMock()
-    peer_gateway.stop = AsyncMock()
     defaults = dict(
         event_bus=event_bus,
         data_manager=MagicMock(),
@@ -41,7 +38,6 @@ def _make_engine(**overrides) -> NeuroEngine:
         acquisition_command_queue=MagicMock(),
         signal_processing_worker=MagicMock(),
         processor_command_queue=MagicMock(),
-        peer_gateway=peer_gateway,
     )
     defaults.update(overrides)
     return NeuroEngine(**defaults)
@@ -52,7 +48,6 @@ def _mark_resources_started(eng: NeuroEngine) -> None:
     eng._acquisition_started = True
     eng._processor_started = True
     eng._event_bus_started = True
-    eng._gateway_started = True
 
 
 class _BoundedCommandQueue(queue.Queue):
@@ -158,12 +153,11 @@ class TestStart:
         eng.acquisition_worker.start.assert_not_called()
         eng.signal_processing_worker.start.assert_not_called()
         eng.event_bus.start.assert_awaited_once()
-        eng.peer_gateway.start.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_gateway_bind_failure_rolls_back_started_resources(self):
+    async def test_event_bus_start_failure_rolls_back_started_resources(self):
         eng = _make_engine()
-        eng.peer_gateway.start.side_effect = OSError("address already in use")
+        eng.event_bus.start.side_effect = OSError("address already in use")
         eng.acquisition_worker.is_alive.return_value = False
         eng.signal_processing_worker.is_alive.return_value = False
 
@@ -171,7 +165,6 @@ class TestStart:
             await eng._start()
 
         eng.event_bus.stop.assert_awaited_once()
-        eng.peer_gateway.stop.assert_awaited_once()
         eng.acquisition_worker.join.assert_not_called()
         eng.signal_processing_worker.join.assert_not_called()
         eng.acquisition_command_queue.close.assert_called_once()
@@ -196,7 +189,7 @@ class TestThreadReadiness:
 
     def test_async_start_failure_crosses_thread_boundary(self):
         eng = _make_engine()
-        eng.peer_gateway.start.side_effect = OSError("bind failed")
+        eng.event_bus.start.side_effect = OSError("bind failed")
         eng.acquisition_worker.is_alive.return_value = False
         eng.signal_processing_worker.is_alive.return_value = False
         raised = []
@@ -324,7 +317,6 @@ class TestStop:
         eng.signal_processing_worker.join.assert_called_once_with(timeout=3)
         eng.acquisition_worker.terminate.assert_not_called()
         eng.signal_processing_worker.terminate.assert_not_called()
-        eng.peer_gateway.stop.assert_awaited_once()
         eng.event_bus.stop.assert_awaited_once()
         eng.processor_command_queue.close.assert_called_once()
         eng.acquisition_command_queue.close.assert_called_once()
@@ -388,9 +380,7 @@ class TestServeLifecycle:
         eng.acquisition_worker.start.assert_not_called()
         eng.signal_processing_worker.start.assert_not_called()
         eng.event_bus.start.assert_awaited_once()
-        eng.peer_gateway.start.assert_awaited_once()
         eng.event_bus.stop.assert_awaited_once()
-        eng.peer_gateway.stop.assert_awaited_once()
         assert eng.shutdown_complete is True
 
     def test_cross_thread_stop_wakes_main_loop_promptly(self):
@@ -416,7 +406,6 @@ class TestServeLifecycle:
         elapsed = time.perf_counter() - stop_time["requested_at"]
         assert elapsed < 0.5
         eng.event_bus.stop.assert_awaited_once()
-        eng.peer_gateway.stop.assert_awaited_once()
 
 
 def _ack(command="StartStimTrial", status="ok", trial_params=None, message=None) -> Event:
@@ -626,17 +615,12 @@ class TestBuilderActuationFoundation:
             return NeuroEngineBuilder(NeuroEngineConfig(**cfg_kwargs), settings_snapshot={}).build()
 
     def test_transport_is_deferred_and_commands_disabled_by_default(self):
-        from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
-        from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
-        from omnibci.infrastructure.neuroengine.gateway.peers import ACTUATION
-
         eng = self._build()
-        assert isinstance(eng.actuation_translator, ActuationCommandTranslator)
-        assert isinstance(eng.actuation_feedback, ActuationFeedbackHandler)
-        assert ACTUATION not in eng.peer_gateway._channels
-        assert not eng._actuation_active
+        assert not hasattr(eng, "peer_gateway")
+        assert not hasattr(eng, "actuation_translator")
+        assert not hasattr(eng, "actuation_feedback")
 
     def test_output_parameters_do_not_configure_foundation_listeners(self):
         from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
         eng = NeuroEngineBuilder(settings_snapshot={"ACTUATION.server_port": "invalid-until-prepared"}).build()
-        assert not eng.peer_gateway._channels
+        assert not hasattr(eng, "peer_gateway")

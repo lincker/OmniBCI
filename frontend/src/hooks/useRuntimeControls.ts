@@ -6,7 +6,7 @@ import { useI18n, type TranslationKey } from "../i18n";
 import { usePoll } from "./usePoll";
 import type { AcquisitionController } from "./useAcquisition";
 import { currentBindings, type CurrentConfigurationController } from "./useCurrentConfiguration";
-import type { ConfigurationSection, RuntimeConfiguration } from "./useRuntimeConfiguration";
+import { isIndependentOutput, sharesRuntimeScope, type ConfigurationSection, type RuntimeConfiguration } from "./useRuntimeConfiguration";
 import type { ConfigurationModule, ModuleActivation } from "../api/plugin-config";
 import { runtimeBlockReason } from "../RuntimeConfiguration";
 import { schemaErrors } from "../SchemaForm";
@@ -33,16 +33,16 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
   const [actions, setActions] = useState<Partial<Record<ActionName, ActionState>>>({});
   const values = useRef(actions);
   const [notices, setNotices] = useState<Partial<Record<ConfigurationModule, TranslationKey>>>({});
-  useEffect(() => { setNotices({}); }, [runtime.status?.generation]);
+  useEffect(() => { setNotices((previous) => ({ stimulation: previous.stimulation, actuation: previous.actuation })); }, [runtime.status?.generation]);
   const update = (name: ActionName, value: ActionState) => {
     values.current = { ...values.current, [name]: value }; setActions(values.current);
   };
   const pending = (module: ConfigurationSection) => Object.entries(values.current).some(([name, state]) =>
-    state.pending && (module === "engine" || actionModules[name as ActionName] === module))
+    state.pending && sharesRuntimeScope(module, actionModules[name as ActionName]))
     || ((module === "engine" || module === "acquisition") && acquisition.pending);
   const run = async (name: ActionName, action: () => Promise<unknown>, stop = false) => {
     const module = actionModules[name];
-    if (values.current[name]?.pending || !stop && (pending(module) || values.current.start?.pending || values.current.stop?.pending)) return;
+    if (values.current[name]?.pending || !stop && pending(module)) return;
     update(name, { pending: true, error: null });
     try { await action(); }
     catch (cause) { update(name, { pending: true, error: cause instanceof ApiError ? `[${cause.code}] ${cause.message}` : String(cause) }); }
@@ -69,10 +69,10 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     ...(actions[name] ?? { pending: false, error: null }), run: (...args: A) => run(name, () => fn(...args), stop),
   });
   const controls = { stimulation, actuation, signal, notices, pending,
-    busy: Object.values(actions).some((state) => state.pending) || acquisition.pending,
+    busy: pending("engine"),
     enginePending: !!actions.start?.pending || !!actions.stop?.pending,
     start: action("start", async () => api.engineStart()),
-    stop: action("stop", async () => { setNotices({}); await api.engineStop(); }, true),
+    stop: action("stop", async () => { await api.engineStop(); }, true),
     connectCurrent: action("connectCurrent", () => acquisition.connect.run(current.request("acquisition"))),
     launch: action("launch", async () => {
       setNotices((previous) => ({ ...previous, stimulation: undefined }));
@@ -108,17 +108,19 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
   const activation = (module: ConfigurationModule) => current.modules[module].activation;
   const matches = (module: ConfigurationModule, applied = false) => current.modules[module].ready
     && activation(module)?.revision === runtime.status?.accepted[module]
-    && (!applied || !running || (activation(module)?.revision === runtime.status?.applied?.[module]
-      && runtime.status?.accepted.engine === runtime.status?.applied?.engine));
+    && (!applied || (isIndependentOutput(module)
+      ? activation(module)?.revision === runtime.status?.applied?.[module]
+      : !running || (activation(module)?.revision === runtime.status?.applied?.[module]
+        && runtime.status?.accepted.engine === runtime.status?.applied?.engine)));
   const readyFor = (module: ConfigurationModule) => !current.modules[module].error && !runtime.error && matches(module);
   const currentReason = (module: ConfigurationModule) => current.modules[module].error
     ?? (current.modules[module].conflicted ? t("profiles.acceptedChanged") : !readyFor(module) ? t("run.reason.configurationLoading") : null);
   const operationReason = (module: ConfigurationSection, allowModuleRecovery = false) => {
     let reason = runtimeBlockReason(runtime, module);
-    if (allowModuleRecovery && reason === "feedback.recovery" && !runtime.status?.recovery?.engine) {
-      reason = runtime.error || runtime.status?.errors?.engine || runtime.status?.errors?.[module] ? "feedback.runtimeUnavailable" : null;
+    if (allowModuleRecovery && reason === "feedback.recovery" && (isIndependentOutput(module) || !runtime.status?.recovery?.engine)) {
+      reason = runtime.error || !isIndependentOutput(module) && runtime.status?.errors?.engine || runtime.status?.errors?.[module] ? "feedback.runtimeUnavailable" : null;
     }
-    return controls.enginePending || pending(module) ? t("feedback.busy") : reason ? t(reason) : null;
+    return pending(module) ? t("feedback.busy") : reason ? t(reason) : null;
   };
   const module = (name: ConfigurationModule) => {
     const accepted = activation(name);
@@ -128,20 +130,21 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     const external = current.settings[name]?.[`${name.toUpperCase()}.auto_spawn`] === false;
     const acceptedExternal = matches(name) && accepted?.settings[`${name.toUpperCase()}.auto_spawn`] === false;
     const connected = name === "acquisition" ? !!acquisition.data?.connected
-      : name === "stimulation" ? !!stimulation.data?.engine_connected : !!actuation.data?.engine_connected;
-    const active = running && (name === "acquisition" ? connected : name === "processing" ? !!engine.data?.processor_alive
+      : name === "stimulation" ? !!stimulation.data?.connected : !!actuation.data?.connected;
+    const active = (isIndependentOutput(name) || running) && (name === "acquisition" ? connected : name === "processing" ? !!engine.data?.processor_alive
       : name === "stimulation" ? !!stimulation.data?.active && connected : !!actuation.data?.active && connected);
     const runtimeState = runtime.state(name);
-    const available = engineAvailable && !runtime.error && !!runtime.status && !runtime.status.errors?.[name] && !runtime.status.errors?.engine && (name === "acquisition"
+    const available = (isIndependentOutput(name) || engineAvailable && !runtime.status?.errors?.engine)
+      && !runtime.error && !!runtime.status && !runtime.status.errors?.[name] && (name === "acquisition"
       ? acquisition.data !== null && !acquisition.error : name === "stimulation" ? stimulation.data !== null && !stimulation.error
         : name === "actuation" ? actuation.data !== null && !actuation.error : true);
-    const confirmed = available && engine.data?.running === runtime.status?.running && !runtimeState.uncertain && !runtimeState.recoveryRequired
-      && !runtime.status?.recovery?.[name] && !runtime.status?.recovery?.engine;
+    const confirmed = available && (isIndependentOutput(name) || engine.data?.running === runtime.status?.running) && !runtimeState.uncertain && !runtimeState.recoveryRequired
+      && !runtime.status?.recovery?.[name] && (isIndependentOutput(name) || !runtime.status?.recovery?.engine);
     const recover = acceptedExternal && !!runtime.status?.recovery?.[name] && !connected;
-    const engineReason = !engineAvailable ? t("run.reason.engineUnavailable") : null;
+    const engineReason = !isIndependentOutput(name) && !engineAvailable ? t("run.reason.engineUnavailable") : null;
     const availabilityReason = engineReason ?? (name === "acquisition" && !available ? t("run.reason.acquisitionUnavailable")
       : name === "stimulation" && !available ? t("run.reason.stimulationUnavailable")
-        : name === "actuation" && !available ? t("run.reason.engineUnavailable") : null);
+        : name === "actuation" && !available ? t("run.reason.actuationUnavailable") : null);
     const validation = () => {
       const moduleError = current.validationError(name);
       if (moduleError) return moduleError;
@@ -184,28 +187,26 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
     } else if (name === "stimulation") {
       startLabel = (recover ? acceptedExternal : external) ? connected ? "run.enableStimulation" : "run.prepareExternalStimulation" : "run.launchStimulation";
       stopLabel = "run.stopStimulation"; startAction = controls.launch; stopAction = controls.stopStim;
-      startReason ??= !running ? t("run.reason.startEngine") : null;
       startReason ??= recover ? null : currentReason(name) ?? validation()
         ?? (changed && connected && (acceptedExternal || external) ? t("run.reason.disconnectExternal")
           : !has("paradigm") ? t("run.reason.selectParadigm")
           : stimulation.data?.active && (stimulation.data.process_alive || connected) ? t("run.reason.stimulationActive") : null);
       stopReason = stopAction.pending ? t("feedback.busy") : availabilityReason
-        ?? (!(stimulation.data?.process_alive || stimulation.data?.active || connected || startAction.pending || notices.stimulation || runtime.status?.recovery?.stimulation)
+        ?? (!(stimulation.data?.process_alive || stimulation.data?.active || connected || startAction.pending || runtime.status?.stimulation_state === "prepared" || notices.stimulation || runtime.status?.recovery?.stimulation)
           ? t("run.reason.stimulationStopped") : null);
     } else {
       startLabel = (recover ? acceptedExternal : external) && !connected ? "run.prepareExternalActuation" : "run.startActuation";
       stopLabel = "run.stopActuation"; startAction = controls.startActuation; stopAction = controls.stopActuation;
-      startReason ??= !running ? t("run.reason.startEngine") : null;
       startReason ??= recover ? null : currentReason(name) ?? validation()
         ?? (changed && connected && (acceptedExternal || external) ? t("run.reason.disconnectExternal")
           : actuation.data?.active && (actuation.data.process_alive || connected) ? t("run.reason.actuationActive") : !has("effector") ? t("run.reason.selectEffector") : null);
       stopReason = stopAction.pending ? t("feedback.busy") : availabilityReason
-        ?? (!(actuation.data?.process_alive || actuation.data?.active || connected || startAction.pending || notices.actuation || runtime.status?.recovery?.actuation) ? t("run.reason.actuationStopped") : null);
+        ?? (!(actuation.data?.process_alive || actuation.data?.active || connected || startAction.pending || runtime.status?.actuation_state === "prepared" || notices.actuation || runtime.status?.recovery?.actuation) ? t("run.reason.actuationStopped") : null);
     }
     const status = !confirmed ? t("runtime.statusUnknown") : active ? t(name === "acquisition" ? "run.sourceConnected" : "run.running")
-      : name === "acquisition" ? t("run.sourceNotConnected") : !running ? t("runtime.stopped")
-      : name === "stimulation" && stimulation.data?.process_alive || name === "actuation" && actuation.data?.process_alive ? t("runtime.waitingConnection")
-      : (name === "stimulation" || name === "actuation") && connected ? t("runtime.connected") : t("runtime.stopped");
+      : name === "acquisition" ? t("run.sourceNotConnected") : !isIndependentOutput(name) && !running ? t("runtime.stopped")
+      : name === "stimulation" && (stimulation.data?.process_alive || !connected && runtime.status?.stimulation_state === "prepared") || name === "actuation" && (actuation.data?.process_alive || !connected && runtime.status?.actuation_state === "prepared") ? t("runtime.waitingConnection")
+      : isIndependentOutput(name) && connected ? t("runtime.connected") : t("runtime.stopped");
     const parameters = !confirmed || runtimeState.inProgress || pending(name) ? t("runtime.parametersUnconfirmed")
       : active ? !accepted?.revision || !readyFor(name) || !matches(name, true) ? t("runtime.parametersUnconfirmed")
         : changed ? t(name === "acquisition" ? "runtime.pendingSource" : "runtime.pendingParameters") : t("runtime.currentInUse")
@@ -220,10 +221,10 @@ export function useRuntimeControls(runtime: RuntimeConfiguration, current: Curre
       start: { ...startAction, label: t(startLabel), reason: startReason }, stop: { ...stopAction, label: t(stopLabel), reason: stopReason },
       read: { ...controls.readCurrent, error: controls.readCurrent.error ?? acquisition.read.error, label: t("run.startReading"), reason: readReason },
       stopRead: { ...controls.stopRead, error: controls.stopRead.error ?? acquisition.stopRead.error, label: t("run.stopReading"), reason: stopReadReason },
-      notice: !changed && running && notices[name] ? t(notices[name]!) : null,
+      notice: !changed && (isIndependentOutput(name) || running) && notices[name] ? t(notices[name]!) : null,
       reading: running && !!acquisition.data?.streaming, readingLabel: t(running && acquisition.data?.streaming ? "run.reading" : "run.notReading"),
       progress: runtimeState.uncertain ? t("feedback.confirming") : runtimeState.inProgress ? t("feedback.applying")
-        : pending(name) || controls.enginePending ? t("feedback.busy") : null,
+        : pending(name) ? t("feedback.busy") : null,
       heading: t("runtime.moduleStatus"),
     };
   };

@@ -7,7 +7,7 @@ import json
 
 from omnibci.application.configuration.definitions import MODULES
 from omnibci.application.configuration.models import ProfileBinding, module_for_slot
-from omnibci.application.plugin_management.identity import is_valid_sha256
+from omnibci.application.plugin_management.identity import is_valid_sha256, valid_engine_revision
 
 
 def fingerprint(value) -> str:
@@ -40,21 +40,23 @@ class PluginExecutionReceipt:
     operation_id: str
     generation: str
     module_revision: str
-    engine_revision: str
+    engine_revision: str | None
     node_id: str
     target: str
     environment_sha256: str
     _artifacts_json: str = field(repr=False)
 
     def __init__(self, module: str, operation_id: str, generation: str,
-                 module_revision: str, engine_revision: str, node_id: str, target: str,
+                 module_revision: str, engine_revision: str | None, node_id: str, target: str,
                  environment_sha256: str, artifacts: dict):
         if module not in MODULES:
             raise ValueError("Unknown execution module")
         for name, value in (("operation_id", operation_id), ("generation", generation),
                             ("node_id", node_id), ("target", target)):
             _text(value, name)
-        for name, value in (("module_revision", module_revision), ("engine_revision", engine_revision),
+        if not valid_engine_revision(module, engine_revision):
+            raise ValueError("Execution receipt requires a SHA-256 engine_revision")
+        for name, value in (("module_revision", module_revision),
                             ("environment_sha256", environment_sha256)):
             _sha256(value, name)
         if not isinstance(artifacts, dict) or not artifacts:

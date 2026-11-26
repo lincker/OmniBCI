@@ -112,8 +112,8 @@ def identity(snapshot):
     ("stimulation", {"paradigm", "trigger"}, "paradigm", EventType.StartStimTrial),
     ("actuation", {"effector"}, "effector", EventType.ActuationCommand),
 ])
-def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fetch(
-    tmp_path, role, kinds, editable_kind, event_type,
+def test_restarted_owner_rejects_cached_node_configuration_and_accepts_fresh_fetch(
+    tmp_path, stimulation_host, role, kinds, editable_kind, event_type,
 ):
     server_catalog = MetadataCatalog(_SLOTS, server=True)
     profiles = ConfigurationService(
@@ -136,12 +136,22 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
 
     async def scenario():
         engine = NeuroEngineService(HardwareFreeGraph, snapshot_provider=lambda: profiles.materialize(profiles.selected_configuration()))
-        publication = NodeConfigurationService(engine, profiles)
+        from omnibci.application.services.stimulation_service import StimulationAppService
+        stimulation = StimulationAppService(stimulation_host, admission=engine.admission,
+            snapshot_provider=lambda: profiles.materialize(profiles.selected_configuration(("stimulation",))))
+        from omnibci.application.services.actuation_service import ActuationAppService
+        actuation = ActuationAppService(stimulation_host, admission=engine.admission,
+            snapshot_provider=lambda: profiles.materialize(profiles.selected_configuration(("actuation",))))
+        from omnibci.application.services.actuation_service import ActuationAppService
+        actuation = ActuationAppService(stimulation_host, admission=engine.admission,
+            snapshot_provider=lambda: profiles.materialize(profiles.selected_configuration(("actuation",))))
+        publication = NodeConfigurationService(profiles, stimulation=stimulation, actuation=actuation)
+        owner = actuation if role == "actuation" else stimulation
         servers, clients, tasks = [], [], []
         try:
             await engine.startup()
             await engine.handle_start_engine(StartEngineCommand())
-            await engine.prepare_output(role)
+            owner.prepare_external()
             first = publication.configuration(role)
             assert first["state"] == "running"
             cached = materialize_node_configuration(
@@ -170,9 +180,13 @@ def test_restarted_engine_rejects_cached_node_configuration_and_accepts_fresh_fe
             await wait_for(lambda: old_server.is_connected and old_client.is_connected)
             await old_server.stop()
             await asyncio.wait_for(old_task, 2)
+            if role == "stimulation":
+                stimulation.stop()
+            else:
+                await actuation.stop()
             await engine.handle_stop_engine(StopEngineCommand())
             await engine.handle_start_engine(StartEngineCommand())
-            await engine.prepare_output(role)
+            owner.prepare_external()
 
             fresh = materialize_node_configuration(NodeConfiguration.from_dict(
                 json.loads(json.dumps(publication.configuration(role)["configuration"]))), node_catalog)

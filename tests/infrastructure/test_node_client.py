@@ -93,7 +93,7 @@ def test_authenticated_configuration_never_follows_redirect():
 
 def test_selected_configuration_waits_without_hardware(monkeypatch):
     install_response(monkeypatch, response(state="selected", generation=None))
-    with pytest.raises(node_client.NodeConfigurationUnavailable, match="engine to start"):
+    with pytest.raises(node_client.NodeConfigurationUnavailable, match="server to prepare actuation"):
         node_client.fetch_node_configuration("http://localhost:8000", "actuation")
 
 

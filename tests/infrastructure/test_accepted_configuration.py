@@ -40,7 +40,7 @@ def test_standalone_and_managed_projection_match_after_saved_profile_edit(profil
     standalone = accepted_runtime_settings(profiles=profiles, active_kinds={"effector"})
 
     assert standalone == profiles.materialize(ActivationSet(
-        {"actuation": accepted.modules["actuation"]}, accepted.engine,
+        {"actuation": accepted.modules["actuation"]}, None,
     ))
     assert "ACQUISITION.sample_rate" not in standalone
     assert standalone["CONFIG.module_revisions"]["acquisition"] is None
@@ -79,7 +79,7 @@ def test_stimulation_accepts_an_explicit_configuration_without_trigger(profiles)
     accepted = profiles.selected_configuration()
     snapshot = accepted_runtime_settings(profiles=profiles, active_kinds={"paradigm", "trigger"})
     assert snapshot == profiles.materialize(ActivationSet(
-        {"stimulation": accepted.modules["stimulation"]}, accepted.engine,
+        {"stimulation": accepted.modules["stimulation"]}, None,
     ))
     assert not any(binding["slot"] == "stimulation.trigger" for binding in snapshot["PLUGINS.bindings"])
     assert profiles.selected_configuration() == accepted

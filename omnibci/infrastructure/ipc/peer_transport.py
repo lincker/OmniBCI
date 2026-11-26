@@ -148,6 +148,16 @@ class ListenTransport(PeerTransport):
         return await self._server.send_event(event, connection_token=connection_token)
 
     @property
+    def execution_receipt(self):
+        return self._server.execution_receipt
+
+    def seal_if_settled(self, connection):
+        return self._server.seal_if_settled(connection)
+
+    def seal_if_unaccepted(self):
+        return self._server.seal_if_unaccepted()
+
+    @property
     def connection_token(self):
         return self._server.connection_token
 

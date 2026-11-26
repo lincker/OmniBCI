@@ -1,7 +1,9 @@
 """Reviewable runtime configuration plans and observed status."""
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from omnibci.application.plugin_management.identity import valid_engine_revision
 
 from omnibci.presentation.schemas.plugin_config import (
     ProfileBindingResponse, SelectProfileBindingRequest,
@@ -50,6 +52,7 @@ class RuntimePlanResponse(BaseModel):
     applied_revisions: dict[str, str | None] | None
     generation: str | None
     running: bool
+    owner_state: Literal["stopped", "prepared", "active"]
     strategy: Literal["select_on_start", "no_change", "trial_boundary", "module", "rebuild"]
     changed_slots: list[str]
     changed_settings: list[str]
@@ -78,6 +81,10 @@ class RuntimeApplyRequest(BaseModel):
 
 
 class RuntimeConfigurationResponse(BaseModel):
+    stimulation_state: Literal["stopped", "prepared", "active"]
+    stimulation_session: str | None
+    actuation_state: Literal["stopped", "prepared", "active"]
+    actuation_session: str | None
     running: bool
     recovery: dict[str, str]
     accepted: dict[str, str | None]
@@ -92,11 +99,18 @@ class NodeConfigurationResponse(BaseModel):
     format_version: Literal[1]
     role: Literal["stimulation", "actuation"]
     module_revisions: dict[str, str]
-    engine_revision: str
+    engine_revision: str | None
     generation: str | None
     operation_id: str | None
     settings: dict[str, Any]
     bindings: list[ProfileBindingResponse]
+
+
+    @model_validator(mode="after")
+    def check_engine_revision(self):
+        if not valid_engine_revision(self.role, self.engine_revision):
+            raise ValueError("Invalid Engine revision for node role")
+        return self
 
 
 class NodeConfigurationPublicationResponse(BaseModel):

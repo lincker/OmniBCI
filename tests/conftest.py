@@ -83,8 +83,8 @@ def mock_engine():
 
     engine.start_module = AsyncMock(side_effect=start_module)
     engine.stop_module = AsyncMock(side_effect=stop_module)
-    engine.set_actuation_active = AsyncMock()
-    engine.ensure_output_ready = AsyncMock()
+    engine.drain_abandoned_processing_queue = AsyncMock(return_value=True)
+    engine.processing_queue_dirty = False
     engine.shutdown_complete = True
     return engine
 
@@ -113,16 +113,61 @@ def acquisition_service(engine_service, command_executor):
     return AcquisitionAppService(command_executor)
 
 
+def _peer_host():
+    from omnibci.application.ports.ipc_port import PeerHostPort
+    host = MagicMock(spec=PeerHostPort)
+    host.is_peer_connected.return_value = False
+    host.is_peer_ready.return_value = True
+    host.node_operation_id.side_effect = lambda role: host.ensure_peer_ready_sync.call_args.args[1]["CONFIG.operation_id"]
+    host.cancel_unaccepted_peer.return_value = True
+    host.is_current_peer_channel.side_effect = lambda role, channel: channel == "current"
+    host.peer_connection_token.side_effect = lambda role: "socket" if host.is_peer_connected(role) else None
+    return host
+
+
 @pytest.fixture()
-def stimulation_service(engine_service):
+def stimulation_host():
+    return _peer_host()
+
+
+@pytest.fixture()
+def actuation_host():
+    return _peer_host()
+
+
+@pytest.fixture()
+def stimulation_snapshot():
+    return {"CONFIG.module_revisions": {"stimulation": "a" * 64}, "STIMULATION.auto_spawn": False}
+
+
+@pytest.fixture()
+def stimulation_service(engine_service, stimulation_host, stimulation_snapshot):
     from omnibci.application.services.stimulation_service import StimulationAppService
-    return StimulationAppService(engine_service)
+    manager = MagicMock(is_alive=False, current_paradigm=None)
+    manager.start.side_effect = lambda **kwargs: setattr(manager, "is_alive", True)
+    manager.stop.side_effect = lambda: setattr(manager, "is_alive", False)
+    return StimulationAppService(stimulation_host, manager, ImmediateCommandExecutor(stimulation_host),
+                                 engine_service.admission, snapshot_provider=lambda: stimulation_snapshot)
 
 
 @pytest.fixture()
-def actuation_service(engine_service, command_executor):
+def actuation_service(engine_service, actuation_host):
     from omnibci.application.services.actuation_service import ActuationAppService
-    return ActuationAppService(engine_service, commands=command_executor)
+    manager = MagicMock(is_alive=False, current_effector=None)
+    manager.start.side_effect = lambda **kwargs: setattr(manager, "is_alive", True)
+    manager.stop.side_effect = lambda: setattr(manager, "is_alive", False)
+    from types import SimpleNamespace
+    from omnibci.shared.events import EventType
+    commands = MagicMock()
+    owner = ActuationAppService(actuation_host, manager, commands, engine_service.admission)
+    def control(event):
+        snapshot = owner.applied_snapshot
+        flags = ({"resumed": True, "paused": False} if event == EventType.ResumeActuation
+                 else {"paused": True, "execution_complete": True, "outputs_settled": True})
+        return SimpleNamespace(data={**flags, "generation": snapshot["CONFIG.generation"], "engine_revision": None,
+                                     "module_revision": snapshot["CONFIG.module_revisions"]["actuation"]})
+    commands.request.side_effect = control
+    return owner
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ from omnibci.presentation.schemas.stimulation import (
 from omnibci.application.commands.stimulation_commands import StartStimTrialCommand
 from omnibci.application.services.engine_service import NeuroEngineService
 from omnibci.application.services.stimulation_service import StimulationAppService
-from omnibci.application.ports.engine_port import STIMULATION_PEER
+
 
 router = APIRouter(prefix="/stimulation", tags=["Stimulation"])
 
@@ -34,12 +34,7 @@ def stimulation_status(
     engine_service: NeuroEngineService = Depends(get_engine_service),
     svc: StimulationAppService = Depends(get_stimulation_service),
 ):
-    return ApiResponse(data=StimulationStatusResponse(
-        active=svc.is_active,
-        process_alive=svc.process_alive,
-        engine_connected=engine_service.is_peer_connected(STIMULATION_PEER),
-        paradigm=svc.current_paradigm,
-    ))
+    return ApiResponse(data=svc.status(engine_service.is_engine_ready))
 
 
 @router.post(
@@ -62,9 +57,9 @@ async def start_stimulation(
     response_model=ApiResponse,
     summary="Prepare stimulation for an external connection",
 )
-async def prepare_stimulation(svc: NeuroEngineService = Depends(get_engine_service)):
+def prepare_stimulation(svc: StimulationAppService = Depends(get_stimulation_service)):
     with command_errors(runtime_status=status.HTTP_409_CONFLICT):
-        await svc.prepare_output("stimulation")
+        svc.prepare_external()
         return ApiResponse(message="Stimulation ready for a connection")
 
 
@@ -74,9 +69,9 @@ async def prepare_stimulation(svc: NeuroEngineService = Depends(get_engine_servi
     responses=COMMAND_EXECUTION_RESPONSES,
     summary="Stop stimulation",
 )
-async def stop_stimulation(engine_service: NeuroEngineService = Depends(get_engine_service)):
+def stop_stimulation(svc: StimulationAppService = Depends(get_stimulation_service)):
     with command_errors():
-        await engine_service.stop_module("stimulation")
+        svc.stop()
         return ApiResponse(message="Stimulation stopped")
 
 

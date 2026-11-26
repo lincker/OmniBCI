@@ -1,7 +1,7 @@
-"""Identity of one configured peer in a particular engine generation."""
+"""Identity of one configured peer in a particular runtime generation."""
 
 from dataclasses import dataclass
-import re
+from omnibci.application.plugin_management.identity import is_valid_sha256, valid_engine_revision
 
 from omnibci.application.plugin_management.execution import PluginExecutionReceipt
 
@@ -10,7 +10,7 @@ from omnibci.application.plugin_management.execution import PluginExecutionRecei
 class PeerIdentity:
     role: str
     module_revision: str
-    engine_revision: str
+    engine_revision: str | None
     generation: str
     operation_id: str
     bindings_sha256: str
@@ -18,11 +18,11 @@ class PeerIdentity:
     def __post_init__(self):
         if self.role not in {"stimulation", "actuation"}:
             raise ValueError("Unknown peer identity role")
-        for revision in (self.module_revision, self.engine_revision, self.bindings_sha256):
-            if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
-                raise ValueError("Peer identity requires module and Engine revisions")
+        if (not is_valid_sha256(self.module_revision) or not is_valid_sha256(self.bindings_sha256)
+                or not valid_engine_revision(self.role, self.engine_revision)):
+            raise ValueError("Peer identity requires module and Engine revisions")
         if not isinstance(self.generation, str) or not self.generation.strip():
-            raise ValueError("Peer identity requires an engine generation")
+            raise ValueError("Peer identity requires a runtime generation")
         if not isinstance(self.operation_id, str) or not self.operation_id.strip():
             raise ValueError("Peer identity requires a preparation operation")
 

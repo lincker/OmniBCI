@@ -10,9 +10,9 @@ process manually on the device machine:
 Single-machine deployment
 --------------------------
 Leave ``ACTUATION.auto_spawn = true``. The server spawns the subprocess when
-Actuation starts and terminates it when Actuation or the engine stops.
+Actuation starts and reaps it on Actuation Stop or server shutdown.
 
-In both modes the IPC socket architecture (Actuation → NeuroEngine) is
+In both modes the IPC socket architecture (Actuation → server IPC) is
 unchanged — this class only manages the OS-level process lifecycle. Mirrors
 StimulationProcessManager.
 """

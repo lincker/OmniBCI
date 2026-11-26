@@ -326,10 +326,10 @@ async def test_desktop_engine_attempts_both_workers_and_retains_live_handles():
         event_bus=MagicMock(stop=AsyncMock()), data_manager=MagicMock(),
         acquisition_worker=MagicMock(), acquisition_command_queue=MagicMock(),
         signal_processing_worker=MagicMock(), processor_command_queue=MagicMock(),
-        peer_gateway=MagicMock(stop=AsyncMock()), allow_process_termination=False,
+        allow_process_termination=False,
     )
     engine._acquisition_started = engine._processor_started = True
-    engine._gateway_started = engine._event_bus_started = True
+    engine._event_bus_started = True
     for worker in (engine.acquisition_worker, engine.signal_processing_worker):
         worker.is_alive.return_value = True
     with pytest.raises(ExceptionGroup) as error:
@@ -344,7 +344,6 @@ async def test_desktop_engine_attempts_both_workers_and_retains_live_handles():
     engine.processor_command_queue.put_nowait.assert_called_once()
     engine.acquisition_command_queue.close.assert_not_called()
     engine.processor_command_queue.close.assert_not_called()
-    engine.peer_gateway.stop.assert_awaited_once()
     engine.event_bus.stop.assert_awaited_once()
     assert engine.shutdown_complete is False
 

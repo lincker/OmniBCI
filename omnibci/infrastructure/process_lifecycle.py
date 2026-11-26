@@ -364,6 +364,7 @@ class ManagedOutputProcessManager:
         self._record_execution = record_execution
         self._auto_spawn = True
         self._settings_snapshot: dict | None = None
+        self.execution_receipt = None
         self._startup_timeout_s = float(timeout)
         self._allow_process_termination = allow_process_termination
         self._process: Any = None
@@ -450,7 +451,8 @@ class ManagedOutputProcessManager:
 
         runtime_module = self._runtime_module()
         mp_ctx = runtime_module.mp
-        snapshot["CONFIG.operation_id"] = runtime_module.uuid4().hex
+        if "CONFIG.operation_id" not in snapshot:
+            snapshot["CONFIG.operation_id"] = runtime_module.uuid4().hex
         expected_execution = execution_receipt(
             snapshot, self._MODULE_NAME, snapshot["CONFIG.operation_id"],
         )
@@ -528,6 +530,7 @@ class ManagedOutputProcessManager:
         finally:
             self._close_startup_receiver()
 
+        self.execution_receipt = report.execution
         self._state = ChildProcessState.READY
         logger.info(
             "%s subprocess ready (pid=%s, %s=%s)",
@@ -632,6 +635,7 @@ class ManagedOutputProcessManager:
             self._state = ChildProcessState.FAILED
             raise RuntimeError(self._cleanup_error)
         self._selection = None
+        self.execution_receipt = None
         self._settings_snapshot = None
         self._state = final_state
 

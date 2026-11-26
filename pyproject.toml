@@ -184,3 +184,9 @@ name = "WebSocket presentation must not depend on infrastructure codecs"
 type = "forbidden"
 source_modules = ["omnibci.presentation.websockets"]
 forbidden_modules = ["omnibci.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "Independent output application services must not depend on the Engine service"
+type = "forbidden"
+source_modules = ["omnibci.application.services.stimulation_service", "omnibci.application.services.actuation_service"]
+forbidden_modules = ["omnibci.application.services.engine_service"]

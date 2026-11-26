@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { configurationSections, type ConfigurationSection, type RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
+import { configurationSections, isIndependentOutput, type ConfigurationSection, type RuntimeConfiguration } from "./hooks/useRuntimeConfiguration";
 import { useI18n, type TranslationKey } from "./i18n";
 import "./RuntimeConfiguration.css";
 
@@ -63,10 +63,14 @@ export function RuntimeConfigurationReview({ runtime }: { runtime: RuntimeConfig
   const plan = runtime.plan;
   useEffect(() => { if (plan) dialog.current?.showModal(); }, [plan]);
   if (!plan) return null;
-  const stale = runtime.status !== null && (Object.entries(plan.expected_revisions).some(([module, revision]) => runtime.status!.accepted[module] !== revision)
-    || plan.running !== runtime.status.running
-    || Object.keys(plan.expected_revisions).some((module) => plan.applied_revisions?.[module] !== runtime.status!.applied?.[module])
-    || plan.generation !== runtime.status.generation);
+  const status = runtime.status;
+  const owner = plan.module;
+  const ownerState = isIndependentOutput(owner) ? status?.[`${owner}_state`] : status?.running ? "active" : "stopped";
+  const generation = isIndependentOutput(owner) ? status?.[`${owner}_session`] : status?.generation;
+  const stale = !!status && (Object.entries(plan.expected_revisions).some(([module, revision]) => status.accepted[module] !== revision)
+    || plan.owner_state !== ownerState || plan.generation !== generation
+    || Object.keys(plan.expected_revisions).some((module) =>
+      (plan.applied_revisions?.[module] ?? null) !== (ownerState === "stopped" ? null : status.applied?.[module] ?? null)));
   const state = runtime.state(plan.module);
   const blockedReason = runtimeBlockReason(runtime, plan.module);
   const impact: Record<string, TranslationKey> = {

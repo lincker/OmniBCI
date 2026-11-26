@@ -147,6 +147,7 @@ class NetworkServer:
         self.idle_timeout = _validate_idle_timeout(idle_timeout)
         self.write_timeout = _validate_write_timeout(write_timeout)
         self.identity = identity
+        self._last_connection_token = None
         self._record_execution = record_execution
         self.execution_receipt: PluginExecutionReceipt | None = None
         self.status = "INIT"
@@ -231,6 +232,20 @@ class NetworkServer:
             self.server = server
             self.status = "RUNNING"
 
+    def seal_if_unaccepted(self) -> bool:
+        """On the listener loop, exclude pending handshakes before cancelling preparation."""
+        if self.execution_receipt is not None or self._clients:
+            return False
+        self._stopping = True
+        return True
+
+    def seal_if_settled(self, connection) -> bool:
+        """Retire a settled socket only if no controller has since taken ownership."""
+        if self._clients or self._pending_clients or self._last_connection_token != connection:
+            return False
+        self._stopping = True
+        return True
+
     async def handle_client(self, reader, writer) -> None:
         task = asyncio.current_task()
         if task is not None:
@@ -255,6 +270,8 @@ class NetworkServer:
                 )
                 if event is None or event.type != EventType.PeerHello:
                     raise InvalidEventBody("Peer identity does not match the current runtime")
+                if self._stopping:
+                    return
                 receipt = PluginExecutionReceipt.from_dict(event.data)
                 if (not self.identity.accepts(receipt)
                         or self.execution_receipt is not None and self.execution_receipt != receipt):
@@ -270,6 +287,8 @@ class NetworkServer:
                 return
             self._pending_clients.discard(writer)
             self._clients.add(writer)
+            if self.identity is not None and self.max_clients == 1:
+                self._last_connection_token = self.connection_token
             logger.info("Peer client connected: %s (%d total)", addr, len(self._clients))
             while True:
                 event = await read_event_frame(

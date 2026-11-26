@@ -7281,9 +7281,13 @@
             "type": "boolean",
             "title": "Process Alive"
           },
-          "engine_connected": {
+          "connected": {
             "type": "boolean",
-            "title": "Engine Connected"
+            "title": "Connected"
+          },
+          "engine_linked": {
+            "type": "boolean",
+            "title": "Engine Linked"
           },
           "effector": {
             "anyOf": [
@@ -7295,12 +7299,21 @@
               }
             ],
             "title": "Effector"
+          },
+          "engine_connected": {
+            "type": "boolean",
+            "title": "Engine Connected",
+            "description": "Legacy name for the controller's IPC connection.",
+            "deprecated": true,
+            "readOnly": true
           }
         },
         "type": "object",
         "required": [
           "active",
           "process_alive",
+          "connected",
+          "engine_linked",
           "engine_connected"
         ],
         "title": "ActuationStatusResponse",
@@ -9241,7 +9254,14 @@
             "title": "Module Revisions"
           },
           "engine_revision": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Engine Revision"
           },
           "generation": {
@@ -10152,6 +10172,46 @@
       },
       "RuntimeConfigurationResponse": {
         "properties": {
+          "stimulation_state": {
+            "type": "string",
+            "enum": [
+              "stopped",
+              "prepared",
+              "active"
+            ],
+            "title": "Stimulation State"
+          },
+          "stimulation_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stimulation Session"
+          },
+          "actuation_state": {
+            "type": "string",
+            "enum": [
+              "stopped",
+              "prepared",
+              "active"
+            ],
+            "title": "Actuation State"
+          },
+          "actuation_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actuation Session"
+          },
           "running": {
             "type": "boolean",
             "title": "Running"
@@ -10233,6 +10293,10 @@
         },
         "type": "object",
         "required": [
+          "stimulation_state",
+          "stimulation_session",
+          "actuation_state",
+          "actuation_session",
           "running",
           "recovery",
           "accepted",
@@ -10482,6 +10546,15 @@
             "type": "boolean",
             "title": "Running"
           },
+          "owner_state": {
+            "type": "string",
+            "enum": [
+              "stopped",
+              "prepared",
+              "active"
+            ],
+            "title": "Owner State"
+          },
           "strategy": {
             "type": "string",
             "enum": [
@@ -10546,6 +10619,7 @@
           "applied_revisions",
           "generation",
           "running",
+          "owner_state",
           "strategy",
           "changed_slots",
           "changed_settings",
@@ -11031,9 +11105,13 @@
             "type": "boolean",
             "title": "Process Alive"
           },
-          "engine_connected": {
+          "connected": {
             "type": "boolean",
-            "title": "Engine Connected"
+            "title": "Connected"
+          },
+          "engine_linked": {
+            "type": "boolean",
+            "title": "Engine Linked"
           },
           "paradigm": {
             "anyOf": [
@@ -11051,10 +11129,11 @@
         "required": [
           "active",
           "process_alive",
-          "engine_connected"
+          "connected",
+          "engine_linked"
         ],
         "title": "StimulationStatusResponse",
-        "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has started stimulation.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nengine_connected — the Stimulation process has an active IPC connection to the engine."
+        "description": "Live status of the Stimulation subsystem.\n\nactive          — the application service has started stimulation.\nprocess_alive   — the Stimulation subprocess is currently running (auto_spawn only).\nconnected       — the renderer has an active IPC connection to the server.\nengine_linked   — closed-loop feedback is enabled."
       },
       "TrialResponse": {
         "properties": {

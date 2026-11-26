@@ -432,7 +432,7 @@ async def test_stop_waits_for_slow_backlog_and_publishes_trial_before_receipt():
     data.put_data(_chunk(0, start=True))
     data.put_data(_chunk(1))
     broker = CommandResultBroker(SimpleNamespace(
-        dispatch=event_bus.put_event, is_engine_ready=True, is_command_ready=lambda _: True,
+        dispatch=event_bus.put_event, is_ready=True, is_engine_ready=True, is_command_ready=lambda _: True,
     ), timeout_s=3)
     service = AcquisitionAppService(broker)
     event_bus.register_event_listener(EventType.CommandResult, broker.on_result)
@@ -493,3 +493,124 @@ async def test_shutdown_command_does_not_consume_more_data():
 
     assert processor.data_manager.get_data(0).sequence_id == 0
     assert processor.current_epoch is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["stop_and_drain", "detach", "eof", "disconnect"])
+async def test_terminal_barrier_retries_briefly_when_queue_saturated(trigger):
+    gate = threading.Event()
+    gate.set()
+    data = DataManager(queue.Queue(maxsize=1), processing_active=gate)
+    bus = _Bus()
+    acquisition = AcquisitionRuntime(
+        _Source(), queue.Queue(), data, bus,
+        source_id="test-source",
+        processing_active=gate,
+        generation="generation-1", acquisition_revision="revision-1", engine_revision="engine",
+    )
+    acquisition._connected = acquisition._streaming = True
+    data.put_data(_chunk(0))
+    acquisition._last_sequence = acquisition._last_processing_sequence = 0
+    popped = []
+
+    async def consumer():
+        await asyncio.sleep(0.04)
+        popped.append(data.get_data(timeout=0.5))
+        while True:
+            item = data.get_data(timeout=0.05)
+            if item is not None:
+                popped.append(item)
+                return
+            await asyncio.sleep(0.01)
+
+    consumer_task = asyncio.create_task(consumer())
+    try:
+        if trigger == "stop_and_drain":
+            await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("drain-retry")))
+        elif trigger == "detach":
+            identity = {"generation": "generation-1", "engine_revision": "engine", "expected_revision": "revision-1"}
+            await acquisition.execute((AcquisitionCommand.detach_processing, CommandRequest("detach-retry", identity)))
+        elif trigger == "eof":
+            await acquisition._finish_stream()
+        else:
+            await acquisition._on_disconnect()
+        await asyncio.wait_for(consumer_task, timeout=1.0)
+    finally:
+        if not consumer_task.done():
+            consumer_task.cancel()
+
+    assert popped[0].sequence_id == 0
+    assert isinstance(popped[1], StreamBarrier)
+    assert not [event for event in bus.events if event.type is EventType.ProcessingInputFault]
+    assert not [event for event in bus.events if event.type is EventType.CommandResult and not event.data.ok]
+
+
+@pytest.mark.asyncio
+async def test_terminal_barrier_aborts_promptly_when_stop_event_is_set():
+    gate = threading.Event()
+    gate.set()
+    stop_event = threading.Event()
+    data = DataManager(queue.Queue(maxsize=1), processing_active=gate)
+    bus = _Bus()
+    acquisition = AcquisitionRuntime(
+        _Source(), queue.Queue(), data, bus,
+        source_id="test-source",
+        processing_active=gate,
+        stop_event=stop_event,
+        generation="generation-1", acquisition_revision="revision-1", engine_revision="engine",
+    )
+    acquisition._connected = acquisition._streaming = True
+    data.put_data(_chunk(0))
+    acquisition._last_sequence = acquisition._last_processing_sequence = 0
+
+    async def trigger_stop():
+        await asyncio.sleep(0.03)
+        stop_event.set()
+
+    stopper = asyncio.create_task(trigger_stop())
+    started = time.monotonic()
+    await acquisition.execute((AcquisitionCommand.stop_and_drain, CommandRequest("abort-drain")))
+    elapsed = time.monotonic() - started
+    await stopper
+
+    assert elapsed < 0.25
+    assert not gate.is_set()
+    result = next(event.data for event in bus.events if event.type is EventType.CommandResult)
+    assert not result.ok
+    assert result.command_id == "abort-drain"
+
+
+@pytest.mark.asyncio
+async def test_flush_processing_queue_emits_sentinel_barrier_on_saturated_queue():
+    gate = threading.Event()
+    gate.set()
+    data = DataManager(queue.Queue(maxsize=1), processing_active=gate)
+    bus = _Bus()
+    acquisition = AcquisitionRuntime(
+        _Source(), queue.Queue(), data, bus,
+        source_id="test-source",
+        processing_active=gate,
+        generation="generation-1", acquisition_revision="revision-1", engine_revision="engine",
+    )
+    acquisition._connected = acquisition._streaming = True
+    data.put_data(_chunk(0))
+    popped = []
+
+    async def consumer():
+        await asyncio.sleep(0.03)
+        while len(popped) < 2:
+            item = data.get_data(timeout=0.05)
+            if item is not None:
+                popped.append(item)
+            await asyncio.sleep(0.01)
+
+    consumer_task = asyncio.create_task(consumer())
+    await acquisition.execute((AcquisitionCommand.flush_processing_queue, "flush-123"))
+    await asyncio.wait_for(consumer_task, timeout=1.0)
+
+    assert not gate.is_set()
+    assert popped[0].sequence_id == 0
+    assert isinstance(popped[1], StreamBarrier)
+    assert popped[1].command == "FlushProcessingQueue"
+    assert popped[1].command_id == "flush-123"
+    assert not [event for event in bus.events if event.type is EventType.ProcessingInputFault]

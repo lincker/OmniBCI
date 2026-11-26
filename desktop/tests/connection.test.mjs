@@ -323,7 +323,7 @@ test("owned results reconnect never attaches to another server instance", async 
 
 test("obsolete connection mode names are rejected", async () => {
   const connection = new ServerConnection(async () => assert.fail("Obsolete modes must not contact a server"));
-  for (const kind of ["local", "remote"]) {
+  for (const kind of ["local", "remote", "bridge"]) {
     await assert.rejects(connection.connect(kind, "http://127.0.0.1:8000", "secret"), /connection mode/);
   }
 });

@@ -489,45 +489,18 @@ class TestChildEntryPoint:
 
 
 
-class TestEngineLifecycleHook:
-    def test_actuation_starts_and_stops_without_acquisition_or_processing(self):
-        import asyncio
-        from unittest.mock import AsyncMock, MagicMock
-        from omnibci.application.services.engine_service import NeuroEngineService
-        from omnibci.application.commands.engine_commands import (
-            StartEngineCommand, StopEngineCommand)
-
-        manager = MagicMock()
-        engine = MagicMock()
-        engine.set_actuation_active = AsyncMock()
-        engine.ensure_output_ready = AsyncMock()
-        engine.is_module_running.return_value = False
-        engine.is_peer_connected.return_value = False
-        engine.shutdown_complete = True
-        stopped = threading.Event()
-        engine.run.side_effect = stopped.wait
-        svc = NeuroEngineService(engine_factory=lambda snapshot: engine,
-                                 snapshot_provider=lambda: {"PLUGINS.bindings": [],
-                                                           "CONFIG.module_revisions": {"actuation": "actuation"},
-                                                           "CONFIG.engine_revision": "b" * 64},
-                                 actuation_process_manager=manager)
-        asyncio.run(svc.startup())
-        asyncio.run(svc.handle_start_engine(StartEngineCommand()))
-        try:
-            manager.start.assert_not_called()
-            async def start_actuation():
-                async with svc.runtime_transition("actuation"):
-                    await svc.start_module_for_configuration("actuation", svc.applied_snapshot)
-            asyncio.run(start_actuation())
-            manager.start.assert_called_once()
-            assert svc.is_module_running("actuation")
-            assert not svc.is_module_running("acquisition")
-            assert not svc.is_module_running("processing")
-            asyncio.run(svc.stop_module("actuation"))
-            assert not svc.is_module_running("actuation")
-            assert svc.is_engine_ready
-            manager.stop.assert_called_once()
-            engine.set_actuation_active.assert_awaited_with(False)
-        finally:
-            stopped.set()
-            asyncio.run(svc.handle_stop_engine(StopEngineCommand()))
+class TestIndependentLifecycle:
+    @pytest.mark.asyncio
+    async def test_actuation_starts_and_stops_with_the_graph_offline(self, actuation_service, engine_service, mock_engine):
+        manager = actuation_service._process_manager
+        manager.start.assert_not_called()
+        await actuation_service.start({"CONFIG.module_revisions": {"actuation": "a" * 64}})
+        manager.start.assert_called_once_with(settings_snapshot=actuation_service.applied_snapshot)
+        assert actuation_service.is_active
+        assert not engine_service.is_engine_ready
+        assert not engine_service.is_module_running("acquisition")
+        assert not engine_service.is_module_running("processing")
+        await actuation_service.stop()
+        assert not actuation_service.is_active
+        manager.stop.assert_called_once()
+        mock_engine.start_module.assert_not_awaited()

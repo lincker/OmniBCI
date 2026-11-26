@@ -203,6 +203,7 @@ class TestResponseDtos:
         schema = _schema(spec, "RuntimeConfigurationResponse")
         assert set(schema["properties"]) == {
             "running", "recovery", "accepted", "applied", "generation", "operations", "errors",
+            "stimulation_state", "stimulation_session", "actuation_state", "actuation_session",
         }
         assert {"operations", "recovery"} <= set(schema["required"])
         operation = _schema(spec, "RuntimeOperationResponse")
@@ -216,7 +217,8 @@ class TestResponseDtos:
         assert set(props) == {"running", "acquisition_alive", "processor_alive",
                               "stimulation_connected", "actuation_connected"}
         actuation = _schema(spec, "ActuationStatusResponse")["properties"]
-        assert set(actuation) == {"active", "process_alive", "engine_connected", "effector"}
+        assert set(actuation) == {"active", "process_alive", "connected", "engine_linked", "engine_connected", "effector"}
+        assert actuation["engine_connected"]["deprecated"] is True
 
     def test_acquisition_status_fields(self, spec):
         props = _schema(spec, "AcquisitionStatusResponse")["properties"]

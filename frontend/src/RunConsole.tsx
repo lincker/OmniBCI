@@ -12,6 +12,7 @@ import { ModuleRuntime } from "./ModuleRuntime";
 import { LiveResults } from "./LiveResults";
 import type { AcquisitionController } from "./hooks/useAcquisition";
 import { currentBindings as collectCurrentBindings, type CurrentConfigurationController } from "./hooks/useCurrentConfiguration";
+import { isIndependentOutput } from "./hooks/useRuntimeConfiguration";
 import { recordingPathMissing, type RuntimeControls } from "./hooks/useRuntimeControls";
 import "./RunConsole.css";
 
@@ -133,14 +134,14 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
   const awaitingLaunch = !stimulation.data?.active && !loadError && !controlsLoading && !paradigmUnavailable;
   const trialSetupReason = currentReason("stimulation") ?? (trialControlsReady || awaitingLaunch ? null : t(loadError ? "run.reason.trialControlsUnavailable"
     : paradigmUnavailable ? "run.reason.selectParadigm"
-    : running && !matches("stimulation", true) ? "run.reason.selectionNotApplied" : "run.reason.paradigmMismatch"));
+    : stimulation.data?.active && !matches("stimulation", true) ? "run.reason.selectionNotApplied" : "run.reason.paradigmMismatch"));
   const recovery = runtime.status?.recovery ?? {};
   const startReason = operationReason("engine", true) ?? engineReason ?? (running ? t("run.reason.alreadyRunning") : null);
   const stopReason = stop.pending ? t("feedback.busy") : engineReason
-    ?? (!running && !runtimeControls.busy && !runtime.inProgress && !Object.keys(recovery).length ? t("run.reason.notRunning") : null);
+    ?? (!running && !runtimeControls.busy && !runtime.inProgress && !Object.keys(recovery).some((module) => !isIndependentOutput(module)) ? t("run.reason.notRunning") : null);
   const triggerReason = operationReason("stimulation") ?? stimulationReason ?? trialSetupReason
     ?? (!stimulation.data?.active ? t(externalStimulation ? "run.reason.enableStimulation" : "run.reason.launchStimulation")
-      : !stimulation.data.engine_connected ? t("run.reason.connectStimulation") : null);
+      : !stimulation.data.connected ? t("run.reason.connectStimulation") : null);
   const hasTrialCount = Object.values(controls).some((control) => control.field === "n_trials");
   const sequenceControl = Object.entries(controls).find(([, control]) => control.default_sequence !== undefined);
   const countControl = Object.entries(controls).find(([, control]) => control.field === "n_trials");
@@ -181,9 +182,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
     setTrialError(null);
   }, [controlsKey]);
 
-  const triggerTrial = () => {
-    if (controlsBlocked || !trialControlsReady || !stimulationAvailable
-        || !stimulation.data?.active || !stimulation.data.engine_connected) return;
+  const trialBatch = () => {
     if (sequenceControl && !targetSequence) { setTrialError("sequence"); return; }
     let nTrials = hasTrialCount ? 1 : Number(controlValues.n_trials ?? 1);
     let perTrial: number | undefined;
@@ -210,7 +209,13 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       const value = targetSequence ? targetSequence[index % targetSequence.length] : perTrial;
       return payloadKey === undefined || value === undefined ? {} : { [payloadKey]: value };
     });
-    void trigger.run(total, params);
+    return { n_trials: total, trial_params: params };
+  };
+  const triggerTrial = () => {
+    if (controlsBlocked || !trialControlsReady || !stimulationAvailable
+        || !stimulation.data?.active || !stimulation.data.connected) return;
+    const batch = trialBatch();
+    if (batch) void trigger.run(batch.n_trials, batch.trial_params);
   };
 
   const steps = pipelineSteps.map((step) => {
@@ -344,9 +349,13 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
         {pluginInUse("stimulation")}
         {externalStimulation && <p className="meta"><strong>{t("run.externalStimulation")}</strong><br />{t("run.externalStimulationHelp")}</p>}
         {stimulation.error && <p className="error" role="alert">{stimulation.error.message}</p>}
-        {stimulation.data?.active && stimulation.data.engine_connected && matches("stimulation", true)
+        {stimulation.data?.active && stimulation.data.connected && matches("stimulation", true)
           && <p className="meta">{paradigmName}<br />{t("profiles.slotTrigger")}: {selectedName("stimulation.trigger")}</p>}
         <ModuleRuntime module="stimulation" controls={runtimeControls} />
+        {stimulationAvailable && stimulation.data && <p className="meta">
+          {t("bridge.local")} · {t(stimulation.data.connected ? "bridge.connected" : "bridge.disconnected")}<br />
+          {t("bridge.localFeedback")} · {t(stimulation.data.engine_linked ? "bridge.connected" : "bridge.disconnected")}
+        </p>}
         <form className="actions trial-controls" onSubmit={(event) => { event.preventDefault(); triggerTrial(); }}>
           {sequenceControl && <div className="trial-sequence">
             <label className="control"><span className="meta">{t("run.targetSequence")}</span>
@@ -372,7 +381,7 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
               max={control.max == null ? (control.field === "n_trials" ? 10000 : undefined) : Number(control.max)}
               step={control.field === "n_trials" || control.field === "trial_params" || control.type === "int" ? 1 : "any"}
               onChange={(event) => setControlValues({ ...controlValues, [name]: event.target.value })} /></label>)}
-          <button type="submit" className="primary" disabled={controlsBlocked || !trialControlsReady || !stimulationAvailable || !stimulation.data?.active || !stimulation.data.engine_connected}
+          <button type="submit" className="primary" disabled={controlsBlocked || !trialControlsReady || !stimulationAvailable || !stimulation.data?.active || !stimulation.data.connected}
             aria-describedby={triggerReason ? "trial-action-reasons" : undefined}>{t("run.triggerTrial")}</button>
           {totalTrials !== undefined && <p className={`trial-sequence-summary meta${totalTrials > MAX_TRIALS ? " error" : ""}`} aria-live="polite">
             {t("run.sequenceSummary", { targets: targetSequence!.length, repetitions, total: totalTrials })}
@@ -386,9 +395,13 @@ export function RunConsole({ engine, acquisition, feed, runtime, current, runtim
       </section>)}
       {stepPanel("actuation", <section className="card"><h2><Icon name="monitor" />{t("run.actuation")}</h2>
         {pluginInUse("actuation")}
-        {actuation.data?.active && actuation.data.engine_connected && matches("actuation", true)
+        {actuation.data?.active && actuation.data.connected && matches("actuation", true)
           && <p className="meta">{selectedName("actuation.effector")}</p>}
         <ModuleRuntime module="actuation" controls={runtimeControls} />
+        {actuation.data && !actuation.error && <p className="meta">
+          {t("run.controllerLink")} · {t(actuation.data.connected ? "bridge.connected" : "bridge.disconnected")}<br />
+          {t("run.decodedInput")} · {t(actuation.data.engine_linked ? "bridge.connected" : "bridge.disconnected")}
+        </p>}
         {stepHelp(t("run.actuationHelp"))}
       </section>)}
     </div>

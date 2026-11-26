@@ -395,8 +395,8 @@ test("module stop ownership survives navigation and rejects duplicate Stop", asy
   try {
     signalConfigApi.get = async () => null;
     await withSharedAcquisition(async ({ h }) => {
-      api.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
-      api.actuationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, effector: null });
+      api.stimulationStatus = async () => ({ active: false, process_alive: false, connected: false, paradigm: null });
+      api.actuationStatus = async () => ({ active: false, process_alive: false, connected: false, effector: null });
       let finish, stops = 0;
       api.moduleStop = async () => { stops++; await new Promise((resolve) => { finish = resolve; }); };
       navigation(h, "Run").props.onClick(); await h.settle();

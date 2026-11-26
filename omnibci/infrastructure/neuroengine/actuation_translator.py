@@ -16,12 +16,7 @@ controller side or in a future configurable map — kept out of here on purpose.
 """
 
 import logging
-import time
-from uuid import uuid4
-
-from omnibci.application.commands.actuation_commands import ActuationIntent
-from omnibci.application.events import TrialOutcome
-from omnibci.domain.classification import Classification
+from omnibci.application.commands.actuation_commands import intent_from_trial
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
 
@@ -33,23 +28,9 @@ class ActuationCommandTranslator:
         self._bus = event_bus
 
     def on_trial_completed(self, event: Event) -> None:
-        """EventBus listener for TrialCompleted. Emits an ActuationCommand."""
-        data = event.data
-        if not isinstance(data, TrialOutcome) or not isinstance(data.classification, Classification):
-            logger.warning("ActuationCommandTranslator requires a canonical TrialOutcome")
-            return
-        clf = data.classification
         try:
-            command = ActuationIntent(
-                command_id=uuid4().hex, issued_at=time.time(),
-                origin={"generation": data.generation, "trial_number": data.trial_number,
-                        "processing_revision": data.processing_revision,
-                        "acquisition_revision": data.acquisition_revision,
-                        "forced": clf.forced, "produced_at": clf.produced_at.isoformat()},
-                parameters={"target_id": clf.target_id, "event_id": clf.event_id, "confidence": clf.confidence},
-            )
-        except (TypeError, ValueError) as exc:
+            command = intent_from_trial(event.data)
+        except (ValueError, TypeError) as exc:
             logger.warning("Invalid actuation trial origin: %s", exc)
             return
         self._bus.put_event(Event(EventType.ActuationCommand, command))
-        logger.info("ActuationCommand emitted: %s", command)

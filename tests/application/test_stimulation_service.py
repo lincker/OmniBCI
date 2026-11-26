@@ -1,334 +1,246 @@
-"""
-Unit tests for StimulationAppService.
-"""
+"""The renderer belongs to one independent, recoverable Stimulation session."""
+from copy import deepcopy
 from unittest.mock import MagicMock
 
 import pytest
 
-from omnibci.application.commands.stimulation_commands import (
-    StartStimulationCommand,
-    StopStimulationCommand,
-    StartStimTrialCommand,
-)
-from omnibci.shared.events import EventType
-from omnibci.application.services.command_result_service import CommandTimeoutError
+from omnibci.application.commands.stimulation_commands import StartStimulationCommand, StartStimTrialCommand
+from omnibci.application.configuration.errors import ProfileRevisionConflict
+from omnibci.application.services.command_result_service import CommandDeliveryError, CommandTimeoutError
+from omnibci.shared.events import Event, EventType
 
 
-@pytest.fixture(autouse=True)
-def _running_engine(engine_service):
-    """Command-focused tests exercise a runtime-ready EnginePort."""
-    engine_service._running = True
-    engine_service._accepting_commands = True
-    engine_service._engine_thread = MagicMock()
-    engine_service._engine_thread.is_alive.return_value = True
+def start(service, snapshot):
+    return service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=snapshot)
 
 
-class TestStimulationStart:
-    def test_start_requires_no_unconsumed_event(self, stimulation_service, mock_engine):
-        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        mock_engine.dispatch.assert_not_called()
-        assert stimulation_service.is_active
-
-    def test_start_sets_active_flag(self, stimulation_service):
-        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        assert stimulation_service.is_active is True
-
-    def test_external_readiness_failure_clears_startup_ownership(
-        self, stimulation_service, engine_service
-    ):
-        manager = MagicMock(auto_spawn=False)
-        stimulation_service._process_manager = manager
-        engine_service.is_peer_connected = MagicMock(return_value=False)
-
-        with pytest.raises(RuntimeError, match="not connected"):
-            stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-
-        manager.start.assert_called_once_with(settings_snapshot={})
-        manager.stop.assert_called_once_with()
-        assert stimulation_service.is_active is False
-
-    def test_stopped_engine_rejects_before_spawning_a_process(
-        self, stimulation_service, engine_service,
-    ):
-        manager = MagicMock()
-        stimulation_service._process_manager = manager
-        engine_service._running = False
-        with pytest.raises(RuntimeError, match="Start the engine"):
-            stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        manager.start.assert_not_called()
-        manager.stop.assert_not_called()
-
-    def test_stimulation_does_not_require_acquisition_or_processing(
-        self, stimulation_service, mock_engine,
-    ):
-        mock_engine.acquisition_worker.is_alive.return_value = False
-        mock_engine.signal_processing_worker.is_alive.return_value = False
-        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        assert stimulation_service.is_active is True
-
-    def test_child_startup_failure_never_dispatches_or_marks_active(
-        self, stimulation_service, mock_engine
-    ):
-        manager = MagicMock()
-        manager.start.side_effect = RuntimeError("renderer unavailable")
-        stimulation_service._process_manager = manager
-
-        with pytest.raises(RuntimeError, match="renderer unavailable"):
-            stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-
-        mock_engine.dispatch.assert_not_called()
-        manager.stop.assert_not_called()
-        assert stimulation_service.is_active is False
-
-    def test_external_stimulation_requires_enable_again_after_foundation_restart(
-        self, stimulation_service, engine_service,
-    ):
-        manager = MagicMock(auto_spawn=False, is_alive=False)
-        stimulation_service._process_manager = manager
-        engine_service._applied_snapshot = {"CONFIG.generation": "first", "STIMULATION.auto_spawn": False}
-        engine_service.is_peer_connected = MagicMock(return_value=True)
-        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        assert stimulation_service.is_active
-        engine_service._running = False
-        assert not stimulation_service.is_active
-        engine_service._applied_snapshot = {"CONFIG.generation": "second", "STIMULATION.auto_spawn": False}
-        engine_service._running = True
-        assert not stimulation_service.is_active
-        with pytest.raises(RuntimeError, match="Start stimulation"):
-            stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
-        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        assert stimulation_service.is_active
-
-    def test_applied_external_mode_does_not_require_a_managed_process_to_be_alive(
-        self, stimulation_service, engine_service, mock_engine,
-    ):
-        mock_engine.is_peer_connected.return_value = True
-        stimulation_service._process_manager = MagicMock(auto_spawn=True, is_alive=False)
-        engine_service._applied_snapshot = {"STIMULATION.auto_spawn": False}
-        stimulation_service._active_identity = (None, None)
-        assert stimulation_service.is_active
-
-    def test_external_reconfiguration_requires_enable_but_other_modules_do_not(
-        self, stimulation_service, engine_service,
-    ):
-        stimulation_service._process_manager = MagicMock(auto_spawn=False, is_alive=False)
-        engine_service.is_peer_connected = MagicMock(return_value=True)
-        engine_service._applied_snapshot = {"CONFIG.generation": "foundation", "STIMULATION.auto_spawn": False,
-                                            "CONFIG.module_revisions": {"stimulation": "first"}}
-        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        assert stimulation_service.is_active
-        engine_service.is_peer_connected.return_value = False
-        assert not stimulation_service.is_active
-        engine_service._applied_snapshot["CONFIG.module_revisions"]["stimulation"] = "second"
-        engine_service.is_peer_connected.return_value = True
-        assert not stimulation_service.is_active
-        with pytest.raises(RuntimeError, match="Start stimulation"):
-            stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
-        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-        assert stimulation_service.is_active
-        engine_service._applied_snapshot["CONFIG.module_revisions"].update(acquisition="changed", processing="changed")
-        assert stimulation_service.is_active
-
-
-class TestStimulationStop:
-    @pytest.mark.parametrize("execution_unknown", [False, True])
-    def test_external_delivery_failure_preserves_output_ownership(
-        self, stimulation_service, engine_service, execution_unknown,
-    ):
-        from omnibci.application.services.command_result_service import CommandDeliveryError
-
-        manager = MagicMock(auto_spawn=False)
-        broker = MagicMock()
-        broker.request.side_effect = CommandDeliveryError(
-            "stim-stop", "StopStimulation", "Peer connection failed",
-            execution_unknown=execution_unknown,
-        )
-        stimulation_service._process_manager = manager
-        stimulation_service._command_results = broker
-        stimulation_service._admission = engine_service.admission
-        stimulation_service._active_identity = (None, None)
-
-        with pytest.raises(CommandDeliveryError):
-            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-
-        assert stimulation_service._active_identity == (None, None)
-        assert stimulation_service._stop_managed is False
-        assert engine_service.admission.requires_recovery("stimulation")
-        assert not engine_service.admission.requires_recovery("acquisition")
-        manager.stop.assert_not_called()
-
-        broker.request.side_effect = None
-        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        assert stimulation_service._active_identity is None
-        assert not engine_service.admission.requires_recovery("stimulation")
-
-    def test_stop_dispatches_event(self, stimulation_service, mock_engine):
-        stimulation_service._active_identity = (None, None)
-        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        event = mock_engine.dispatch.call_args[0][0]
-        assert event.type == EventType.StopStimulation
-
-    def test_stop_clears_active_flag(self, stimulation_service):
-        stimulation_service._active_identity = (None, None)
-        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        assert stimulation_service.is_active is False
-
-    def test_dispatch_failure_still_stops_process_and_preserves_error(
-        self, stimulation_service, engine_service
-    ):
-        manager = MagicMock()
-        manager.stop.side_effect = RuntimeError("cleanup also failed")
-        stimulation_service._process_manager = manager
-        stimulation_service._active_identity = (None, None)
-        engine_service.dispatch = MagicMock(side_effect=RuntimeError("dispatch failed"))
-
-        with pytest.raises(RuntimeError, match="dispatch failed"):
-            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-
-        manager.stop.assert_called_once_with()
-        assert stimulation_service._active_identity == (None, None)
-        with pytest.raises(RuntimeError, match="unconfirmed"):
-            stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
-
-    def test_managed_stop_can_recover_after_foundation_stops(
-        self, stimulation_service, engine_service,
-    ):
-        manager = MagicMock(auto_spawn=True)
-        stimulation_service._process_manager = manager
-        stimulation_service._admission = engine_service.admission
-        engine_service.admission.quarantine("managed stop failed", "stimulation")
-        engine_service._running = False
-        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        manager.stop.assert_called_once_with()
-        assert not engine_service.admission.requires_recovery("stimulation")
-
-    def test_unconfirmed_external_stop_keeps_its_mode_after_foundation_restart(
-        self, stimulation_service, engine_service,
-    ):
-        manager = MagicMock(auto_spawn=True)
-        broker = MagicMock()
-        broker.request.side_effect = CommandTimeoutError("stop", "StopStimulation", 0.1)
-        stimulation_service._process_manager = manager
-        stimulation_service._command_results = broker
-        stimulation_service._admission = engine_service.admission
-        engine_service._applied_snapshot = {"STIMULATION.auto_spawn": False}
-        with pytest.raises(CommandTimeoutError):
-            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        engine_service._applied_snapshot = {}
-        with pytest.raises(CommandTimeoutError):
-            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        assert engine_service.admission.requires_recovery("stimulation")
-        assert broker.request.call_count == 2
-        manager.stop.assert_not_called()
-        broker.request.side_effect = None
-        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        assert not engine_service.admission.requires_recovery("stimulation")
-
-    def test_external_stop_timeout_preserves_unknown_active_state(
-        self, stimulation_service, mock_engine,
-    ):
-        mock_engine.is_peer_connected.return_value = True
-        manager = MagicMock()
-        manager.auto_spawn = False
-        broker = MagicMock()
-        broker.request.side_effect = CommandTimeoutError(
-            "stim-stop", "StopStimulation", 0.1
-        )
-        stimulation_service._process_manager = manager
-        stimulation_service._command_results = broker
-        stimulation_service._active_identity = (None, None)
-
-        with pytest.raises(CommandTimeoutError):
-            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-
-        manager.stop.assert_not_called()
-        assert stimulation_service.is_active is True
-
-    def test_applied_external_mode_requires_a_receipt_before_first_enable(
-        self, stimulation_service, engine_service, mock_engine,
-    ):
-        manager = MagicMock(auto_spawn=True)
-        broker = MagicMock()
-        broker.request.side_effect = CommandTimeoutError("stop", "StopStimulation", 0.1)
-        stimulation_service._process_manager = manager
-        stimulation_service._command_results = broker
-        engine_service._applied_snapshot = {"STIMULATION.auto_spawn": False}
-        with pytest.raises(CommandTimeoutError):
-            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        broker.request.assert_called_once_with(EventType.StopStimulation)
-        manager.stop.assert_not_called()
-        mock_engine.dispatch.assert_not_called()
-
-    def test_failed_stop_quarantines_only_stimulation_until_confirmed_retry(
-        self, stimulation_service, engine_service,
-    ):
-        admission = engine_service.admission
-        stimulation_service._admission = admission
-        stimulation_service._process_manager = MagicMock(auto_spawn=False)
-        broker = MagicMock()
-        broker.request.side_effect = CommandTimeoutError("stop", "StopStimulation", 0.1)
-        stimulation_service._command_results = broker
-
-        with pytest.raises(CommandTimeoutError):
-            stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        assert admission.requires_recovery("stimulation")
-        assert not admission.requires_recovery("actuation")
-        with admission.command("actuation"):
-            pass
-
-        broker.request.side_effect = None
-        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-        assert not admission.requires_recovery("stimulation")
-
-
-class TestStimulationTrial:
-    @pytest.fixture(autouse=True)
-    def enabled(self, stimulation_service):
-        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_service._engine.applied_snapshot or {})
-
-    def test_trial_dispatches_event(self, stimulation_service, mock_engine):
-        stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
-        event = mock_engine.dispatch.call_args[0][0]
-        assert event.type == EventType.StartStimTrial
-
-    def test_trial_with_params(self, stimulation_service, mock_engine):
-        stimulation_service.handle_start_trial(
-            StartStimTrialCommand(n_trials=1, trial_params=[{"event_id": 5}]))
-        event = mock_engine.dispatch.call_args[0][0]
-        assert event.data == {"n_trials": 1, "trial_params": [{"event_id": 5}]}
-
-    def test_trial_waits_for_correlated_execution_result(
-        self, stimulation_service
-    ):
-        broker = MagicMock()
-        stimulation_service._command_results = broker
-
-        stimulation_service.handle_start_trial(
-            StartStimTrialCommand(n_trials=1, trial_params=[{"event_id": 5}])
-        )
-
-        broker.request.assert_called_once_with(
-            EventType.StartStimTrial,
-            {"n_trials": 1, "trial_params": [{"event_id": 5}]},
-        )
-
-
-def test_connected_external_node_cannot_run_trials_before_enable(stimulation_service, engine_service, mock_engine):
-    engine_service.is_peer_connected = MagicMock(return_value=True)
-    broker = MagicMock()
-    stimulation_service._command_results = broker
+def test_prepare_connect_enable_and_restart_preserve_or_replace_the_correct_identity(
+    stimulation_service, stimulation_host, stimulation_snapshot, engine_service,
+):
+    svc = stimulation_service
+    svc.prepare_external()
+    first = svc.applied_snapshot
+    assert first["CONFIG.engine_revision"] is None
+    assert not engine_service.is_engine_ready
+    assert start(svc, stimulation_snapshot) == "prepared"
+    svc.prepare_external()
+    assert svc.applied_snapshot == first
+    stimulation_host.is_peer_connected.return_value = True
+    assert svc.is_connected and not svc.is_active
     with pytest.raises(RuntimeError, match="Start stimulation"):
-        stimulation_service.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 0}]))
-    broker.request.assert_not_called()
-    mock_engine.dispatch.assert_not_called()
+        svc.handle_start_trial(StartStimTrialCommand(trial_params=[{}]))
+    assert start(svc, stimulation_snapshot) == "started"
+    assert start(svc, stimulation_snapshot) == "started"
+    assert svc.runtime_package_snapshots == (first,)
+    svc._process_manager.start.assert_not_called()
+    engine_service.admission.quarantine("Engine recovery", "engine")
+    svc.handle_start_trial(StartStimTrialCommand(trial_params=[{"event_id": 7}]))
+    assert svc._command_results.requests == [(EventType.StartStimTrial, {"n_trials": 1, "trial_params": [{"event_id": 7}]})]
+    stimulation_host.cancel_unaccepted_peer.return_value = False
+    svc.stop()
+    assert svc._command_results.requests[-1] == (EventType.StopStimulation, None)
+    assert svc.owner_identity() == ("stopped", None, None)
+    svc.stop()
+    svc.prepare_external()
+    assert svc.applied_snapshot["CONFIG.generation"] != first["CONFIG.generation"]
+    assert svc.applied_snapshot["CONFIG.operation_id"] != first["CONFIG.operation_id"]
 
 
-def test_failed_managed_stop_retains_identity(stimulation_service, engine_service):
-    manager = MagicMock(auto_spawn=True)
-    manager.stop.side_effect = RuntimeError("cleanup not confirmed")
-    stimulation_service._process_manager = manager
-    stimulation_service._active_identity = ("generation", "revision")
-    with pytest.raises(RuntimeError, match="cleanup not confirmed"):
-        stimulation_service.handle_stop_stimulation(StopStimulationCommand())
-    assert stimulation_service._active_identity == ("generation", "revision")
-    assert stimulation_service._stop_managed is True
+def test_listener_only_stop_skips_renderer_and_remains_idempotent(stimulation_service, stimulation_host):
+    stimulation_service.prepare_external()
+    stimulation_service.stop()
+    stimulation_service.stop()
+    assert not stimulation_service.runtime_package_snapshots
+    assert not stimulation_service._command_results.requests
+    stimulation_host.cancel_unaccepted_peer.assert_called_once_with("stimulation")
+
+
+@pytest.mark.parametrize("command", [EventType.StopStimulation, EventType.StartStimTrial])
+@pytest.mark.parametrize("unknown", [True, False])
+def test_delivery_failure_preserves_ownership_and_scopes_recovery(
+    stimulation_service, stimulation_snapshot, stimulation_host, engine_service, command, unknown,
+):
+    svc = stimulation_service
+    stimulation_host.is_peer_connected.return_value = True
+    stimulation_host.cancel_unaccepted_peer.return_value = False
+    start(svc, stimulation_snapshot)
+    old = svc.applied_snapshot
+    svc._command_results.request = MagicMock(side_effect=CommandDeliveryError("request", command.name,
+                                                                             "write failed", execution_unknown=unknown))
+    with pytest.raises(CommandDeliveryError):
+        if command == EventType.StopStimulation:
+            svc.stop()
+        else:
+            svc.request(command, {"n_trials": 1, "trial_params": [{}]})
+    assert svc.applied_snapshot == old
+    assert engine_service.admission.requires_recovery("stimulation") == (unknown or command == EventType.StopStimulation)
+    assert not engine_service.admission.requires_recovery("engine")
+    svc._command_results.request.side_effect = None
+    svc.stop()
+    assert not engine_service.admission.recovery_required
+
+
+def test_recovery_prepares_retained_listener_and_stop_retries_only_unconfirmed_cleanup(
+    stimulation_service, stimulation_host, stimulation_snapshot,
+):
+    svc = stimulation_service
+    stimulation_host.is_peer_connected.return_value = True
+    stimulation_host.cancel_unaccepted_peer.return_value = False
+    start(svc, stimulation_snapshot)
+    retained = svc.applied_snapshot
+    svc._command_results.request = MagicMock(side_effect=CommandTimeoutError("lost", "StopStimulation", .01))
+    with pytest.raises(CommandTimeoutError):
+        svc.stop()
+    with pytest.raises(ProfileRevisionConflict):
+        start(svc, stimulation_snapshot)
+    changed = {**stimulation_snapshot, "CONFIG.module_revisions": {"stimulation": "b" * 64}}
+    svc.prepare_external(changed)
+    assert svc.applied_snapshot == retained
+    svc._command_results.request.side_effect = None
+    stimulation_host.close_peer_sync.side_effect = OSError("close failed")
+    with pytest.raises(OSError):
+        svc.stop()
+    stimulation_host.close_peer_sync.side_effect = None
+    svc.stop()
+    assert svc._command_results.request.call_count == 2
+
+
+def test_managed_renderer_starts_once_stops_after_engine_failure_and_preserves_uncertain_cleanup(
+    stimulation_service, stimulation_host, stimulation_snapshot, engine_service,
+):
+    svc = stimulation_service
+    selected = {**stimulation_snapshot, "STIMULATION.auto_spawn": True}
+    start(svc, selected)
+    start(svc, selected)
+    svc._process_manager.start.assert_called_once_with(settings_snapshot=svc.applied_snapshot)
+    assert svc.is_active
+    engine_service.admission.quarantine("Engine crashed", "engine")
+    stimulation_host.is_peer_connected.return_value = True
+    stimulation_host.dispatch.side_effect = OSError("cannot send")
+    with pytest.raises(OSError):
+        svc.stop()
+    svc._process_manager.stop.assert_called_once()
+    assert svc.runtime_package_snapshots
+    stimulation_host.dispatch.side_effect = None
+    svc.stop()
+    assert not svc.runtime_package_snapshots
+
+
+def test_failed_managed_launch_cleans_process_and_listener(stimulation_service, stimulation_host, stimulation_snapshot):
+    svc = stimulation_service
+    svc._process_manager.start.side_effect = RuntimeError("renderer unavailable")
+    with pytest.raises(RuntimeError, match="renderer unavailable"):
+        start(svc, {**stimulation_snapshot, "STIMULATION.auto_spawn": True})
+    svc._process_manager.stop.assert_called_once()
+    stimulation_host.close_peer_sync.assert_called_once()
+    assert not svc.is_active and not svc.runtime_package_snapshots
+
+
+def test_changed_external_configuration_replaces_only_after_confirmed_cleanup(
+    stimulation_service, stimulation_host, stimulation_snapshot,
+):
+    svc = stimulation_service
+    svc.prepare_external()
+    old = svc.applied_snapshot
+    candidate = deepcopy(stimulation_snapshot)
+    candidate["CONFIG.module_revisions"]["stimulation"] = "b" * 64
+    svc.prepare_external(candidate)
+    assert svc.owner_identity()[2] == "b" * 64
+    assert svc.owner_identity()[1] != old["CONFIG.generation"]
+    stimulation_host.cancel_unaccepted_peer.assert_called_once()
+
+
+def test_feedback_requires_activation_and_connection(stimulation_service, stimulation_host, stimulation_snapshot):
+    svc = stimulation_service
+    feedback = Event(EventType.TrialCompleted, {})
+    svc.prepare_external()
+    stimulation_host.is_peer_connected.return_value = True
+    svc.on_trial_completed(feedback)
+    stimulation_host.dispatch.assert_not_called()
+    start(svc, stimulation_snapshot)
+    svc.on_trial_completed(feedback)
+    stimulation_host.dispatch.assert_called_once_with(feedback)
+    stimulation_host.is_peer_connected.return_value = False
+    svc.on_trial_completed(feedback)
+    assert stimulation_host.dispatch.call_count == 1
+
+
+def test_only_current_stimulation_delivery_fault_can_quarantine(stimulation_service, engine_service):
+    svc = stimulation_service
+    svc._command_results = MagicMock()
+    for role, channel in [("actuation", "current"), ("stimulation", "old")]:
+        svc.on_peer_delivery_fault(Event(EventType.PeerDeliveryFault, {"peer": role, "channel_id": channel, "reason": "lost"}))
+    assert not engine_service.admission.recovery_required
+    event = Event(EventType.PeerDeliveryFault, {"peer": "stimulation", "channel_id": "current", "reason": "lost"})
+    svc.on_peer_delivery_fault(event)
+    assert engine_service.admission.recovery_status == {"stimulation": "lost"}
+    svc._command_results.on_peer_delivery_fault.assert_called_once_with(event)
+
+
+def test_feedback_status_matches_admission_during_recovery(stimulation_service, stimulation_host, stimulation_snapshot, engine_service):
+    stimulation_host.is_peer_connected.return_value = True
+    start(stimulation_service, stimulation_snapshot)
+    assert stimulation_service.status(True)["engine_linked"]
+    engine_service.admission.quarantine("Unconfirmed trial", "stimulation")
+    assert not stimulation_service.status(True)["engine_linked"]
+    stimulation_service.on_trial_completed(Event(EventType.TrialCompleted))
+    stimulation_host.dispatch.assert_not_called()
+
+
+def test_publication_requires_the_current_listener_operation(stimulation_service, stimulation_host):
+    from omnibci.application.configuration.errors import ConfigProfileConflictError
+    stimulation_service.prepare_external()
+    stimulation_host.node_operation_id.side_effect = lambda role: "different-operation"
+    with pytest.raises(ConfigProfileConflictError, match="retained"):
+        stimulation_service.node_configuration_snapshot(lambda: {})
+
+
+def test_exited_managed_stimulation_reports_stopped_with_recovery_and_mints_fresh_identity(
+    stimulation_service, stimulation_host, stimulation_snapshot, engine_service,
+):
+    svc = stimulation_service
+    selected = {**stimulation_snapshot, "STIMULATION.auto_spawn": True}
+    start(svc, selected)
+    first = svc.applied_snapshot
+    # Simulate an unexpected clean exit (exitcode=0): process dies without stop().
+    svc._process_manager.is_alive = False
+    assert svc.owner_identity() == ("stopped", None, None)
+    assert engine_service.admission.requires_recovery("stimulation")
+    assert svc.runtime_package_snapshots == (first,)
+    with pytest.raises(ProfileRevisionConflict):
+        start(svc, selected)
+    # Confirmed clean stop releases the old session and clears recovery.
+    svc.stop()
+    assert not engine_service.admission.requires_recovery("stimulation")
+    assert svc.owner_identity() == ("stopped", None, None)
+    start(svc, selected)
+    assert svc.applied_snapshot["CONFIG.generation"] != first["CONFIG.generation"]
+    assert svc.applied_snapshot["CONFIG.operation_id"] != first["CONFIG.operation_id"]
+
+
+def test_exited_managed_stimulation_with_failed_cleanup_retains_recovery_and_snapshot(
+    stimulation_service, stimulation_snapshot, engine_service,
+):
+    svc = stimulation_service
+    selected = {**stimulation_snapshot, "STIMULATION.auto_spawn": True}
+    start(svc, selected)
+    first = svc.applied_snapshot
+    svc._process_manager.is_alive = False
+    svc._process_manager.stop.side_effect = RuntimeError("Stimulation cleanup was not confirmed (exitcode=1)")
+    assert svc.owner_identity() == ("stopped", None, None)
+    assert engine_service.admission.requires_recovery("stimulation")
+    with pytest.raises(RuntimeError, match="exitcode=1"):
+        svc.stop()
+    assert engine_service.admission.requires_recovery("stimulation")
+    assert svc.runtime_package_snapshots == (first,)
+
+
+def test_failed_managed_launch_preserves_original_error_when_rollback_also_fails(
+    stimulation_service, stimulation_snapshot,
+):
+    svc = stimulation_service
+    svc._process_manager.start.side_effect = RuntimeError("renderer init failed")
+    svc._process_manager.stop.side_effect = OSError("cleanup failed")
+    with pytest.raises(RuntimeError, match="renderer init failed") as exc_info:
+        start(svc, {**stimulation_snapshot, "STIMULATION.auto_spawn": True})
+    assert any("cleanup failed" in note for note in getattr(exc_info.value, "__notes__", ()))

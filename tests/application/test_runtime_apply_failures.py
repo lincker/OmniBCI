@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -183,7 +184,7 @@ class Commands:
 
 
 @pytest.fixture
-def harness(tmp_path, monkeypatch):
+def harness(tmp_path, monkeypatch, actuation_host):
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "no-user-plugins"))
 
     def create(*, actuation=False):
@@ -203,9 +204,26 @@ def harness(tmp_path, monkeypatch):
         acquisition = Acquisition(engine, log)
         engine.acquisition = acquisition
         commands = Commands(engine, acquisition, log)
-        engine.actuation_process_alive = actuation
-        executor = RuntimeApplyCoordinator(engine, profiles, acquisition, Stimulation(), commands, repository=profiles.repository)
-        runtime = RuntimeConfigurationService(profiles, engine, executor=executor)
+        from omnibci.application.services.actuation_service import ActuationAppService
+        manager = MagicMock(is_alive=False)
+        manager.start.side_effect = lambda **_: setattr(manager, "is_alive", True)
+        manager.stop.side_effect = lambda: setattr(manager, "is_alive", False)
+        output_commands = MagicMock()
+        owner = ActuationAppService(actuation_host, manager, output_commands, engine.admission)
+        actuation_host.is_peer_connected.side_effect = lambda _: manager.is_alive
+        def settle(command):
+            assert command == EventType.SettleActuation
+            snapshot = owner.applied_snapshot
+            log.append((command.name, snapshot["CONFIG.module_revisions"]["actuation"]))
+            return SimpleNamespace(data={"generation": snapshot["CONFIG.generation"], "engine_revision": None,
+                "module_revision": snapshot["CONFIG.module_revisions"]["actuation"], "paused": True,
+                "execution_complete": True, "outputs_settled": True})
+        output_commands.request.side_effect = settle
+        if actuation:
+            owner._start(profiles.materialize(profiles.selected_configuration(("actuation",))))
+        executor = RuntimeApplyCoordinator(engine, profiles, acquisition, Stimulation(), commands,
+                                           actuation=owner, repository=profiles.repository)
+        runtime = RuntimeConfigurationService(profiles, engine, executor=executor, actuation=owner)
         source = profiles.repository.get_profile(bindings[0]["profile_id"])
         profiles.update(source.profile_id, name=source.name,
                         parameters={**source.parameters, "file_reader_chunk_size": 50},
@@ -274,10 +292,9 @@ async def test_idle_selection_rechecks_unreleased_resources_before_persistence(h
 @pytest.mark.asyncio
 @pytest.mark.parametrize("owned_unready", [False, True])
 async def test_idle_effector_validation_uses_owned_resources_not_history(harness, monkeypatch, owned_unready):
-    h = harness(actuation=True)
+    h = harness(actuation=owned_unready)
     h.engine.is_engine_ready = False
     h.engine.owned_unready = owned_unready
-    h.engine.actuation_process_alive = owned_unready
     h.module = "actuation"
     bindings = [{"slot": binding.slot, "profile_id": binding.profile_id} for binding in h.previous.modules[h.module].bindings]
     settings = {**h.previous.settings(), "ACTUATION.watchdog_timeout_s": 3.0}
@@ -290,11 +307,11 @@ async def test_idle_effector_validation_uses_owned_resources_not_history(harness
     monkeypatch.setattr(h.profiles.catalog, "get", unavailable_effector)
     h.plan = h.runtime.plan(h.module, bindings, expected_revision=h.previous.modules[h.module].revision,
                             refresh_slots=[], settings=section_settings(settings, h.module))
-    candidate = h.runtime._plans[h.plan.plan_id].activation_set(h.previous)
+    candidate = ActivationSet(h.runtime._plans[h.plan.plan_id].candidates, None)
     assert ("effector" in h.runtime.executor.active_kinds(candidate)) is owned_unready
 
     if owned_unready:
-        assert any("still owns resources" in error for error in h.plan.errors)
+        assert any("unavailable" in error.lower() for error in h.plan.errors)
     else:
         assert not h.plan.errors
         operation = await apply(h)
@@ -425,17 +442,17 @@ async def test_failed_artifact_preparation_preserves_the_running_source(harness,
 
 
 @pytest.mark.asyncio
-async def test_engine_output_settlement_failure_keeps_old_graph_paused(harness):
+async def test_engine_rebuild_preserves_actuation_without_sending_settlement(harness):
     h = harness(actuation=True)
-    h.commands.settle_failure = h.previous.modules[h.module].revision
+    owner = h.runtime.actuation
+    previous = owner.owner_identity()
     settings = {**h.previous.settings(), "debug": True}
     h.plan = h.runtime.plan("engine", [], expected_revision=h.previous.engine.revision, settings=section_settings(settings, "engine"))
     operation = await apply(h)
-    assert operation["status"] == "recovery_required"
-    assert h.engine.starts == []
-    assert not h.acquisition.streaming
-    assert not any(item[0] == "stop_graph" for item in h.log)
-    assert_quarantined(h)
+    assert operation["status"] == "succeeded", operation
+    assert owner.owner_identity() == previous and owner.is_active
+    owner._command_results.request.assert_not_called()
+    assert h.acquisition.streaming
 
 
 @pytest.mark.asyncio

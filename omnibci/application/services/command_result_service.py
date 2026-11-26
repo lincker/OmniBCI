@@ -28,7 +28,7 @@ from omnibci.application.events import (
     CommandRequest,
     CommandResult,
 )
-from omnibci.application.ports.engine_port import EnginePort
+from omnibci.application.ports.ipc_port import CommandDispatcherPort
 from omnibci.shared.events import Event, EventType
 
 logger = logging.getLogger(__name__)
@@ -102,10 +102,11 @@ class _PendingCommand:
 class CommandResultBroker:
     """Dispatch commands with correlation and wait boundedly for their result."""
 
-    def __init__(self, engine: EnginePort, timeout_s: float = 10.0, *, admission=None) -> None:
+    def __init__(self, dispatcher: CommandDispatcherPort, timeout_s: float = 10.0, *, admission=None, dispatcher_name="Engine") -> None:
         if timeout_s <= 0:
             raise ValueError("command timeout must be greater than zero")
-        self._engine = engine
+        self._dispatcher_name = dispatcher_name
+        self._dispatcher = dispatcher
         self._admission = admission
         self._timeout_s = float(timeout_s)
         self._pending: dict[str, _PendingCommand] = {}
@@ -141,7 +142,7 @@ class CommandResultBroker:
             self._pending[command_id] = pending
 
         try:
-            self._engine.dispatch(Event(
+            self._dispatcher.dispatch(Event(
                 event_type,
                 CommandRequest(command_id=command_id, payload=payload),
             ))
@@ -151,13 +152,13 @@ class CommandResultBroker:
             raise
 
         deadline = time.monotonic() + wait_s
-        engine_stopped = False
+        dispatcher_stopped = False
         module_stopped = False
         while not pending.done.wait(min(max(deadline - time.monotonic(), 0), 0.1)):
-            if not self._engine.is_engine_ready:
-                engine_stopped = True
+            if not self._dispatcher.is_ready:
+                dispatcher_stopped = True
                 break
-            if not self._engine.is_command_ready(event_type):
+            if not self._dispatcher.is_command_ready(event_type):
                 module_stopped = True
                 break
             if time.monotonic() >= deadline:
@@ -171,11 +172,11 @@ class CommandResultBroker:
         # terminal result even when a deadline or worker exit was just observed.
         if result is None and delivery_error is not None:
             raise delivery_error
-        if result is None and engine_stopped:
+        if result is None and dispatcher_stopped:
             raise CommandExecutionError(CommandResult(
                 command_id=command_id, command=command_name, ok=False,
-                message="Engine stopped before confirming command execution",
-                error_code="ENGINE_STOPPED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
+                message=f"{self._dispatcher_name} stopped before confirming command execution",
+                error_code=f"{self._dispatcher_name.upper()}_STOPPED", failure_kind=CommandFailureKind.EXECUTION_FAILED,
             ))
         if result is None and module_stopped:
             raise CommandExecutionError(CommandResult(

@@ -244,8 +244,8 @@ async function withProfiles(module, action, { engineRunning = false, streaming =
     data.profiles.push(saved); return clone(saved);
   };
   controlApi.acquisitionStatus = async () => clone(data.source);
-  controlApi.stimulationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, paradigm: null });
-  controlApi.actuationStatus = async () => ({ active: false, process_alive: false, engine_connected: false, effector: null });
+  controlApi.stimulationStatus = async () => ({ active: false, process_alive: false, connected: false, paradigm: null });
+  controlApi.actuationStatus = async () => ({ active: false, process_alive: false, connected: false, effector: null });
   signalConfigApi.get = async () => null;
   data.moduleRequests = [];
   const startModule = async (module, { operation_id, configuration }) => {

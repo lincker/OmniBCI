@@ -10,10 +10,10 @@ Run from the project root with the venv active:
 The process:
   1. Fetches its configuration from --server (or OMNIBCI_SERVER_URL)
   2. Initializes its pinned Trigger, Paradigm, and Renderer
-  3. Verifies the matching NeuroEngine revision and generation before commands
+  3. Authenticates the prepared Stimulation session and its execution receipt
   4. Forwards trial/result commands to the running paradigm
   5. On disconnection, stops rendering and clears the trigger before re-fetching
-  5. On StopStimulation: tears down the GL window and returns to idle
+  6. On StopStimulation, tears down the GL window and exits
 
 Press Ctrl-C to exit.
 """

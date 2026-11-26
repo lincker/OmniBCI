@@ -81,9 +81,13 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
 
     app.state.shutdown_service = ServerShutdownService(
         engine=container.engine_service,
-        configuration=container.runtime_configuration,
+        configuration=container.runtime_configuration, stimulation=container.stimulation_service,
+        actuation=container.actuation_service,
     )
+    status_task = None
+    body_error: BaseException | None = None
     try:
+        container.ipc_runtime.start()
         app.state.container = container
         app.state.engine_service = container.engine_service
         app.state.acquisition_service = container.acquisition_service
@@ -102,32 +106,60 @@ async def _services_lifespan(app: FastAPI, host_settings: dict):
         # of any presentation import.
         broadcaster_subscriptions = [
             (EventType.TrialCompleted, results_broadcaster.on_trial_completed),
-            # Relay stimulation acks (from the stim process via the socket) to clients.
-            (EventType.StimulationAck, results_broadcaster.on_stimulation_ack),
         ]
+        container.ipc_runtime.subscribe(EventType.StimulationAck, results_broadcaster.on_stimulation_ack)
+        status_task = asyncio.create_task(results_broadcaster.publish_stimulation_status(
+            lambda: container.stimulation_service.status(container.engine_service.is_engine_ready)))
         registered = register_engine_listeners(container, broadcaster_subscriptions)
 
         logger.info("OmniBCI API server started (engine listeners registered: %d)", registered)
         yield
+    except BaseException as exc:
+        body_error = exc
+        raise
     finally:
+        teardown_failed = False
         try:
+            errors = []
+            if status_task is not None:
+                status_task.cancel()
+                try:
+                    await status_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    errors.append(f"Status publisher: {exc}")
             results_broadcaster.stop_heartbeat()
             progress = app.state.shutdown_progress
             if progress is not None:
                 progress("waiting_for_requests")
-            await app.state.request_gate.prepare()
-            errors = await app.state.shutdown_service.prepare(progress=progress)
+            try:
+                await app.state.request_gate.prepare()
+                errors.extend(await app.state.shutdown_service.prepare(progress=progress))
+            finally:
+                if container.ipc_runtime.has_owned_resources:
+                    try:
+                        await asyncio.to_thread(container.ipc_runtime.stop)
+                    except Exception as exc:
+                        errors.append(f"IPC runtime: {exc}")
             app.state.shutdown_errors = errors
             if errors:
-                raise RuntimeError("; ".join(errors))
-            logger.info("OmniBCI API server stopped")
+                teardown_failed = True
+                if body_error is not None:
+                    body_error.add_note("Server teardown errors: " + "; ".join(errors))
+                else:
+                    raise RuntimeError("; ".join(errors))
+            elif body_error is None:
+                logger.info("OmniBCI API server stopped")
         except BaseException:
-            if container.package_owner is not None:
-                container.package_owner.abandon()
+            teardown_failed = True
             raise
-        else:
+        finally:
             if container.package_owner is not None:
-                container.package_owner.close()
+                if teardown_failed:
+                    container.package_owner.abandon()
+                else:
+                    container.package_owner.close()
 
 
 def create_app(*, api_token: str | None = None, desktop: bool = False) -> FastAPI:

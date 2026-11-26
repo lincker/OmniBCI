@@ -199,28 +199,29 @@ class SignalSetupService:
             return receipt
 
     def _detach_input(self):
-        if not self.engine.is_module_running("acquisition"):
-            if self._receipt is not None and self.engine.is_module_running("processing"):
-                snapshot = self.engine.applied_snapshot
-                self.commands.request(EventType.ResetProcessingInput, {
-                    "generation": snapshot.get("CONFIG.generation"),
-                    "engine_revision": snapshot.get("CONFIG.engine_revision"),
-                    "expected_revision": snapshot.get("CONFIG.module_revisions", {}).get("processing"),
-                })
-            return None
-        snapshot = self.engine.applied_snapshot or {}
-        result = self.commands.request(EventType.DetachProcessingInput, {
-            "generation": snapshot.get("CONFIG.generation"),
-            "engine_revision": snapshot.get("CONFIG.engine_revision"),
-            "expected_revision": snapshot.get("CONFIG.module_revisions", {}).get("acquisition"),
-            "drain": self.engine.is_module_running("processing"),
-        })
-        receipt = StreamDrainReceipt.from_value(result.data)
-        if (receipt.generation != snapshot.get("CONFIG.generation")
-                or receipt.engine_revision != snapshot.get("CONFIG.engine_revision")
-                or receipt.acquisition_revision != snapshot.get("CONFIG.module_revisions", {}).get("acquisition")):
-            raise RuntimeError("Processing input boundary belongs to a different source")
-        return receipt
+        with self.acquisition.lifecycle_lock:
+            if not self.engine.is_module_running("acquisition"):
+                if self._receipt is not None and self.engine.is_module_running("processing"):
+                    snapshot = self.engine.applied_snapshot
+                    self.commands.request(EventType.ResetProcessingInput, {
+                        "generation": snapshot.get("CONFIG.generation"),
+                        "engine_revision": snapshot.get("CONFIG.engine_revision"),
+                        "expected_revision": snapshot.get("CONFIG.module_revisions", {}).get("processing"),
+                    })
+                return None
+            snapshot = self.engine.applied_snapshot or {}
+            result = self.commands.request(EventType.DetachProcessingInput, {
+                "generation": snapshot.get("CONFIG.generation"),
+                "engine_revision": snapshot.get("CONFIG.engine_revision"),
+                "expected_revision": snapshot.get("CONFIG.module_revisions", {}).get("acquisition"),
+                "drain": self.engine.is_module_running("processing"),
+            })
+            receipt = StreamDrainReceipt.from_value(result.data)
+            if (receipt.generation != snapshot.get("CONFIG.generation")
+                    or receipt.engine_revision != snapshot.get("CONFIG.engine_revision")
+                    or receipt.acquisition_revision != snapshot.get("CONFIG.module_revisions", {}).get("acquisition")):
+                raise RuntimeError("Processing input boundary belongs to a different source")
+            return receipt
 
     @admitted(scopes="processing")
     def prepare(self):

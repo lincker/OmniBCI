@@ -22,7 +22,7 @@ const current = { ready: true, error: null, entries: {}, filterOrder: [], hasCha
 const revisions = { acquisition: "a", processing: "selected-previous", stimulation: "s", actuation: "e", engine: "sys" };
 const status = { running: true, accepted: revisions, applied: revisions, generation: "generation-1", operations: {}, recovery: {}, errors: {} };
 const plan = { plan_id: "plan-1", module: "processing", expected_revision: revisions.processing, expected_revisions: { processing: revisions.processing, engine: revisions.engine }, target_revisions: { processing: "selected-next" }, applied_revisions: status.applied,
-  generation: status.generation, running: true, strategy: "trial_boundary", changed_slots: ["processing.decoder"], changed_settings: [], errors: [] };
+  generation: status.generation, owner_state: "active", running: true, strategy: "trial_boundary", changed_slots: ["processing.decoder"], changed_settings: [], errors: [] };
 const baseRuntime = { status, plan, operation: null, blocked: false, inProgress: false, recoveryRequired: false, submitting: false,
   uncertain: false, error: null, requestError: null, review: noop, apply: noop, dismissPlan: noop, refresh: noop, retryUnconfirmed: noop };
 const render = (component, props) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(component, { ...props, runtime: runtimeController(props.runtime) })));
@@ -46,7 +46,7 @@ test("review presents the impact before Apply and blocks invalid plans", () => {
   assert.match(rebuild, /The selected module will restart/);
   assert.doesNotMatch(rebuild, /The engine will restart/);
   const engineRebuild = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, module: "engine", strategy: "rebuild" } } });
-  assert.match(engineRebuild, /All running modules will be interrupted/);
+  assert.match(engineRebuild, /Acquisition, processing and actuation will be interrupted/);
   const nextStart = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan, strategy: "select_on_start" } } });
   assert.match(nextStart, /It does not start any module/);
   const channels = render(RuntimeConfigurationReview, { runtime: { ...baseRuntime, plan: { ...plan,
@@ -397,7 +397,8 @@ test("affected modules and engine recovery bound the configuration gate", () => 
   assert.equal(runtime.state("processing").blocked, true);
   assert.equal(runtime.state("stimulation").blocked, false);
   hookStatus.recovery.engine = "Unknown engine";
-  assert.equal(runtime.state("stimulation").blocked, true);
+  assert.equal(runtime.state("stimulation").blocked, false);
+  assert.equal(runtime.state("actuation").blocked, false);
 });
 
 const currentConfiguration = { expected_revision: "original", settings: { "ACQUISITION.buffer_size": 16 },
@@ -484,4 +485,17 @@ test("a rejected action preserves the server validation error without leaving an
   }, () => assert.fail("Rejected configuration cannot advance the baseline")), /Current configuration changed/);
   assert.equal(renderHook().state("acquisition").requestError, "Current configuration changed");
   assert.equal(renderHook().state("acquisition").uncertain, false);
+});
+
+test("a stimulation plan follows its prepared session across Engine restarts and expires on session replacement", () => {
+  const base = { ...status, stimulation_state: "prepared", stimulation_session: "stim-1" };
+  const selected = { ...plan, module: "stimulation", expected_revision: revisions.stimulation,
+    expected_revisions: { stimulation: revisions.stimulation }, owner_state: "prepared", generation: "stim-1",
+    applied_revisions: { stimulation: revisions.stimulation } };
+  const disabled = (changes) => buttonDisabled(render(RuntimeConfigurationReview,
+    { runtime: { ...baseRuntime, plan: selected, status: { ...base, ...changes } } }), "Apply configuration");
+  assert.equal(disabled({ running: false, generation: null }), false);
+  assert.equal(disabled({ generation: "engine-restarted" }), false);
+  assert.equal(disabled({ stimulation_session: "stim-2" }), true);
+  assert.equal(disabled({ stimulation_state: "stopped", stimulation_session: null }), true);
 });

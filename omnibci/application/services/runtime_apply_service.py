@@ -3,8 +3,8 @@ import asyncio
 from dataclasses import dataclass, asdict
 
 from omnibci.application.commands.acquisition_commands import ConnectDataProviderCommand, StartStreamCommand
-from omnibci.application.commands.stimulation_commands import StartStimulationCommand, StopStimulationCommand
-from omnibci.application.configuration.definitions import merge_module_settings, module_runtime_settings
+from omnibci.application.commands.stimulation_commands import StartStimulationCommand
+from omnibci.application.configuration.definitions import ENGINE_MODULES, OUTPUT_MODULES, merge_module_settings, module_runtime_settings
 from omnibci.application.events import StreamDrainReceipt
 from omnibci.application.configuration.models import ActivationSet
 from omnibci.application.configuration.ports import ConfigurationRepository
@@ -14,7 +14,7 @@ from omnibci.domain.ports.acquisition import SourceCheckpoint
 from omnibci.application.source_checkpoint import checkpoint_for_restore, checkpoint_from_receipt
 from omnibci.application.services.command_result_service import CommandRejectedError, CommandTimeoutError
 from omnibci.application.services.runtime_configuration_service import (
-    operation_scopes, read_configuration, validate_external_peers,
+    operation_scopes, plan_matches, read_configuration, validate_external_peers,
 )
 from omnibci.shared.events import EventType
 
@@ -30,9 +30,7 @@ class RuntimeApplyFailure(RuntimeError):
 class _RestoreState:
     connected: bool
     streaming: bool
-    stimulation: bool
     checkpoint: SourceCheckpoint | None = None
-    actuation: bool = False
     acquisition: bool = True
     processing: bool = True
 
@@ -52,31 +50,28 @@ class RuntimeApplyCoordinator:
         self.signal_detacher = signal_detacher
 
     def active_kinds(self, activation_set):
+        if activation_set.modules.get("stimulation") and activation_set.engine is None:
+            return {"paradigm", "trigger"} if (self.stimulation.is_active and
+                activation_set.settings().get("STIMULATION.auto_spawn", True)) else set()
+        if activation_set.modules.get("actuation") and activation_set.engine is None:
+            return {"effector"} if (self.actuation is not None and self.actuation.is_active
+                and activation_set.settings().get("ACTUATION.auto_spawn", True)) else set()
         kinds = set()
         if self.engine.is_module_running("acquisition"):
             kinds.add("acquisition")
         if self.engine.is_module_running("processing"):
             kinds.update(("decoder", "epoch_detector", "filter"))
-        settings = activation_set.settings()
-        owned = self.engine.runtime_package_snapshots
-        if self._actuation_active() and any(
-                item.get("ACTUATION.auto_spawn", True)
-                for item in (settings, *owned)):
-            kinds.add("effector")
-        if ((self.stimulation.is_active or self.stimulation.process_alive)
-                and any(item.get("STIMULATION.auto_spawn", True) for item in (settings, *owned))):
-            kinds.update(("paradigm", "trigger"))
         return kinds
-
-    def _actuation_active(self):
-        if self.actuation is not None:
-            return self.actuation.is_active or self.actuation.process_alive
-        return (getattr(self.engine, "actuation_process_alive", False) is True
-                or self.engine.is_peer_connected("actuation"))
 
     async def execute_current_action(self, stored, action):
         """Finish the user action while its configuration reservation is held."""
         module = stored.plan.module
+        if module in OUTPUT_MODULES:
+            snapshot = self.profiles.materialize(ActivationSet(stored.candidates, None))
+            if module == "actuation":
+                return await self.actuation.start(snapshot)
+            return await asyncio.to_thread(self.stimulation.handle_start_stimulation, StartStimulationCommand(),
+                                           settings_snapshot=snapshot)
         engine_settings = self.repository.get_engine()
         if not self.engine.is_engine_ready:
             foundation = self.profiles.materialize(ActivationSet({}, engine_settings))
@@ -85,25 +80,13 @@ class RuntimeApplyCoordinator:
         selected = self.profiles.materialize(ActivationSet(stored.candidates, engine_settings), self.engine.generation)
         snapshot = merge_module_settings(self.engine.applied_snapshot or {}, selected, (module,))
         snapshot = self.engine.prepare_plugins(snapshot, (module,))
-        if module in ("acquisition", "processing"):
-            if not self.engine.is_module_running(module):
-                await self.engine.start_module_for_configuration(module, snapshot)
-            self.engine.acknowledge_configuration(snapshot, modules=(module,))
-            if action == "connect":
-                await asyncio.to_thread(self.acquisition.handle_connect, ConnectDataProviderCommand(),
-                                        prepare_processing=False)
-                return "connected"
-            return "started"
-        await self.engine.ensure_output_ready(module, snapshot)
-        self.engine.acknowledge_configuration(snapshot, modules=(module,))
-        if not snapshot.get(f"{module.upper()}.auto_spawn", True) and not self.engine.is_peer_connected(module):
-            return "prepared"
-        if module == "stimulation":
-            if not self.stimulation.is_active:
-                await asyncio.to_thread(self.stimulation.handle_start_stimulation, StartStimulationCommand(),
-                                        settings_snapshot=snapshot)
-        elif not self.engine.is_module_running(module):
+        if not self.engine.is_module_running(module):
             await self.engine.start_module_for_configuration(module, snapshot)
+        self.engine.acknowledge_configuration(snapshot, modules=(module,))
+        if action == "connect":
+            await asyncio.to_thread(self.acquisition.handle_connect, ConnectDataProviderCommand(),
+                                    prepare_processing=False)
+            return "connected"
         return "started"
 
     async def prepare_processing(self):
@@ -115,16 +98,13 @@ class RuntimeApplyCoordinator:
         async with self.engine.runtime_transition(operation_scopes(stored)):
             previous = read_configuration(self.repository, plan.expected_revisions)
             revisions = previous.revisions()
-            applied = self.engine.applied_revisions or {}
             if (any(revisions[k] != v for k, v in plan.expected_revisions.items())
-                    or self.engine.is_engine_ready != plan.running
-                    or (plan.running and (self.engine.generation != plan.generation
-                        or any(applied.get(k) != v for k, v in plan.applied_revisions.items())))):
+                    or not plan_matches(plan, self.engine, self.stimulation, self.actuation)):
                 raise ProfileRevisionConflict("Runtime changed before configuration application")
-            if not plan.running and self.engine.foundation_requires_cleanup:
+            if plan.module not in OUTPUT_MODULES and not plan.running and self.engine.foundation_requires_cleanup:
                 raise ProfileRevisionConflict("The previous engine still owns resources; stop it before selecting configuration")
             combined = stored.activation_set(previous)
-            validate_external_peers(self.engine, combined, stored.candidates, plan.strategy)
+            validate_external_peers(combined, stored.candidates, plan.strategy, self.stimulation, self.actuation)
             if (plan.running and plan.module in ("acquisition", "processing") and plan.strategy != "no_change"
                     and self.engine.is_module_running(plan.module) == (plan.strategy == "select_on_start")):
                 raise ProfileRevisionConflict("Module state changed before configuration application")
@@ -133,7 +113,7 @@ class RuntimeApplyCoordinator:
                     self.profiles.validate_module(candidate, active_kinds=self.active_kinds(combined))
             if plan.strategy in ("select_on_start", "no_change"):
                 progress("persisting")
-                before = self.engine.applied_snapshot if plan.running else None
+                before = self.engine.applied_snapshot if plan.running and plan.strategy == "select_on_start" else None
                 target = self._runtime_target(stored) if plan.running and plan.strategy == "select_on_start" else None
                 written = self._persist(stored, previous)
                 if plan.running and plan.strategy == "select_on_start":
@@ -151,7 +131,7 @@ class RuntimeApplyCoordinator:
                 result = {"outcome": "selected" if plan.strategy == "select_on_start" else "no_change"}
             elif plan.strategy == "trial_boundary" or plan.module == "processing" and plan.strategy == "module":
                 result = await self._apply_pipeline(stored, previous, progress)
-            elif plan.strategy == "module":
+            elif plan.module in OUTPUT_MODULES:
                 result = await self._apply_output(stored, previous, progress)
             elif plan.module == "processing":
                 result = await self._rebuild_processing(stored, previous, progress)
@@ -327,71 +307,59 @@ class RuntimeApplyCoordinator:
             await asyncio.to_thread(self.signal_preparer)
 
     async def _apply_output(self, stored, previous, progress):
-        module = stored.plan.module
-        before = self.engine.applied_snapshot
-        target = self._runtime_target(stored)
-        active = (self.stimulation.is_active or self.stimulation.process_alive) if module == "stimulation" else self._actuation_active()
-        if active:
-            target = self.engine.prepare_plugins(target, (module,))
+        role = stored.plan.module
+        owner = self.stimulation if role == "stimulation" else self.actuation
+        before = owner.applied_snapshot
+        target = self.profiles.materialize(ActivationSet(stored.candidates, None))
+        active = owner.is_active
         written = []
-        replacing = False
-        startup_pending = False
-        started = False
-        try:
-            progress("pausing_output")
-            if active:
-                event = EventType.PauseStimulation if module == "stimulation" else EventType.SettleActuation
-                data = await self._request(event)
-                flags = ("paused", "renderer_stopped") if module == "stimulation" else ("paused", "execution_complete", "outputs_settled")
-                self._receipt(data, before, *flags, module=module)
-            if module == "stimulation":
-                await self._stop_stimulation()
+
+        async def restore(snapshot):
+            if not snapshot.get(f"{role.upper()}.auto_spawn", True):
+                await asyncio.to_thread(owner.prepare_external, snapshot)
+            elif active:
+                if role == "actuation":
+                    await owner.start(snapshot)
+                else:
+                    await asyncio.to_thread(owner.handle_start_stimulation, StartStimulationCommand(),
+                                            settings_snapshot=snapshot)
+
+        async def release():
+            if role == "actuation":
+                await owner.release()
             else:
-                await self.engine.stop_actuation_for_configuration()
-            replacing = True
+                await asyncio.to_thread(owner.stop)
+
+        if role == "stimulation" and active:
+            progress("pausing_output")
+            try:
+                response = await asyncio.to_thread(owner.request, EventType.PauseStimulation)
+                self._receipt(response.data, before, "paused", "renderer_stopped", module=role)
+            except Exception as exc:
+                raise RuntimeApplyFailure(f"Stimulation pause unconfirmed: {exc}", recovery_required=True) from exc
+        try:
+            if role == "actuation" and active:
+                progress("settling_actuation")
+            await release()
+        except Exception as exc:
+            raise RuntimeApplyFailure(f"{role.title()} stop unconfirmed: {exc}", recovery_required=True) from exc
+        try:
             progress("replacing_output")
-            await self.engine.reconfigure_output_modules(target, (module,))
-            startup_pending = True
-            started = await self._start_output(module, target, active)
-            startup_pending = False
-            self.engine.acknowledge_configuration(target, modules=(module,))
+            await restore(target)
             progress("persisting")
             written = self._persist(stored, previous)
         except Exception as exc:
-            if (not replacing or startup_pending or isinstance(exc, CommandTimeoutError)
-                    or getattr(exc, "recovery_required", False)):
-                raise RuntimeApplyFailure(f"Output update requires recovery: {exc}", recovery_required=True) from exc
-            progress("rolling_back_output")
+            if self.engine.admission.requires_recovery(role) or getattr(exc, "recovery_required", False):
+                raise RuntimeApplyFailure(str(exc), recovery_required=True) from exc
             try:
-                if started:
-                    event = EventType.PauseStimulation if module == "stimulation" else EventType.SettleActuation
-                    data = await self._request(event)
-                    flags = ("paused", "renderer_stopped") if module == "stimulation" else ("paused", "execution_complete", "outputs_settled")
-                    self._receipt(data, target, *flags, module=module)
-                if module == "stimulation":
-                    await self._stop_stimulation()
-                else:
-                    await self.engine.stop_actuation_for_configuration()
+                await release()
                 self._rollback_saved(stored, previous, written)
                 self._check_selected(previous, stored.plan.expected_revisions)
-                await self.engine.reconfigure_output_modules(before, (module,))
-                await self._start_output(module, before, active)
-                self.engine.acknowledge_configuration(before, modules=(module,))
+                await restore(before)
             except Exception as recovery:
-                raise RuntimeApplyFailure(f"Output update failed: {exc}; recovery failed: {recovery}",
-                                          recovery_required=True) from recovery
-            raise RuntimeApplyFailure(f"Output update failed; previous module restored: {exc}", rolled_back=True) from exc
+                raise RuntimeApplyFailure(f"{role.title()} restoration failed: {recovery}", recovery_required=True) from recovery
+            raise RuntimeApplyFailure(f"Previous {role.title()} configuration restored: {exc}", rolled_back=True) from exc
         return {"outcome": "applied", "boundary": "module"}
-
-    async def _start_output(self, module, snapshot, active):
-        if not active or not snapshot.get(f"{module.upper()}.auto_spawn", True):
-            return False
-        if module == "stimulation":
-            await asyncio.to_thread(self.stimulation.handle_start_stimulation, StartStimulationCommand(),
-                                    settings_snapshot=snapshot)
-        else:
-            await self.engine.start_module_for_configuration("actuation", snapshot)
-        return True
 
     async def _request(self, event_type, payload=None, **kwargs):
         result = await asyncio.to_thread(self.commands.request, event_type, payload, **kwargs)
@@ -413,10 +381,6 @@ class RuntimeApplyCoordinator:
         return data
 
     async def _quiesce(self, before, state, progress):
-        if state.stimulation:
-            progress("pausing_stimulation")
-            data = await self._request(EventType.PauseStimulation)
-            self._receipt(data, before, "paused", "renderer_stopped", module="stimulation")
         receipt = None
         if self.engine.is_module_running("acquisition"):
             progress("draining")
@@ -427,10 +391,6 @@ class RuntimeApplyCoordinator:
                 or self.engine.is_module_running("processing")
                 and receipt.processing_revision != before["CONFIG.module_revisions"]["processing"]):
             raise RuntimeError("Drain receipt belongs to a different configuration")
-        if state.actuation:
-            progress("settling_actuation")
-            data = await self._request(EventType.SettleActuation)
-            self._receipt(data, before, "paused", "execution_complete", "outputs_settled", module="actuation")
         if state.connected:
             data = await self._request(EventType.GetSourceCheckpoint, self._identity(before))
             if (not isinstance(data, dict) or data.get("generation") != before.get("CONFIG.generation")
@@ -449,10 +409,6 @@ class RuntimeApplyCoordinator:
                 )
         return receipt
 
-    async def _stop_stimulation(self):
-        if self.stimulation.is_active or self.stimulation.process_alive:
-            await asyncio.to_thread(self.stimulation.handle_stop_stimulation, StopStimulationCommand())
-
     async def _restore_ready(self, snapshot, state, checkpoint,
                              *, require_live_resume=False):
         await self.engine.start_for_configuration(snapshot)
@@ -465,11 +421,6 @@ class RuntimeApplyCoordinator:
                                                         require_live_resume=require_live_resume)
         if state.streaming and self.signal_preparer is not None:
             await asyncio.to_thread(self.signal_preparer)
-        if state.actuation:
-            await self.engine.start_module_for_configuration("actuation", running)
-        if state.stimulation:
-            await asyncio.to_thread(self.stimulation.handle_start_stimulation, StartStimulationCommand(),
-                                    settings_snapshot=running)
         return resumed_checkpoint
 
     async def _restore_source(self, running, state, checkpoint, *, require_live_resume=False):
@@ -502,7 +453,7 @@ class RuntimeApplyCoordinator:
         before = self.engine.applied_snapshot
         target = self.engine.prepare_plugins(self._runtime_target(stored), (module,))
         source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
-        state = _RestoreState(source.connected, source.streaming, False)
+        state = _RestoreState(source.connected, source.streaming)
         stopped = resumed = False
         written = []
         try:
@@ -595,19 +546,14 @@ class RuntimeApplyCoordinator:
         target = self.profiles.materialize(candidate)
         source = self.acquisition.handle_get_status(GetAcquisitionStatusQuery())
         state = _RestoreState(source.connected, source.streaming,
-                              self.stimulation.is_active or self.stimulation.process_alive,
-                              actuation=self._actuation_active(),
                               acquisition=self.engine.is_module_running("acquisition"),
                               processing=self.engine.is_module_running("processing"))
-        target = self.engine.prepare_plugins(target, tuple(module for module in (
-            'acquisition', 'processing', 'stimulation', 'actuation',
-        ) if getattr(state, module)))
+        target = self.engine.prepare_plugins(target, tuple(module for module in ENGINE_MODULES if getattr(state, module)))
         stopped = False
         resumed = False
         written = []
         try:
             receipt = await self._quiesce(before, state, progress)
-            await self._stop_stimulation()
             progress("stopping")
             await self.engine.stop_for_configuration()
             stopped = True
@@ -643,16 +589,6 @@ class RuntimeApplyCoordinator:
                 ) from exc
             progress("rolling_back")
             try:
-                if state.actuation:
-                    if not self.engine.is_engine_ready:
-                        raise RuntimeError("Candidate actuator startup outcome is unknown; cannot recreate an output driver")
-                    running = self.engine.applied_snapshot
-                    data = await self._request(EventType.SettleActuation)
-                    self._receipt(data, running, "paused", "execution_complete", "outputs_settled", module="actuation")
-                if self.stimulation.is_active or self.stimulation.process_alive:
-                    data = await self._request(EventType.PauseStimulation)
-                    self._receipt(data, self.engine.applied_snapshot, "paused", "renderer_stopped", module="stimulation")
-                await self._stop_stimulation()
                 await self.engine.stop_for_configuration()
                 self.acquisition.reset()
                 self._rollback_saved(stored, previous, written)

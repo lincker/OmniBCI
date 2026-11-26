@@ -10,11 +10,11 @@ machine in a multi-machine deployment, with ACTUATION.auto_spawn = false):
 
 The process:
   1. Fetches its configuration from --server (or OMNIBCI_SERVER_URL)
-  2. Loads its pinned Effector and verifies the matching engine revision and
-     generation before executing commands
+  2. Loads its pinned Effector and registers the Actuation session and operation
+     before accepting an enable request
   3. Executes ActuationCommand events via Effector.execute(command),
      acking each (ActuationAck) or reporting failure (ActuationFault)
-  4. Publishes a heartbeat (ActuationState) so the engine's link watchdog
+  4. Publishes a heartbeat (ActuationState) so the server's link watchdog
      stays quiet
 
 Press Ctrl-C to exit (the effector is torn down on the way out).

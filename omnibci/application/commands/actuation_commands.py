@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import math
+import time
+from uuid import uuid4
+
+from omnibci.application.events import TrialOutcome
+from omnibci.domain.classification import Classification
 
 
 def _integer(value):
@@ -144,3 +149,17 @@ def validate_actuation_command(payload: object) -> ActuationIntent:
     if set(payload) != {"command_id", "issued_at", "origin", "parameters"}:
         raise InvalidActuationCommand("payload has missing or unknown envelope fields")
     return ActuationIntent(**payload)
+
+
+def intent_from_trial(outcome):
+    """Carry the producer's trial identity across the independent output session."""
+    if not isinstance(outcome, TrialOutcome) or not isinstance(outcome.classification, Classification):
+        raise ValueError("Actuation requires a canonical TrialOutcome")
+    result = outcome.classification
+    return ActuationIntent(
+        command_id=uuid4().hex, issued_at=time.time(),
+        origin={"generation": outcome.generation, "trial_number": outcome.trial_number,
+                "processing_revision": outcome.processing_revision, "acquisition_revision": outcome.acquisition_revision,
+                "forced": result.forced, "produced_at": result.produced_at.isoformat()},
+        parameters={"target_id": result.target_id, "event_id": result.event_id, "confidence": result.confidence},
+    )

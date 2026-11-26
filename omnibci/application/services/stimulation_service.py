@@ -3,196 +3,145 @@ StimulationAppService — Application Service.
 
 Manages stimulation paradigm lifecycle through domain events.
 """
-from __future__ import annotations
+from threading import Lock
 
-import logging
-from contextlib import nullcontext
-from omnibci.application.runtime_admission import admitted
-from typing import TYPE_CHECKING
-
-from omnibci.shared.events import EventType, Event
-from omnibci.application.commands.stimulation_commands import (
-    StartStimulationCommand,
-    StopStimulationCommand,
-    StartStimTrialCommand,
-)
-from omnibci.application.ports.engine_port import EnginePort, STIMULATION_PEER
+from omnibci.application.commands.stimulation_commands import StartStimulationCommand, StopStimulationCommand, StartStimTrialCommand
+from omnibci.application.ports.ipc_port import STIMULATION_PEER
 from omnibci.application.ports.output_process import StimulationProcess
 from omnibci.application.services.command_result_service import CommandDeliveryError, CommandTimeoutError
-
-if TYPE_CHECKING:
-    from omnibci.application.services.command_result_service import CommandResultBroker
-
-logger = logging.getLogger(__name__)
+from omnibci.application.services.output_session import OutputSession
+from omnibci.shared.events import Event, EventType
 
 
-class StimulationAppService:
-    """Own stimulation startup readiness and explicit output shutdown."""
+class StimulationAppService(OutputSession[StimulationProcess]):
+    """Own one prepared or active stimulation session until cleanup is confirmed."""
+    role = STIMULATION_PEER
 
-    def __init__(
-        self,
-        engine: EnginePort,
-        process_manager: StimulationProcess | None = None,
-        command_results: "CommandResultBroker | None" = None,
-        admission=None,
-    ) -> None:
-        self._admission = admission
-        self._engine          = engine
-        self._process_manager = process_manager
-        self._command_results = command_results
-        self._active_identity = None
-        self._stop_managed = None
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._commands_lock = Lock()
 
-    def handle_start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot: dict) -> None:
-        with self._admission.transition("stimulation") if self._admission is not None else nullcontext():
-            self._start_stimulation(settings_snapshot=settings_snapshot)
+    @property
+    def current_paradigm(self):
+        return self._process_manager.current_paradigm if self._process_manager else None
 
-    def _start_stimulation(self, *, settings_snapshot: dict) -> None:
-        if self._stop_managed is not None:
-            raise RuntimeError("Stimulation stop is unconfirmed; replacement is blocked")
-        if not self._engine.is_engine_ready:
-            raise RuntimeError("Start the engine before starting stimulation")
-        process_ready = False
-        self._active_identity = None
-        snapshot = settings_snapshot
-        try:
-            self._engine.ensure_output_ready_sync("stimulation", snapshot)
-            if self._process_manager is not None:
-                # Managed mode blocks here until IPC + renderer/paradigm setup
-                # has reported READY.  External mode remains an immediate no-op.
-                self._process_manager.start(settings_snapshot=snapshot)
-                process_ready = True
-                if not self._process_manager.auto_spawn:
-                    if not self._engine.is_peer_connected(STIMULATION_PEER):
-                        raise RuntimeError(
-                            "External stimulation process is not connected"
-                        )
-        except BaseException:
-            # Keep a failed readiness check from leaving a locally owned renderer.
-            if self._process_manager is not None and process_ready:
+    def status(self, engine_ready):
+        # Read process state outside _state_lock so slow child join() calls
+        # cannot stall callers that only inspect in-memory session state.
+        process_alive = self.process_alive
+        paradigm = self.current_paradigm
+        with self._state_lock:
+            snapshot = self._snapshot
+            enabled = self._enabled
+        managed = snapshot is not None and snapshot.get(self.auto_spawn_key, True)
+        if managed and enabled and not process_alive:
+            self._observe_managed_exit(process_alive=False)
+        connected = self.is_connected
+        active = bool(enabled and (process_alive if managed else connected))
+        return {"active": active, "connected": connected, "process_alive": process_alive,
+                "engine_linked": bool(engine_ready and active and connected and self._admitted_for_feedback()),
+                "paradigm": paradigm}
+
+    def handle_start_stimulation(self, cmd: StartStimulationCommand, *, settings_snapshot: dict):
+        with self._admission.transition(STIMULATION_PEER):
+            snapshot = self._prepare(settings_snapshot)
+            if self.is_active:
+                return "started"
+            if snapshot.get("STIMULATION.auto_spawn", True):
                 try:
-                    self._process_manager.stop()
-                except BaseException:
-                    logger.exception(
-                        "Failed to roll back Stimulation process after startup error"
-                    )
-            self._active_identity = None
-            raise
-        self._active_identity = self._identity(snapshot)
-        logger.info("Stimulation startup confirmed")
+                    if self._process_manager is None:
+                        raise RuntimeError("No managed Stimulation process is configured")
+                    self._process_manager.start(settings_snapshot=snapshot)
+                except BaseException as exc:
+                    try:
+                        self.stop()
+                    except BaseException as cleanup:
+                        exc.add_note(f"Stimulation cleanup also failed: {cleanup}")
+                    raise
+            elif not self.is_connected:
+                return "prepared"
+            with self._state_lock:
+                self._enabled = True
+            return "started"
 
-    def handle_stop_stimulation(self, cmd: StopStimulationCommand) -> None:
-        with self._admission.stop_transition_sync("stimulation") if self._admission is not None else nullcontext():
-            if self._stop_managed is None:
-                self._stop_managed = self._managed()
+    def _release_session(self):
+        self.stop()
+
+    def stop(self):
+        with self._admission.stop_transition_sync(STIMULATION_PEER):
+            snapshot = self.applied_snapshot
+            if snapshot is None:
+                self._clear()
+                return
+            with self._state_lock:
+                self._enabled = False
             try:
-                self._stop_stimulation(cmd)
-            except Exception as exc:
-                if self._admission is not None:
-                    self._admission.quarantine(str(exc), "stimulation")
+                if snapshot.get("STIMULATION.auto_spawn", True):
+                    dispatch_error = None
+                    try:
+                        if self.is_connected:
+                            self._host.dispatch(Event(EventType.StopStimulation))
+                    except BaseException as exc:
+                        dispatch_error = exc
+                    try:
+                        if self._process_manager is not None:
+                            self._process_manager.stop()
+                    except BaseException as stop_exc:
+                        if dispatch_error is not None:
+                            dispatch_error.add_note(f"Stimulation process stop also failed: {stop_exc}")
+                            raise dispatch_error
+                        raise
+                    if dispatch_error is not None:
+                        raise dispatch_error
+                elif not self._stop_confirmed:
+                    if self._host.cancel_unaccepted_peer(STIMULATION_PEER):
+                        self._clear()
+                        return
+                    if not self._host.is_peer_ready(STIMULATION_PEER):
+                        self._host.ensure_peer_ready_sync(STIMULATION_PEER, snapshot)
+                    self._command_results.request(EventType.StopStimulation)
+                    self._stop_confirmed = True
+                self._host.close_peer_sync(STIMULATION_PEER)
+            except BaseException as exc:
+                self._admission.quarantine(str(exc), STIMULATION_PEER)
                 raise
-            self._stop_managed = None
-            if self._admission is not None:
-                self._admission.clear_quarantine("stimulation")
+            self._clear()
 
-    def _stop_stimulation(self, cmd: StopStimulationCommand) -> None:
-        if not self._engine.is_engine_ready and self._managed() and self._process_manager is not None:
-            self._process_manager.stop()
-            self._active_identity = None
-            return
-        try:
-            if (
-                self._command_results is not None
-                and (
-                    self._process_manager is None
-                    or not self._managed()
-                )
-            ):
-                # An externally-managed process cannot be joined locally, so
-                # require its own correlated receipt before reporting success.
-                self._command_results.request(EventType.StopStimulation)
-            else:
-                self._put_event(EventType.StopStimulation)
-        except (CommandDeliveryError, CommandTimeoutError):
-            # A stop that was not sent or never confirmed does not release the
-            # external renderer. Preserve ownership until a retry is confirmed.
-            raise
-        except BaseException:
-            # The engine may already be down, but the locally-owned renderer
-            # still has to stop.  Never replace the dispatch error with a
-            # secondary process-cleanup failure.
+    def handle_stop_stimulation(self, cmd: StopStimulationCommand):
+        self.stop()
+
+    def request(self, event_type, payload=None):
+        with self._commands_lock, self._admission.command(STIMULATION_PEER):
+            if not self.is_active or not self.is_connected:
+                raise RuntimeError("Start stimulation before starting a trial" if event_type == EventType.StartStimTrial
+                                   else "Start stimulation before sending a command")
             try:
-                if self._process_manager is not None and self._managed():
-                    self._process_manager.stop()
-                    self._active_identity = None
-            except BaseException:
-                logger.exception(
-                    "Failed to stop Stimulation process after dispatch error"
-                )
-            raise
-        else:
-            if self._process_manager is not None:
-                self._process_manager.stop()
-            self._active_identity = None
-        logger.info("StopStimulation event dispatched")
+                return self._command_results.request(event_type, payload)
+            except (CommandTimeoutError, CommandDeliveryError) as exc:
+                if isinstance(exc, CommandTimeoutError) or exc.execution_unknown:
+                    self._admission.quarantine(str(exc), STIMULATION_PEER)
+                raise
 
-    @admitted(scopes="stimulation")
-    def handle_start_trial(self, cmd: StartStimTrialCommand) -> None:
-        if self._stop_managed is not None:
-            raise RuntimeError("Stimulation stop is unconfirmed; trials are blocked")
-        if not self.is_active:
-            raise RuntimeError("Start stimulation before starting a trial")
-        # JSON-friendly payload: it crosses the engine→stimulation socket, where
-        # decode_event_body reconstructs only plain JSON (no dataclass), so the
-        # stimulation side reads this dict directly.
-        payload = {"n_trials": cmd.n_trials, "trial_params": cmd.trial_params}
-        if self._command_results is not None:
-            # The stimulation consumer answers only when the first requested
-            # trial has actually entered present_trial(), not when it is queued.
-            self._command_results.request(EventType.StartStimTrial, payload)
-        else:
-            self._put_event(EventType.StartStimTrial, data=payload)
-        logger.info("StartStimTrial event dispatched (n_trials=%s)", cmd.n_trials)
+    def handle_start_trial(self, cmd: StartStimTrialCommand):
+        self.request(EventType.StartStimTrial, {"n_trials": cmd.n_trials, "trial_params": cmd.trial_params})
 
-    @property
-    def is_active(self) -> bool:
-        if self._active_identity is None or not self._engine.is_engine_ready:
+    def _admitted_for_feedback(self):
+        try:
+            with self._admission.command(STIMULATION_PEER):
+                return True
+        except RuntimeError:
             return False
-        if self._identity(self._engine.applied_snapshot) != self._active_identity:
+
+    def _forward_feedback(self, event=None):
+        try:
+            with self._admission.command(STIMULATION_PEER):
+                if not self.is_active or not self.is_connected:
+                    return False
+                if event is not None:
+                    self._host.dispatch(event)
+                return True
+        except RuntimeError:
             return False
-        if self._process_manager is not None:
-            if self._managed():
-                return self._process_manager.is_alive
-            return bool(self._engine.is_peer_connected(STIMULATION_PEER))
-        return True
 
-    @staticmethod
-    def _identity(snapshot):
-        snapshot = snapshot if isinstance(snapshot, dict) else {}
-        return (snapshot.get("CONFIG.generation"),
-                snapshot.get("CONFIG.module_revisions", {}).get("stimulation"))
-
-    def _managed(self) -> bool:
-        if self._stop_managed is not None:
-            return self._stop_managed
-        snapshot = self._engine.applied_snapshot
-        if isinstance(snapshot, dict) and "STIMULATION.auto_spawn" in snapshot:
-            return snapshot["STIMULATION.auto_spawn"]
-        return self._process_manager is not None and self._process_manager.auto_spawn
-
-    @property
-    def process_alive(self) -> bool:
-        """True when the Stimulation subprocess is running (auto_spawn mode only)."""
-        if self._process_manager is None:
-            return False
-        return self._process_manager.is_alive
-
-    @property
-    def current_paradigm(self) -> "str | None":
-        """Paradigm the running subprocess was spawned with (auto_spawn mode only)."""
-        if self._process_manager is None:
-            return None
-        return self._process_manager.current_paradigm
-
-    def _put_event(self, event_type: EventType, data=None) -> None:
-        self._engine.dispatch(Event(event_type, data))
+    def on_trial_completed(self, event):
+        self._forward_feedback(event)

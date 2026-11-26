@@ -17,9 +17,6 @@ from omnibci.infrastructure.ipc.data_manager import DataManager
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.neuroengine.engine import NeuroEngine
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.neuroengine.gateway import PeerGateway
-from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
-from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
 from omnibci.infrastructure.process_lifecycle import StartupChannel, StartupReporter
 
 
@@ -91,6 +88,7 @@ class NeuroEngineBuilder:
         # 2. Shared data buffer
         data_buffer = mp.Queue(cfg.queue_size)
         processing_active = mp.Event()
+        acquisition_stop_event = mp.Event()
         data_manager = DataManager(buffer=data_buffer, processing_active=processing_active)
         # Trial, epoch and source sequence counters outlive individual workers.
         runtime_counters = mp.Array("q", (0, 0, -1))
@@ -126,7 +124,7 @@ class NeuroEngineBuilder:
                         event_bus=event_bus, settings_snapshot=runtime_snapshot,
                         startup_reporter=reporter, preview_queue=preview_queue,
                         log_queue=acquisition_log_queue, processing_active=processing_active,
-                        runtime_counters=runtime_counters,
+                        runtime_counters=runtime_counters, stop_event=acquisition_stop_event,
                     )
                 else:
                     worker = SignalProcessingWorker(
@@ -145,11 +143,6 @@ class NeuroEngineBuilder:
                 reporter.close()
                 raise
 
-        # Output transports are prepared per module after the foundation starts.
-        peer_gateway = PeerGateway(event_bus)
-        actuation_translator = ActuationCommandTranslator(event_bus)
-        actuation_feedback = ActuationFeedbackHandler()
-
         # 6. Assemble engine
         return NeuroEngine(
             event_bus=event_bus,
@@ -159,15 +152,14 @@ class NeuroEngineBuilder:
             acquisition_command_queue=acquisition_command_queue,
             signal_processing_worker=None,
             processor_command_queue=processor_command_queue,
-            peer_gateway=peer_gateway,
             owned_ipc_queues=(event_queue, data_buffer, preview_queue, acquisition_log_queue),
             preview_cache=preview_cache,
             acquisition_logs=acquisition_logs,
-            actuation_translator=actuation_translator,
-            actuation_feedback=actuation_feedback,
             debug=cfg.debug,
             worker_factory=worker_factory,
             processing_active=processing_active,
+            acquisition_stop_event=acquisition_stop_event,
+            data_queue_size=cfg.queue_size,
             startup_timeout_s=cfg.startup_timeout_s,
             module_revisions=revisions, engine_revision=engine_revision,
             generation=generation,
