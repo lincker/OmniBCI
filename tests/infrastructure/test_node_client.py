@@ -219,68 +219,79 @@ def test_supervisor_never_retries_invalid_configuration_hardware_or_cleanup(monk
     sleeper.assert_not_called()
 
 
-@pytest.mark.parametrize('failure', [None, 'prepare', 'run'])
-def test_node_reserves_resources_before_construction_and_retains_failed_cleanup(monkeypatch, tmp_path, failure):
-    from omnibci.application.plugin_management.packages import PluginPackageConflictError
-    from tests.infrastructure.test_plugin_store_ownership import claim
-    root = tmp_path / 'plugins'
-    monkeypatch.setattr(node_client, 'fetch_node_configuration', lambda *args: configuration())
-    monkeypatch.setattr(node_client, 'materialize_node_configuration', lambda *args: {'PLUGINS.bindings': []})
+@pytest.mark.parametrize("failure", [None, "prepare", "run"])
+def test_node_prepares_and_restarts_without_creating_runtime_state_files(monkeypatch, tmp_path, failure):
+    root = tmp_path / "plugins"
+    monkeypatch.setattr(node_client, "fetch_node_configuration", lambda *args: configuration())
+    monkeypatch.setattr(node_client, "materialize_node_configuration", lambda *args: {"PLUGINS.bindings": []})
+    should_fail = failure
 
     def prepare(snapshot, modules):
-        if failure == 'prepare':
-            raise RuntimeError('static preparation failed')
+        if should_fail == "prepare":
+            raise RuntimeError("static preparation failed")
         return snapshot
 
     def construct(**kwargs):
-        controller = claim(root)
-        try:
-            with pytest.raises(PluginPackageConflictError, match='owner'):
-                with controller.mutation():
-                    pytest.fail('Node resources were not protected')
-        finally:
-            controller.close()
-        return Mock(run=Mock(return_value=False, side_effect=RuntimeError('cleanup failed') if failure == 'run' else None))
+        return Mock(run=Mock(return_value=False, side_effect=RuntimeError("cleanup failed") if should_fail == "run" else None))
 
     factory = Mock(side_effect=construct)
-    monkeypatch.setattr(node_client, 'PluginArtifactPreparer', lambda store: Mock(prepare_snapshot=prepare))
+    monkeypatch.setattr(node_client, "PluginArtifactPreparer", lambda store: Mock(prepare_snapshot=prepare))
     if failure:
-        with pytest.raises(RuntimeError, match='failed'):
-            node_client.run_configured_node('actuation', factory, server_url='http://server')
+        with pytest.raises(RuntimeError, match="failed"):
+            node_client.run_configured_node("actuation", factory, server_url="http://server")
     else:
-        node_client.run_configured_node('actuation', factory, server_url='http://server')
-    if failure == 'prepare':
+        node_client.run_configured_node("actuation", factory, server_url="http://server")
+    if failure == "prepare":
         factory.assert_not_called()
-    if failure == 'run':
-        owner = claim(root)
-        try:
-            with pytest.raises(PluginPackageConflictError, match='unconfirmed shutdown'):
-                with owner.mutation():
-                    pytest.fail('Cleanup failure admitted a package mutation')
-        finally:
-            owner.close()
-    else:
-        owner = claim(root)
-        owner.close()
+    state_dir = root / "state"
+    for forbidden in (".controller.active", ".stimulation.active", ".actuation.active",
+                      ".controller.lock", ".stimulation.lock", ".actuation.lock", "controller.json"):
+        assert not (state_dir / forbidden).exists()
+
+    # A subsequent run succeeds immediately after any prior failure without deleting files.
+    should_fail = None
+    node_client.run_configured_node("actuation", factory, server_url="http://server")
+    assert factory.call_count == (1 if failure == "prepare" else 2)
+
+
+@pytest.mark.parametrize("cleanup_confirmed", [True, False])
+def test_node_interrupt_propagates_cleanly_or_surfaces_failed_teardown(monkeypatch, tmp_path, cleanup_confirmed):
+    monkeypatch.setattr(node_client, "fetch_node_configuration", lambda *args: configuration())
+    monkeypatch.setattr(node_client, "materialize_node_configuration", lambda *args: {"PLUGINS.bindings": []})
+    monkeypatch.setattr(node_client, "PluginArtifactPreparer", lambda store: Mock(prepare_snapshot=lambda snapshot, modules: snapshot))
+
+    def construct(**kwargs):
+        return Mock(cleanup_confirmed=cleanup_confirmed, run=Mock(side_effect=KeyboardInterrupt()))
+
+    expected = KeyboardInterrupt if cleanup_confirmed else RuntimeError
+    with pytest.raises(expected):
+        node_client.run_configured_node("actuation", construct, server_url="http://server")
+    assert not (tmp_path / "plugins" / "state").exists()
 
 
 def test_supervisor_keeps_its_store_when_a_clean_restart_changes_the_environment(monkeypatch, tmp_path):
-    from omnibci.application.plugin_management.packages import PluginPackageConflictError
-    from tests.infrastructure.test_plugin_store_ownership import claim
-    root = tmp_path / 'plugins'
-    monkeypatch.setattr(node_client, 'fetch_node_configuration', lambda *args: configuration())
-    monkeypatch.setattr(node_client, 'materialize_node_configuration', lambda *args: {'PLUGINS.bindings': []})
-    monkeypatch.setattr(node_client.time, 'sleep', lambda _: None)
+    root = tmp_path / "plugins"
+    monkeypatch.setattr(node_client, "fetch_node_configuration", lambda *args: configuration())
+    monkeypatch.setattr(node_client, "materialize_node_configuration", lambda *args: {"PLUGINS.bindings": []})
+    monkeypatch.setattr(node_client.time, "sleep", lambda _: None)
+    seen_stores = []
     starts = []
 
+    def preparer(store):
+        seen_stores.append(store.plugin_dir)
+        return Mock(prepare_snapshot=lambda snapshot, modules: snapshot)
+
+    monkeypatch.setattr(node_client, "PluginArtifactPreparer", preparer)
+
     def construct(**kwargs):
-        with pytest.raises(PluginPackageConflictError, match='owner'):
-            claim(root, role='actuation')
-        starts.append(kwargs['settings_snapshot'])
+        starts.append(kwargs["settings_snapshot"])
+
         def run():
-            monkeypatch.setenv('OMNIBCI_PLUGIN_DIR', str(tmp_path / 'other-plugins'))
+            monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "other-plugins"))
             return len(starts) == 1
+
         return Mock(run=run)
 
-    node_client.run_configured_node('actuation', construct, server_url='http://server')
+    node_client.run_configured_node("actuation", construct, server_url="http://server")
     assert len(starts) == 2
+    assert seen_stores == [root.resolve(), root.resolve()]
