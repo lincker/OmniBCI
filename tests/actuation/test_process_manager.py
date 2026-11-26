@@ -10,6 +10,7 @@ from omnibci.infrastructure.plugin_management.preparation import execution_recei
 from tests.execution_helpers import output_bindings, synthetic_execution_snapshot
 
 from omnibci.infrastructure.process_lifecycle import (
+    CLEAN_FAILURE_EXITCODE,
     ChildProcessStartupError,
     ChildProcessStartupTimeout,
     ChildProcessState,
@@ -101,6 +102,76 @@ class TestSpawnMode:
     @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
     def test_forced_exit_cannot_claim_cleanup_even_with_zero_exitcode(self, process_factory):
         process, _ = _mock_process(exits_after_join=2)
+        process_factory.return_value = process
+        manager = ActuationProcessManager()
+        manager.start(settings_snapshot=_effector_snapshot())
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.stop()
+        process.terminate.assert_called_once()
+        assert manager.state is ChildProcessState.FAILED
+        with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+            manager.start(settings_snapshot=_effector_snapshot("replacement"))
+        assert process_factory.call_count == 1
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Event")
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_clean_failure_exitcode_confirms_cleanup_and_allows_retry(
+        self, mock_proc_cls, mock_event_cls, startup_pipe
+    ):
+        failed_startup_proc, _ = _mock_process(exits_after_join=1, pid=3001)
+        failed_startup_proc.exitcode = CLEAN_FAILURE_EXITCODE
+        mid_run_proc, mid_run_state = _mock_process(pid=3002)
+        retry_proc, _ = _mock_process(exits_after_join=1, pid=3003)
+        mock_proc_cls.side_effect = [failed_startup_proc, mid_run_proc, retry_proc]
+        mock_event_cls.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+        ready_report = StartupReport.ready(
+            "Actuation",
+            module_revisions={"actuation": "a" * 64},
+            engine_revision="b" * 64,
+            generation="run",
+            execution=execution_receipt(_effector_snapshot(), "actuation", "prepare-1"),
+        )
+        startup_pipe.receiver.recv.side_effect = [
+            StartupReport.failed(
+                "Actuation",
+                stage="initialization",
+                error=RuntimeError("device port busy"),
+                module_revisions={"actuation": "a" * 64},
+                engine_revision="b" * 64,
+                generation="run",
+            ),
+            ready_report,
+            ready_report,
+        ]
+        manager = ActuationProcessManager()
+
+        with pytest.raises(ChildProcessStartupError, match="device port busy"):
+            manager.start(settings_snapshot=_effector_snapshot())
+        assert manager.state is ChildProcessState.FAILED
+        assert not manager.is_alive
+        failed_startup_proc.close.assert_called_once()
+        manager.stop()
+
+        manager.start(settings_snapshot=_effector_snapshot())
+        mid_run_state["alive"] = False
+        mid_run_proc.exitcode = CLEAN_FAILURE_EXITCODE
+        manager.stop()
+        assert manager.state is ChildProcessState.FAILED
+        assert not manager.is_alive
+        mid_run_proc.close.assert_called_once()
+
+        manager.start(settings_snapshot=_effector_snapshot())
+        assert manager.state is ChildProcessState.READY
+        assert mock_proc_cls.call_count == 3
+        manager.stop()
+        assert manager.state is ChildProcessState.STOPPED
+
+    @patch("omnibci.infrastructure.actuation.process_manager.mp.Process")
+    def test_forced_exit_cannot_claim_cleanup_even_with_clean_failure_exitcode(
+        self, process_factory
+    ):
+        process, _ = _mock_process(exits_after_join=2)
+        process.exitcode = CLEAN_FAILURE_EXITCODE
         process_factory.return_value = process
         manager = ActuationProcessManager()
         manager.start(settings_snapshot=_effector_snapshot())
@@ -485,6 +556,36 @@ class TestChildEntryPoint:
         assert report.state is ChildProcessState.FAILED
         assert report.stage == "entrypoint"
         assert report.message == "configuration failed"
+        connection.close.assert_called_once_with()
+
+    @pytest.mark.parametrize("cleanup_confirmed", [True, False])
+    @patch("omnibci.infrastructure.actuation.application.Actuation")
+    def test_entrypoint_exits_with_clean_failure_code_only_when_cleanup_confirmed(
+        self, mock_actuation_cls, cleanup_confirmed
+    ):
+        connection = MagicMock()
+        mock_actuation_cls.return_value.cleanup_confirmed = cleanup_confirmed
+        mock_actuation_cls.return_value.run.side_effect = RuntimeError("device init failed")
+
+        if cleanup_confirmed:
+            with pytest.raises(SystemExit) as exc_info:
+                _run_actuation(
+                    stop_event=object(),
+                    startup_connection=connection,
+                    settings_snapshot={},
+                )
+            assert exc_info.value.code == CLEAN_FAILURE_EXITCODE
+        else:
+            with pytest.raises(RuntimeError, match="device init failed"):
+                _run_actuation(
+                    stop_event=object(),
+                    startup_connection=connection,
+                    settings_snapshot={},
+                )
+
+        report = connection.send.call_args.args[0]
+        assert report.state is ChildProcessState.FAILED
+        assert report.stage == "entrypoint"
         connection.close.assert_called_once_with()
 
 

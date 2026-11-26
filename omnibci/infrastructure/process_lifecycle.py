@@ -32,6 +32,7 @@ from omnibci.infrastructure.plugin_management.preparation import execution_recei
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL_S = 0.05
+CLEAN_FAILURE_EXITCODE = 65  # Startup/runtime error after confirmed child teardown.
 
 
 class ChildProcessState(StrEnum):
@@ -317,14 +318,19 @@ def run_managed_child(
         if startup_connection is not None
         else None
     )
+    app = None
     try:
         kwargs = {"stop_event": stop_event, "settings_snapshot": settings_snapshot}
         if reporter is not None:
             kwargs["startup_reporter"] = reporter
-        app_factory(**kwargs).run()
+        app = app_factory(**kwargs)
+        app.run()
     except BaseException as exc:
         if reporter is not None:
             reporter.failed("entrypoint", exc)
+        if getattr(app, "cleanup_confirmed", False) is True:
+            logger.exception("%s subprocess failed with confirmed cleanup", component)
+            raise SystemExit(CLEAN_FAILURE_EXITCODE) from exc
         raise
     finally:
         if reporter is not None:
@@ -606,7 +612,7 @@ class ManagedOutputProcessManager:
             raise RuntimeError(message)
 
         exitcode = process.exitcode
-        if exitcode != 0:
+        if exitcode not in (0, CLEAN_FAILURE_EXITCODE):
             self._cleanup_error = (
                 f"{self._COMPONENT_NAME} cleanup was not confirmed "
                 f"(pid={pid}, exitcode={exitcode}); replacement is blocked"
@@ -637,7 +643,11 @@ class ManagedOutputProcessManager:
         self._selection = None
         self.execution_receipt = None
         self._settings_snapshot = None
-        self._state = final_state
+        self._state = (
+            ChildProcessState.FAILED
+            if exitcode == CLEAN_FAILURE_EXITCODE
+            else final_state
+        )
 
     def _close_startup_receiver(self) -> None:
         receiver = self._startup_receiver

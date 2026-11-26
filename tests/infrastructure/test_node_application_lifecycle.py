@@ -21,6 +21,7 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
     class Driver:
         ready = False
         released = None
+        cleanup_confirmed = False
 
         def setup(self):
             lifecycle.append("setup")
@@ -29,6 +30,7 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
             self.ready = True
 
         async def start_async(self):
+            self.cleanup_confirmed = False
             try:
                 self.setup()
                 self.released = asyncio.Event()
@@ -46,6 +48,7 @@ def make_app(monkeypatch, role, *, external=True, setup_error=False, cleanup_err
                 self.released.set()
             if cleanup_error:
                 raise RuntimeError("hardware cleanup failed")
+            self.cleanup_confirmed = True
 
         def quiesce(self):
             lifecycle.append("quiesce")
@@ -123,6 +126,7 @@ def test_hardware_setup_failure_is_fatal_and_does_not_advertise_connection(monke
     app, peer, config, lifecycle, queue = make_app(monkeypatch, role, setup_error=True)
     with pytest.raises(RuntimeError, match="hardware setup failed"):
         app.run()
+    assert app.cleanup_confirmed is True
     peer.start.assert_not_awaited()
     peer.stop.assert_awaited_once()
     assert "teardown" in lifecycle
@@ -138,6 +142,7 @@ def test_hardware_cleanup_failure_never_returns_reconnect_marker(monkeypatch, ro
     peer.wait_until_connected.side_effect = disconnected
     with pytest.raises(RuntimeError, match="hardware cleanup failed"):
         app.run()
+    assert app.cleanup_confirmed is False
     peer.stop.assert_awaited_once()
 
 
@@ -152,7 +157,46 @@ def test_ipc_cleanup_failure_never_returns_reconnect_marker(monkeypatch, role):
     peer.stop.side_effect = RuntimeError("socket close failed")
     with pytest.raises((RuntimeError, ExceptionGroup), match="socket close failed|cleanup failed"):
         app.run()
+    assert app.cleanup_confirmed is False
     assert "teardown" in lifecycle
+
+
+@pytest.mark.parametrize("cleanup_error", [False, True])
+def test_managed_child_exit_code_distinguishes_confirmed_and_failed_cleanup(
+    monkeypatch, role, cleanup_error
+):
+    from omnibci.infrastructure.process_lifecycle import (
+        CLEAN_FAILURE_EXITCODE,
+        run_managed_child,
+    )
+
+    app, peer, config, lifecycle, queue = make_app(
+        monkeypatch, role, external=False, setup_error=True, cleanup_error=cleanup_error
+    )
+    peer.start.side_effect = None
+    connection = Mock()
+    if cleanup_error:
+        with pytest.raises((RuntimeError, BaseExceptionGroup)):
+            run_managed_child(
+                lambda **_: app,
+                component=role.capitalize(),
+                module=role,
+                startup_connection=connection,
+                settings_snapshot={},
+            )
+        assert app.cleanup_confirmed is False
+    else:
+        with pytest.raises(SystemExit) as exc_info:
+            run_managed_child(
+                lambda **_: app,
+                component=role.capitalize(),
+                module=role,
+                startup_connection=connection,
+                settings_snapshot={},
+            )
+        assert exc_info.value.code == CLEAN_FAILURE_EXITCODE
+        assert app.cleanup_confirmed is True
+    assert "setup" in lifecycle and "teardown" in lifecycle
 
 
 def test_unconfirmed_connection_failure_is_fatal(monkeypatch, role):
@@ -380,6 +424,7 @@ def test_trigger_clear_failure_is_fatal_and_still_closes_ipc(monkeypatch):
     app, steps = _make_trig_app(monkeypatch, clear_error=True)
     with pytest.raises(ExceptionGroup, match="cleanup also failed"):
         app.run()
+    assert app.cleanup_confirmed is False
     assert steps == ["trigger-clear", "trigger-clear", "trigger-teardown", "renderer-shutdown", "ipc-stop"]
 
 
@@ -387,6 +432,7 @@ def test_render_teardown_failure_still_clears_trigger_and_closes_renderer(monkey
     app, steps = _make_trig_app(monkeypatch, render_error=True)
     with pytest.raises(RuntimeError, match="renderer release unconfirmed"):
         app.run()
+    assert app.cleanup_confirmed is False
     assert steps == ["trigger-clear", "paradigm-teardown", "trigger-clear", "trigger-teardown", "renderer-shutdown", "ipc-stop"]
 
 
@@ -395,13 +441,22 @@ def test_failed_setup_clears_only_a_successfully_initialized_trigger(monkeypatch
     app, steps = _make_trig_app(monkeypatch, setup_error=True, initialize_trigger=initialize_trigger)
     with pytest.raises(RuntimeError, match="initialization failed"):
         app.run()
+    assert app.cleanup_confirmed is True
     assert steps == (["trigger-clear", "paradigm-teardown", "trigger-clear"] if initialize_trigger else []) + [
         "trigger-teardown", "renderer-shutdown", "ipc-stop"]
+
+
+def test_failed_setup_with_failed_trigger_cleanup_never_confirms_cleanup(monkeypatch):
+    app, steps = _make_trig_app(monkeypatch, setup_error=True, clear_error=True, external=False)
+    with pytest.raises(BaseExceptionGroup, match="cleanup also failed"):
+        app.run()
+    assert app.cleanup_confirmed is False
 
 
 def test_managed_shutdown_uses_same_trigger_lifecycle(monkeypatch):
     app, steps = _make_trig_app(monkeypatch, external=False)
     assert app.run() is False
+    assert app.cleanup_confirmed is True
     assert steps == ["trigger-clear", "paradigm-teardown", "trigger-clear", "trigger-teardown", "renderer-shutdown", "ipc-stop"]
 
 

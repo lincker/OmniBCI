@@ -78,6 +78,7 @@ class Stimulator:
         self._stop_requested = False
         self._owner_thread = None
         self._cleanup_error = None
+        self.cleanup_confirmed = False
         self._renderer_started = False
         self._trigger_started = False
         self._trigger_ready = False
@@ -163,6 +164,7 @@ class Stimulator:
         self._running = True
         self._stop_requested = False
         self._owner_thread = threading.get_ident()
+        self.cleanup_confirmed = False
         failure = None
         try:
             self._setup()
@@ -173,6 +175,7 @@ class Stimulator:
         finally:
             try:
                 self._cleanup()
+                self.cleanup_confirmed = True
             except BaseException as cleanup_error:
                 if failure is not None:
                     raise BaseExceptionGroup("Stimulation failed and cleanup also failed", [failure, cleanup_error])

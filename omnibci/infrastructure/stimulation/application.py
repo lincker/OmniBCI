@@ -72,6 +72,7 @@ class Stimulation:
         self._render_task = None  # The IPC process survives a closed render window.
         self._paused = False
         self._stop_requests = []
+        self.cleanup_confirmed = False
 
     def run(self):
         logger.info("Stimulation process starting")
@@ -92,6 +93,7 @@ class Stimulation:
     async def serve(self):
         startup_complete = False
         failure = None
+        self.cleanup_confirmed = False
         try:
             try:
                 # A cooperative stop can win the race before the spawned child
@@ -165,6 +167,11 @@ class Stimulation:
         finally:
             try:
                 await await_owned(asyncio.create_task(self._shutdown(failure)))
+                if (
+                    self._render_task is None
+                    or getattr(self.stimulator, "cleanup_confirmed", True) is True
+                ):
+                    self.cleanup_confirmed = True
             except BaseException as cleanup_error:
                 if failure is not None and cleanup_error is not failure:
                     if isinstance(failure, asyncio.CancelledError):
