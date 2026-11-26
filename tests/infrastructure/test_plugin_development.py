@@ -53,7 +53,7 @@ def test_invalid_development_timeout_fails_before_artifact_or_process_creation(d
     with pytest.raises(ConfigValidationError):
         development.develop_project(project, configuration, "effector", command_timeout=timeout)
     assert not list((project / ".omnibci-dev").glob("run-*"))
-    assert not (project / ".omnibci-dev/state/.controller.active").exists()
+    assert not (project / ".omnibci-dev/state").exists()
 
 
 def test_develop_cli_passes_explicit_host_command_timeout(development, tmp_path, monkeypatch):
@@ -153,11 +153,12 @@ def test_development_requires_explicit_local_current_configuration(development, 
         development._prepare_run(project, path, contribution, (), project / ".omnibci-dev")
 
 
-@pytest.mark.parametrize("settled", [True, False])
-def test_launch_cleanup_preserves_unknown_ownership_and_blocks_restart(development, tmp_path, monkeypatch, settled):
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_launch_cleanup_uses_child_exit_code_and_never_locks_workspace(development, tmp_path, monkeypatch, exit_code):
     project = source_project(tmp_path)
     configuration = configuration_file(tmp_path, ["effector"])
     starts = []
+    codes = iter([exit_code, 0])
     before = dict(os.environ)
 
     def spawn(command, **kwargs):
@@ -165,34 +166,26 @@ def test_launch_cleanup_preserves_unknown_ownership_and_blocks_restart(developme
         starts.append(run)
         assert kwargs["env"]["OMNIBCI_PLUGIN_DIR"] == str(run / "plugins")
         assert kwargs["env"]["OMNIBCI_CONFIG_DIR"] == str(run / "configuration")
-        (run / "shutdown.json").write_text(json.dumps({"shutdown_complete": settled}))
-        return SimpleNamespace(wait=lambda: 0)
+        code = next(codes)
+        return SimpleNamespace(wait=lambda: code)
 
     monkeypatch.setattr(development.subprocess, "Popen", spawn)
-    if settled:
+    if exit_code == 0:
         assert development.develop_project(project, configuration, "effector", port=8123) == 0
         assert not starts[0].exists()
         assert development.develop_project(project, configuration, "effector", port=8123) == 0
+        assert not starts[1].exists()
     else:
         with pytest.raises(PluginPackageConflictError, match="unconfirmed"):
             development.develop_project(project, configuration, "effector", port=8123)
         assert starts[0].exists()
-        with pytest.raises(PluginPackageConflictError, match="unconfirmed"):
-            development.develop_project(project, configuration, "effector", port=8123)
-        assert len(starts) == 1
+        assert not (starts[0] / "shutdown.json").exists()
+        # A subsequent run succeeds cleanly without manual marker deletion.
+        assert development.develop_project(project, configuration, "effector", port=8123) == 0
+        assert not starts[1].exists()
+        assert len(starts) == 2
+    assert not (project / ".omnibci-dev/state").exists()
     assert dict(os.environ) == before
-
-
-def test_shutdown_report_requires_a_boolean_and_no_retained_host_owner(development, tmp_path):
-    report = tmp_path / "shutdown.json"
-    for value in (1, "true", None, False):
-        report.write_text(json.dumps({"shutdown_complete": value}))
-        assert development._settled(tmp_path) is False
-    report.write_text(json.dumps({"shutdown_complete": True}))
-    marker = tmp_path / "plugins/state/.controller.active"
-    marker.parent.mkdir(parents=True)
-    marker.write_text("unconfirmed")
-    assert development._settled(tmp_path) is False
 
 
 def test_repeated_interrupts_request_cleanup_once_and_join_the_host(development):
@@ -203,28 +196,35 @@ def test_repeated_interrupts_request_cleanup_once_and_join_the_host(development)
     process.send_signal.assert_called_once()
 
 
-def test_failed_preparation_does_not_leave_a_restart_block(development, tmp_path):
+def test_failed_preparation_does_not_leave_artifacts_or_state(development, tmp_path):
     project = source_project(tmp_path)
     configuration = configuration_file(tmp_path, ["effector"])
     with pytest.raises(PackageInstallError):
         development.develop_project(project, configuration, "missing")
-    assert not (project / ".omnibci-dev/state/.controller.active").exists()
+    assert not (project / ".omnibci-dev/state").exists()
     assert not list((project / ".omnibci-dev").glob("run-*"))
 
 
-def test_interrupted_process_creation_keeps_unconfirmed_snapshot_and_restart_guard(development, tmp_path, monkeypatch):
+def test_interrupted_process_creation_retains_failed_snapshot_without_blocking_retry(development, tmp_path, monkeypatch):
     project = source_project(tmp_path)
     configuration = configuration_file(tmp_path, ["effector"])
+    attempts = 0
 
-    def interrupted(*args, **kwargs):
-        raise KeyboardInterrupt
+    def spawn(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise KeyboardInterrupt
+        return SimpleNamespace(wait=lambda: 0)
 
-    monkeypatch.setattr(development.subprocess, "Popen", interrupted)
+    monkeypatch.setattr(development.subprocess, "Popen", spawn)
     with pytest.raises(KeyboardInterrupt):
         development.develop_project(project, configuration, "effector")
-    assert list((project / ".omnibci-dev").glob("run-*"))
-    with pytest.raises(PluginPackageConflictError, match="unconfirmed"):
-        development.develop_project(project, configuration, "effector")
+    retained = list((project / ".omnibci-dev").glob("run-*"))
+    assert len(retained) == 1
+    assert not (project / ".omnibci-dev/state").exists()
+    assert development.develop_project(project, configuration, "effector") == 0
+    assert attempts == 2
 
 
 def test_development_workspace_cannot_redirect_to_another_store(tmp_path, monkeypatch):
