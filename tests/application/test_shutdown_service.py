@@ -63,3 +63,27 @@ async def test_failed_stop_can_be_retried_without_claiming_completion():
     assert await service.prepare() == ["engine: output stop unconfirmed"]
     assert await service.prepare() == []
     assert service.engine.shutdown.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_renderer_stop_still_stops_engine_and_resume_preserves_ipc():
+    from unittest.mock import Mock
+    from omnibci.application.runtime_admission import RuntimeAdmission
+    from omnibci.infrastructure.ipc.runtime import IpcRuntime
+
+    runtime = IpcRuntime()
+    runtime.start()
+    engine = SimpleNamespace(admission=RuntimeAdmission(), shutdown=AsyncMock())
+    stimulation = SimpleNamespace(stop=Mock(side_effect=[RuntimeError("renderer still active"), None]))
+    actuation = SimpleNamespace(stop=AsyncMock())
+    service = ServerShutdownService(engine=engine, configuration=None, stimulation=stimulation, actuation=actuation)
+    try:
+        assert await service.prepare() == ["stimulation: renderer still active"]
+        actuation.stop.assert_awaited_once()
+        assert engine.shutdown.await_count == 1 and runtime.is_ready
+        service.resume()
+        assert runtime.is_ready and stimulation.stop.call_count == 1
+        assert await service.prepare() == [] and runtime.is_ready
+    finally:
+        runtime.stop()
+    assert runtime.shutdown_complete

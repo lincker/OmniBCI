@@ -23,7 +23,7 @@ class TestStimulationStop:
     ):
         from omnibci.application.services.command_result_service import CommandDeliveryError
 
-        stimulation_service.handle_stop_stimulation = MagicMock(side_effect=CommandDeliveryError(
+        stimulation_service.stop = MagicMock(side_effect=CommandDeliveryError(
             "stim-stop", "StopStimulation", "Peer connection failed",
             execution_unknown=execution_unknown,
         ))
@@ -38,16 +38,18 @@ class TestStimulationStop:
         resp = api_client.post("/api/v1/stimulation/stop")
         assert resp.status_code == 200
 
-    def test_stop_without_engine_returns_503(self, api_client, engine_service):
+    def test_stop_without_engine_is_idempotent(self, api_client, engine_service):
         engine_service._engine = None
         resp = api_client.post("/api/v1/stimulation/stop")
-        assert resp.status_code == 503
+        assert resp.status_code == 200
 
 
 class TestStimulationTrial:
     @pytest.fixture(autouse=True)
-    def enabled(self, stimulation_service, engine_service):
-        stimulation_service._active_identity = stimulation_service._identity(engine_service.applied_snapshot)
+    def enabled(self, stimulation_service, stimulation_host, stimulation_snapshot):
+        from omnibci.application.commands.stimulation_commands import StartStimulationCommand
+        stimulation_host.is_peer_connected.return_value = True
+        stimulation_service.handle_start_stimulation(StartStimulationCommand(), settings_snapshot=stimulation_snapshot)
 
     def test_trial_start_returns_200(self, api_client, mock_engine):
         resp = api_client.post("/api/v1/stimulation/trial/start", json={"trial_params": [{"event_id": 0}]})
@@ -60,13 +62,13 @@ class TestStimulationTrial:
         )
         assert resp.status_code == 200
 
-    def test_trial_dispatches_event_with_spec(self, api_client, mock_engine):
+    def test_trial_dispatches_event_with_spec(self, api_client, stimulation_host):
         api_client.post(
             "/api/v1/stimulation/trial/start",
             json={"n_trials": 1, "trial_params": [{"event_id": 2}]},
         )
         from omnibci.shared.events import EventType
-        calls = mock_engine.dispatch.call_args_list
+        calls = stimulation_host.dispatch.call_args_list
         trial_calls = [c for c in calls if c[0][0].type == EventType.StartStimTrial]
         assert len(trial_calls) == 1
         assert trial_calls[0][0][0].data == {"n_trials": 1, "trial_params": [{"event_id": 2}]}
@@ -135,15 +137,15 @@ def test_stimulation_start_requires_configuration(api_client):
         api_client.app.dependency_overrides.pop(get_runtime_configuration, None)
 
 
-def test_stimulation_prepare_targets_only_stimulation_module(api_client, engine_service):
-    with patch.object(engine_service, "prepare_output", new_callable=AsyncMock) as operation:
+def test_stimulation_prepare_targets_only_stimulation_module(api_client, stimulation_service):
+    with patch.object(stimulation_service, "prepare_external") as operation:
         response = api_client.post("/api/v1/stimulation/prepare")
     assert response.status_code == 200
-    operation.assert_awaited_once_with("stimulation")
+    operation.assert_called_once_with()
 
 
-def test_stimulation_stop_targets_only_stimulation_module(api_client, engine_service):
-    with patch.object(engine_service, "stop_module", new_callable=AsyncMock) as operation:
+def test_stimulation_stop_targets_only_stimulation_module(api_client, stimulation_service):
+    with patch.object(stimulation_service, "stop") as operation:
         response = api_client.post("/api/v1/stimulation/stop")
     assert response.status_code == 200
-    operation.assert_awaited_once_with("stimulation")
+    operation.assert_called_once_with()

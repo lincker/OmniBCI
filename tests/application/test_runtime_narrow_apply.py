@@ -631,17 +631,18 @@ schema_version=1
     manager = ActuationProcessManager()
     engine = NeuroEngineService(lambda snapshot: NeuroEngineBuilder(settings_snapshot=snapshot).build(),
                                 plugin_preparer=prepare_runtime_plugins,
-                                actuation_process_manager=manager, snapshot_provider=lambda: profiles.materialize(profiles.selected_configuration()))
+                                snapshot_provider=lambda: profiles.materialize(profiles.selected_configuration()))
     await engine.startup()
     container = assemble(engine, admission=engine.admission,
-                         actuation_process_manager=manager)
+                         actuation_process_manager=manager, plugin_preparer=prepare_runtime_plugins)
+    container.ipc_runtime.start()
     signal = wire_signal_preparation(profiles, engine, container)
     register_engine_listeners(container)
     coordinator = RuntimeApplyCoordinator(engine, profiles, container.acquisition_service,
                                           container.stimulation_service,
-                                          container.command_results, repository=profiles.repository, signal_preparer=signal.prepare,
+                                          container.command_results, repository=profiles.repository, actuation=container.actuation_service, signal_preparer=signal.prepare,
                                           signal_detacher=signal.detach)
-    runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator)
+    runtime = RuntimeConfigurationService(profiles, engine, executor=coordinator, actuation=container.actuation_service)
     try:
         await engine.handle_start_engine(StartEngineCommand())
         async with engine.runtime_transition("acquisition"):
@@ -654,16 +655,14 @@ schema_version=1
             engine.acknowledge_configuration(prepared, modules=("processing",))
         await asyncio.to_thread(container.acquisition_service.handle_connect, ConnectDataProviderCommand())
         await asyncio.to_thread(container.acquisition_service.handle_start_stream, StartStreamCommand())
-        async with engine.runtime_transition("actuation"):
-            prepared = engine.prepare_plugins(engine.applied_snapshot, ("actuation",))
-            await engine.start_module_for_configuration("actuation", prepared)
-            engine.acknowledge_configuration(prepared, modules=("actuation",))
+        owner = container.actuation_service
+        await owner.start(profiles.materialize(profiles.selected_configuration(("actuation",))))
         await asyncio.sleep(.08)
         old_workers = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
         old_actuation = manager._process.pid
         generation = engine.generation
         bindings[-1] = {"slot": "actuation.effector", "profile_id": alternate.profile_id}
-        plan = runtime.plan("actuation", [bindings[-1]], expected_revision=engine.applied_revisions["actuation"], settings=runtime.profiles.repository.get_module("actuation").settings)
+        plan = runtime.plan("actuation", [bindings[-1]], expected_revision=owner.owner_identity()[2], settings=runtime.profiles.repository.get_module("actuation").settings)
         assert not plan.errors and plan.strategy == "module"
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
@@ -674,11 +673,15 @@ schema_version=1
         assert (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid) == old_workers
         assert engine.generation == generation
         assert container.acquisition_service.is_streaming
-        assert engine.applied_revisions["actuation"] == profiles.repository.get_module("actuation").revision == plan.target_revisions["actuation"]
+        assert owner.owner_identity()[2] == profiles.repository.get_module("actuation").revision == plan.target_revisions["actuation"]
         assert not (tmp_path / "restored.jsonl").exists()
     finally:
         await runtime.wait_for_idle()
-        await engine.handle_stop_engine(StopEngineCommand())
+        try:
+            await container.actuation_service.stop()
+            await engine.handle_stop_engine(StopEngineCommand())
+        finally:
+            container.ipc_runtime.stop()
 
 
 @pytest.mark.asyncio
@@ -718,26 +721,8 @@ async def test_processing_module_stage_failure_restores_only_confirmed_old_pipel
 def output_update(rebuild_harness):
     h = rebuild_harness(actuation=True)
     h.module = "actuation"
-    h.output_events = []
-    h.fail_output_start = False
-
-    async def stop_output():
-        h.output_events.append(("stop", h.engine.applied_revisions["actuation"]))
-
-    async def reconfigure(snapshot, modules):
-        assert modules == ("actuation",)
-        h.output_events.append(("reconfigure", snapshot["CONFIG.module_revisions"]["actuation"]))
-
-    async def start_output(module, snapshot):
-        assert module == "actuation"
-        revision = snapshot["CONFIG.module_revisions"]["actuation"]
-        h.output_events.append(("start", revision))
-        if h.fail_output_start:
-            raise RuntimeError("Candidate startup outcome unknown")
-
-    h.engine.stop_actuation_for_configuration = stop_output
-    h.engine.reconfigure_output_modules = reconfigure
-    h.engine.start_module_for_configuration = start_output
+    h.owner = h.runtime.actuation
+    h.manager = h.owner._process_manager
     settings = {**h.previous.settings(), "ACTUATION.watchdog_timeout_s": 3.0}
     bindings = [{"slot": item.slot, "profile_id": item.profile_id} for item in h.previous.modules["actuation"].bindings]
     h.plan = h.runtime.plan("actuation", bindings, expected_revision=h.previous.modules["actuation"].revision, settings=section_settings(settings, "actuation"))
@@ -765,48 +750,46 @@ async def test_output_address_change_is_local_and_failed_bind_restores_previous_
     import asyncio
     from unittest.mock import AsyncMock
 
-    from omnibci.infrastructure.neuroengine.gateway.peer_gateway import PeerGateway
-    from tests.neuroengine.test_neuro_engine import _make_engine
-    from tests.neuroengine.test_peer_gateway import FakeBus
-
     h = rebuild_harness()
     h.module = module
     for role in ("stimulation", "actuation"):
         selected = h.profiles.repository.get_module(role)
         settings = {**selected.settings, f"{role.upper()}.server_port": unused_tcp_port_factory()}
+        settings[f"{role.upper()}.auto_spawn"] = False
         h.profiles.repository.save_module(ModuleActivation(role, settings, selected.bindings),
                                          expected_revision=selected.revision)
     h.previous = h.profiles.selected_configuration()
     h.engine.applied_snapshot = {**h.profiles.materialize(h.previous), "CONFIG.generation": h.engine.generation}
     original = h.engine.applied_snapshot
-    bus = FakeBus()
-    gateway = PeerGateway(bus)
-    foundation = _make_engine(event_bus=bus, peer_gateway=gateway,
-                              generation=h.engine.generation, engine_revision=h.previous.engine.revision)
-    foundation._loop = asyncio.get_running_loop()
-    foundation._started = True
-    h.engine.reconfigure_output_modules = foundation.reconfigure_output_modules
-    h.engine.stop_actuation_for_configuration = AsyncMock()
     blocker = await asyncio.start_server(lambda reader, writer: writer.close(), "127.0.0.1", 0) if occupied else None
     port = blocker.sockets[0].getsockname()[1] if blocker else unused_tcp_port_factory()
+    from omnibci.infrastructure.ipc.runtime import IpcRuntime
+    from omnibci.application.services.stimulation_service import StimulationAppService
+    ipc = IpcRuntime()
+    ipc.start()
+    stimulation = StimulationAppService(ipc, admission=h.engine.admission)
+    h.runtime.stimulation = h.runtime.executor.stimulation = stimulation
+    from omnibci.application.services.actuation_service import ActuationAppService
+    actuation = ActuationAppService(ipc, admission=h.engine.admission)
+    h.runtime.actuation = h.runtime.executor.actuation = actuation
+    for output in (actuation, stimulation):
+        output.prepare_external(original)
+    peer = ipc._gateway.peer
     selected = h.previous.modules[module]
     h.plan = h.runtime.plan(module, [{"slot": item.slot, "profile_id": item.profile_id} for item in selected.bindings],
                             settings={**selected.settings, f"{module.upper()}.server_port": port},
                             expected_revision=selected.revision)
     assert h.plan.strategy == "module" and not h.plan.errors
-    await gateway.start()
     try:
-        for role in ("stimulation", "actuation"):
-            await foundation.ensure_output_ready(role, original)
         other = "actuation" if module == "stimulation" else "stimulation"
-        unrelated = gateway.peer(other)
+        unrelated = peer(other)
         operation = await apply(h)
         assert operation["status"] == ("failed" if occupied else "succeeded"), operation
         assert operation["rolled_back"] is occupied
-        listener = gateway.peer(module)._transport._server
+        listener = peer(module)._transport._server
         expected_port = original[f"{module.upper()}.server_port"] if occupied else port
-        assert listener.port == expected_port and gateway.peer(module).is_ready
-        assert gateway.peer(other) is unrelated and unrelated.is_ready
+        assert listener.port == expected_port and peer(module).is_ready
+        assert peer(other) is unrelated and unrelated.is_ready
         assert h.engine.generation == original["CONFIG.generation"]
         assert h.engine.applied_revisions["engine"] == h.previous.engine.revision
         assert h.engine.is_module_running("acquisition") and h.engine.is_module_running("processing")
@@ -818,7 +801,7 @@ async def test_output_address_change_is_local_and_failed_bind_restores_previous_
         else:
             assert h.profiles.repository.get_module(module).settings[f"{module.upper()}.server_port"] == port
     finally:
-        await gateway.stop()
+        ipc.stop()
         if blocker:
             blocker.close()
             await blocker.wait_closed()
@@ -827,10 +810,14 @@ async def test_output_address_change_is_local_and_failed_bind_restores_previous_
 @pytest.mark.asyncio
 async def test_unknown_output_start_never_recreates_previous_driver(output_update):
     h = output_update
-    h.fail_output_start = True
+    def unknown_start(**_):
+        h.manager.stop.side_effect = RuntimeError("Process cleanup was not confirmed")
+        raise RuntimeError("Candidate readiness timed out")
+    h.manager.start.side_effect = unknown_start
     operation = await apply(h)
     assert operation["status"] == "recovery_required" and not operation["rolled_back"]
-    assert [event[0] for event in h.output_events] == ["stop", "reconfigure", "start"]
+    assert h.manager.start.call_count == 2
+    assert h.owner.applied_snapshot["CONFIG.module_revisions"]["actuation"] == h.plan.target_revisions["actuation"]
     assert h.profiles.repository.get_module("actuation") == h.previous.modules["actuation"]
     assert h.profiles.repository.list_module_history("actuation") == []
     assert_quarantined(h)
@@ -840,26 +827,28 @@ async def test_unknown_output_start_never_recreates_previous_driver(output_updat
 @pytest.mark.parametrize("candidate_settles", [False, True])
 async def test_output_persistence_failure_settles_candidate_before_rollback(output_update, monkeypatch, candidate_settles):
     h = output_update
-    requested = h.commands.request
+    requested = h.owner._command_results.request.side_effect
     settlements = []
-    def request(event, payload=None, **kwargs):
-        if event is EventType.SettleActuation:
-            revision = h.engine.applied_revisions["actuation"]
-            settlements.append(revision)
-            if revision == h.plan.target_revisions["actuation"] and not candidate_settles:
-                raise RuntimeError("Cannot confirm candidate outputs")
-        return requested(event, payload, **kwargs)
+    def request(event):
+        revision = h.owner.applied_snapshot["CONFIG.module_revisions"]["actuation"]
+        settlements.append(revision)
+        if revision == h.plan.target_revisions["actuation"] and not candidate_settles:
+            raise RuntimeError("Cannot confirm candidate outputs")
+        return requested(event)
     def fail_save(*args, **kwargs):
         raise OSError("Failed to save selected output")
-    monkeypatch.setattr(h.commands, "request", request)
+    h.owner._command_results.request.side_effect = request
     monkeypatch.setattr(h.profiles.repository, "save_module", fail_save)
     operation = await apply(h)
     assert settlements == [h.previous.modules["actuation"].revision, h.plan.target_revisions["actuation"]]
     assert h.commands.restores == h.acquisition.starts == h.engine.starts == []
     if candidate_settles:
         assert operation["status"] == "failed" and operation["rolled_back"]
-        assert [event[0] for event in h.output_events] == ["stop", "reconfigure", "start"] * 2
+        assert h.manager.start.call_count == 3 and h.manager.stop.call_count == 2
+        assert h.owner.owner_identity()[2] == h.previous.modules["actuation"].revision
     else:
         assert operation["status"] == "recovery_required"
-        assert [event[0] for event in h.output_events] == ["stop", "reconfigure", "start"]
+        assert h.manager.start.call_count == 2 and h.manager.stop.call_count == 2
+        assert h.owner.owner_identity() == ("stopped", None, None)
+        assert h.owner.applied_snapshot["CONFIG.module_revisions"]["actuation"] == h.plan.target_revisions["actuation"]
         assert_quarantined(h)

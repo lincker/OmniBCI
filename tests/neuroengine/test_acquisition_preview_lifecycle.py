@@ -207,14 +207,15 @@ async def test_preview_consumer_keeps_processing_final_frames_during_both_worker
         await engine.start_module("processing", {})
         await asyncio.wait_for(engine._stop(), timeout=3)
         assert engine.shutdown_complete and cache.stopped
-        assert [item["sequence_id"] for item in cache.read("capture")["chunks"]] == [0, 1]
+        # SignalProcessingWorker (sequence 1) is joined before AcquisitionWorker (sequence 0).
+        assert [item["sequence_id"] for item in cache.read("capture")["chunks"]] == [1, 0]
     finally:
         await cache.stop()
         output.close()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["acquisition_start", "gateway_start"])
+@pytest.mark.parametrize("failure", ["acquisition_start", "event_bus_start"])
 async def test_engine_start_failure_stops_preview_and_closes_its_owned_channel(failure):
     output = PreviewChannel(context=mp.get_context("spawn"))
     cache = PreviewCache(output, generation="generation")
@@ -222,7 +223,7 @@ async def test_engine_start_failure_stops_preview_and_closes_its_owned_channel(f
     engine.acquisition_worker.is_alive.return_value = False
     engine.signal_processing_worker.is_alive.return_value = False
     failing_start = (engine.acquisition_worker.start if failure == "acquisition_start"
-                     else engine.peer_gateway.start)
+                     else engine.event_bus.start)
     failing_start.side_effect = RuntimeError("startup failed")
     try:
         if failure == "acquisition_start":
@@ -238,9 +239,8 @@ async def test_engine_start_failure_stops_preview_and_closes_its_owned_channel(f
         assert cache.read("capture")["available"] is False
         with pytest.raises(ValueError, match="closed"):
             output.put_nowait(_frame())
-        if failure == "gateway_start":
+        if failure == "event_bus_start":
             engine.event_bus.stop.assert_awaited_once()
-            engine.peer_gateway.stop.assert_awaited_once()
     finally:
         await cache.stop()
         output.close()
@@ -251,16 +251,16 @@ async def test_engine_rejects_restart_after_rollback_leaves_preview_consumer_run
     output = PreviewChannel(context=mp.get_context("spawn"))
     cache = PreviewCache(output, generation="generation")
     engine = _make_engine(preview_cache=cache, owned_ipc_queues=(output,))
-    engine.peer_gateway.start.side_effect = RuntimeError("gateway startup failed")
+    engine.event_bus.start.side_effect = RuntimeError("event bus startup failed")
     engine.acquisition_worker.is_alive.return_value = False
     engine.signal_processing_worker.is_alive.return_value = False
     stop = cache.stop
     monkeypatch.setattr(cache, "stop", AsyncMock(side_effect=RuntimeError("consumer shutdown failed")))
     try:
-        with pytest.raises(RuntimeError, match="gateway startup failed"):
+        with pytest.raises(RuntimeError, match="event bus startup failed"):
             await engine._start()
         assert not cache.stopped and not engine.shutdown_complete
-        engine.peer_gateway.start.side_effect = None
+        engine.event_bus.start.side_effect = None
 
         with pytest.raises(RuntimeError, match="partial lifecycle state"):
             await engine._start()
@@ -291,7 +291,6 @@ async def test_preview_stop_failure_continues_cleanup_but_preserves_active_consu
     with pytest.raises(ExceptionGroup, match="shutdown failed"):
         await engine._stop()
 
-    engine.peer_gateway.stop.assert_awaited_once()
     engine.event_bus.stop.assert_awaited_once()
     if consumer_stopped:
         output.close.assert_called_once()

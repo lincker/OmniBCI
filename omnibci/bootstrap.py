@@ -25,6 +25,7 @@ from omnibci.application.configuration.accepted import accepted_runtime_settings
 from omnibci.application.plugin_management.package_service import PluginPackageService
 from omnibci.application.plugin_management.market_service import PluginMarketService
 from omnibci.application.plugin_management.packages import package_references_from_settings
+from omnibci.infrastructure.ipc.runtime import IpcRuntime
 from omnibci.infrastructure.server_logging import ServerLogging
 from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
@@ -34,6 +35,7 @@ from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHi
 from omnibci.infrastructure.plugin_management.market import configured_market_service
 from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
+from omnibci.infrastructure.actuation.feedback import ActuationFeedbackHandler
 from omnibci.infrastructure.actuation.process_manager import ActuationProcessManager
 
 logger = logging.getLogger(__name__)
@@ -77,6 +79,7 @@ class AppContainer:
     # The composition root supplies the manager; lightweight service fixtures may omit it.
     actuation_process_manager: ActuationProcessManager | None = None
     actuation_service: ActuationAppService | None = None
+    actuation_feedback: ActuationFeedbackHandler | None = None
     # Shared correlation rendezvous for commands that must report actual worker
     # execution before REST returns success.
     command_results: CommandResultBroker | None = None
@@ -87,6 +90,7 @@ class AppContainer:
     plugin_market_service: PluginMarketService | None = None
     signal_setup_service: SignalSetupService | None = None
     package_owner: PluginStoreOwner | None = None
+    ipc_runtime: IpcRuntime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +105,10 @@ def assemble(
     actuation_process_manager: ActuationProcessManager | None = None,
     stimulation_process_manager: StimulationProcessManager | None = None,
     admission=None,
+    ipc_runtime=None,
+    plugin_preparer=None,
+    stimulation_snapshot=None,
+    actuation_snapshot=None,
 ) -> AppContainer:
     """Wire services around an existing engine without I/O."""
     command_timeout_s = (
@@ -108,6 +116,7 @@ def assemble(
         if settings is not None
         else 10.0
     )
+    admission = admission or engine_service.admission
     command_results = CommandResultBroker(
         engine_service,
         timeout_s=command_timeout_s,
@@ -121,26 +130,33 @@ def assemble(
         generation_provider=lambda: engine_service.generation,
     )
     process_manager = stimulation_process_manager or StimulationProcessManager()
-    actuation_service = ActuationAppService(
-        engine_service,
-        actuation_process_manager,
-        commands=command_results,
-    )
-    engine_service._actuation = actuation_service
+    ipc_runtime = ipc_runtime or IpcRuntime()
+    output_results = CommandResultBroker(ipc_runtime, timeout_s=command_timeout_s, admission=admission,
+                                         dispatcher_name="IPC")
+    stimulation = StimulationAppService(ipc_runtime, process_manager, output_results, admission,
+                                        plugin_preparer=plugin_preparer, snapshot_provider=stimulation_snapshot)
+    actuation = ActuationAppService(ipc_runtime, actuation_process_manager, output_results, admission,
+                                    plugin_preparer=plugin_preparer, snapshot_provider=actuation_snapshot)
+    ipc_runtime.subscribe(EventType.CommandResult, output_results.on_result)
+    ipc_runtime.subscribe(EventType.PeerDeliveryFault, stimulation.on_peer_delivery_fault)
+    ipc_runtime.subscribe(EventType.PeerDeliveryFault, actuation.on_peer_delivery_fault)
+    feedback = ActuationFeedbackHandler()
+    for event_type in (EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault):
+        ipc_runtime.subscribe(event_type, feedback.on_feedback)
+    engine_service._actuation = actuation
 
+    ipc_runtime.subscribe(EventType.StimulationAck, engine_service.on_stimulation_ack)
+    engine_service._stimulation = stimulation
     return AppContainer(
+        ipc_runtime=ipc_runtime,
         engine_service=engine_service,
         acquisition_service=acquisition_service,
-        stimulation_service=StimulationAppService(
-            engine_service,
-            process_manager,
-            command_results=command_results,
-            admission=admission,
-        ),
+        stimulation_service=stimulation,
         stimulation_process_manager=process_manager,
         results_service=ResultsService(lambda: engine_service.generation),
         actuation_process_manager=actuation_process_manager,
-        actuation_service=actuation_service,
+        actuation_service=actuation,
+        actuation_feedback=feedback,
         command_results=command_results,
     )
 
@@ -203,7 +219,6 @@ async def _build_container_services(host_settings, allow_process_termination, pa
             execution_history_root=repository.root,
         ).build(),
         snapshot_provider=startup_snapshot,
-        stimulation_process_manager=stimulation_manager,
         plugin_preparer=prepare_plugins,
     )
     await engine_service.startup()
@@ -211,6 +226,10 @@ async def _build_container_services(host_settings, allow_process_termination, pa
                          settings=host_settings, acquisition_settings=_RuntimeSettings(engine_service, configuration),
                          actuation_process_manager=actuation_manager,
                          stimulation_process_manager=stimulation_manager,
+                         ipc_runtime=IpcRuntime(record_execution=execution_history.record),
+                         plugin_preparer=prepare_plugins,
+                         stimulation_snapshot=lambda: configuration.materialize(configuration.selected_configuration(("stimulation",))),
+                         actuation_snapshot=lambda: configuration.materialize(configuration.selected_configuration(("actuation",))),
                          admission=engine_service.admission)
     container.configuration_service = configuration
     container.acquisition_service.set_metadata_binding(lambda: _acquisition_binding(engine_service))
@@ -225,9 +244,10 @@ async def _build_container_services(host_settings, allow_process_termination, pa
         stimulation=container.stimulation_service,
         actuation=container.actuation_service,
     )
-    container.node_configuration = NodeConfigurationService(engine_service, configuration)
+    container.node_configuration = NodeConfigurationService(configuration, stimulation=container.stimulation_service,
+                                                          actuation=container.actuation_service)
     container.runtime_configuration = RuntimeConfigurationService(
-        configuration, engine_service,
+        configuration, engine_service, stimulation=container.stimulation_service, actuation=container.actuation_service,
         reference_guard=lambda: package_references_lock,
         executor=RuntimeApplyCoordinator(engine_service, configuration, container.acquisition_service,
                                           container.stimulation_service,
@@ -240,8 +260,8 @@ async def _build_container_services(host_settings, allow_process_termination, pa
         package_store, configuration_references=configuration.package_references,
         runtime_references=lambda: tuple(
             reference
-            for snapshot in (*engine_service.runtime_package_snapshots,
-                             *container.runtime_configuration.pending_package_snapshots)
+            for snapshot in (*engine_service.runtime_package_snapshots, *container.stimulation_service.runtime_package_snapshots,
+                             *container.actuation_service.runtime_package_snapshots, *container.runtime_configuration.pending_package_snapshots)
             for reference in package_references_from_settings(snapshot)
         ),
         admission_guard=package_references_lock.mutation,
@@ -298,6 +318,16 @@ def register_engine_listeners(
         logger.warning("register_engine_listeners: engine not initialised — skipped")
         return 0
 
+    def forward_trial(event):
+        generation = getattr(event.data, "generation", None)
+        def engine_current():
+            return engine.is_engine_ready and generation == engine.generation
+
+        if engine_current():
+            if container.actuation_service is not None:
+                container.actuation_service.on_trial_completed(event, engine_current)
+            container.stimulation_service.on_trial_completed(event)
+
     subscriptions: list[tuple[EventType, Callable]] = [
         *(
             ((EventType.CommandResult, container.command_results.on_result),)
@@ -305,9 +335,9 @@ def register_engine_listeners(
             else ()
         ),
         (EventType.TrialCompleted, container.results_service.on_trial_completed),
+        (EventType.TrialCompleted, forward_trial),
         (EventType.EpochProcessed, container.results_service.on_epoch_processed),
         (EventType.AcquisitionState, container.acquisition_service.on_acquisition_state),
-        (EventType.PeerDeliveryFault, engine.on_peer_delivery_fault),
         *(
             ((EventType.ProcessingInputFault, container.signal_setup_service.on_input_fault),)
             if container.signal_setup_service is not None

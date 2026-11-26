@@ -19,9 +19,16 @@ type Attempt = {
   onApplied?: (operation: RuntimeOperation) => void;
 };
 
+export function isIndependentOutput(module: string): module is "stimulation" | "actuation" {
+  return module === "stimulation" || module === "actuation";
+}
+
+export function sharesRuntimeScope(a: string, b: string) {
+  return a === b || (!isIndependentOutput(a) && !isIndependentOutput(b) && (a === "engine" || b === "engine"));
+}
+
 function operationAffects(operation: RuntimeOperation, module: ConfigurationSection) {
-  return module === "engine" || operation.module === "engine"
-    || operation.affected_modules.includes("engine") || operation.affected_modules.includes(module);
+  return operation.affected_modules.some((section) => sharesRuntimeScope(section, module));
 }
 
 export function useRuntimeConfiguration() {
@@ -93,7 +100,7 @@ export function useRuntimeConfiguration() {
     const related = configurationSections.filter((section) => {
       const entry = values.current[section];
       const running = current?.operations?.[section];
-      return module === "engine" || section === "engine" || section === module
+      return sharesRuntimeScope(section, module)
         || !!running && operationActive(running) && operationAffects(running, module)
         || !!entry?.operation && operationActive(entry.operation) && operationAffects(entry.operation, module);
     });
@@ -102,11 +109,11 @@ export function useRuntimeConfiguration() {
       const entry = values.current[section];
       return entry?.submitting || entry?.uncertain || operationActive(entry?.operation) || operationActive(current?.operations?.[section]);
     });
-    const recoveryRequired = Object.keys(current?.recovery ?? {}).some((section) => module === "engine" || section === "engine" || section === module);
+    const recoveryRequired = Object.keys(current?.recovery ?? {}).some((section) => sharesRuntimeScope(section, module));
     const requestError = own.requestError;
     return { operation, completedOperation: own.completed, reviewing: !!own.reviewing, submitting: !!own.submitting,
       uncertain, ownUncertain: !!own.uncertain, recoveryError: current?.recovery?.[module], inProgress, recoveryRequired, blocked: !current?.operations || !current.recovery || inProgress || recoveryRequired || !!error
-        || !!current?.errors?.[module] || !!current?.errors?.engine,
+        || !!current?.errors?.[module] || !isIndependentOutput(module) && !!current?.errors?.engine,
       requestError: requestError && typeof requestError !== "string" ? t(requestError.key, requestError.params) : requestError ?? null };
   };
   const review = async (body: RuntimePlanRequest) => {

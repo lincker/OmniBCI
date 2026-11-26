@@ -335,79 +335,34 @@ def test_running_external_node_requires_preparation_operation(runtime, operation
         project_node_configuration(runtime, "actuation")
 
 
-@pytest.fixture
-def node_engine():
+def test_prepared_publication_uses_pinned_copy_without_reading_saved_files(actuation_service, runtime):
     from unittest.mock import Mock
-    from omnibci.application.services.engine_service import NeuroEngineService
-
-    return NeuroEngineService(engine_factory=Mock())
-
-
-def _running_node_engine(engine, snapshot):
-    from types import SimpleNamespace
-    from unittest.mock import Mock
-
-    engine._engine = Mock()
-    engine._running = engine._accepting_commands = True
-    engine._engine_thread = SimpleNamespace(is_alive=lambda: True)
-    engine._applied_snapshot = snapshot
-
-
-def test_running_publication_uses_applied_snapshot_without_reading_saved_files(node_engine):
-    from unittest.mock import Mock
-
-    _running_node_engine(
-        node_engine,
-        {
-            "CONFIG.module_revisions": {"acquisition": "running", "processing": "running", "stimulation": "running", "actuation": "running"},
-            "CONFIG.engine_revision": "c" * 64,
-            "nested": {"value": 1},
-        },
-    )
+    runtime["ACTUATION.auto_spawn"] = False
+    actuation_service.prepare_external(runtime)
     selected = Mock(side_effect=AssertionError("must not read saved configuration"))
-    state, snapshot = node_engine.node_configuration_snapshot(selected)
+    state, snapshot = actuation_service.node_configuration_snapshot(selected)
     assert state == "running"
-    assert snapshot["CONFIG.module_revisions"]["acquisition"] == "running"
-    snapshot["nested"]["value"] = 9
-    assert node_engine._applied_snapshot["nested"]["value"] == 1
+    snapshot["PLUGINS.bindings"].clear()
+    assert actuation_service.applied_snapshot["PLUGINS.bindings"]
 
 
-def test_idle_publication_ignores_historical_applied_snapshot(node_engine):
-    node_engine._applied_snapshot = {
-        "CONFIG.module_revisions": {"acquisition": "old", "processing": "old", "stimulation": "old", "actuation": "old"},
-        "CONFIG.engine_revision": "c" * 64,
-        "CONFIG.generation": "old",
-    }
-    expected = {
-        "CONFIG.module_revisions": {"acquisition": "selected", "processing": "selected", "stimulation": "selected", "actuation": "selected"},
-        "CONFIG.engine_revision": "c" * 64,
-    }
-    assert node_engine.node_configuration_snapshot(lambda: expected) == ("selected", expected)
+def test_idle_publication_uses_selected_values(actuation_service, runtime):
+    assert actuation_service.node_configuration_snapshot(lambda: runtime) == ("selected", runtime)
 
 
-@pytest.mark.parametrize("phase", ["starting", "stopping", "failed_stop", "dead_thread", "apply", "recovery"])
-def test_unsettled_runtime_never_publishes_a_node_configuration(node_engine, phase):
-    from unittest.mock import Mock
-    from omnibci.application.configuration.errors import ConfigProfileConflictError, ProfileRevisionConflict
-
-    selected = Mock(side_effect=AssertionError("must not read saved configuration"))
-    reservation = None
-    if phase in ("starting", "stopping"):
-        node_engine._transitioning = True
-    elif phase == "failed_stop":
-        node_engine._restart_blocked = True
-    elif phase == "dead_thread":
-        node_engine._running = True
-    elif phase == "apply":
-        reservation = node_engine.admission.reserve_transition()
-    else:
-        node_engine.admission.quarantine("uncertain cleanup")
+@pytest.mark.parametrize("scope", ["actuation", "all", "engine", "processing"])
+def test_node_publication_obeys_its_own_transition(actuation_service, engine_service, scope):
+    from omnibci.application.configuration.errors import ProfileRevisionConflict
+    gate = engine_service.admission
+    reservation = gate.reserve_transition(scope)
     try:
-        with pytest.raises((ProfileRevisionConflict, ConfigProfileConflictError)):
-            node_engine.node_configuration_snapshot(selected)
+        if scope in {"actuation", "all"}:
+            with pytest.raises(ProfileRevisionConflict):
+                actuation_service.node_configuration_snapshot(lambda: {})
+        else:
+            assert actuation_service.node_configuration_snapshot(lambda: {}) == ("selected", {})
     finally:
-        if reservation is not None:
-            node_engine.admission.release_reservation(reservation)
+        gate.release_reservation(reservation)
 
 
 @pytest.mark.parametrize(("role", "snapshot", "message"), [
@@ -421,43 +376,19 @@ def test_node_endpoint_rejects_unowned_roles(role, snapshot, message):
     from omnibci.application.configuration.errors import ConfigProfileConflictError
     from omnibci.application.services.node_configuration_service import NodeConfigurationService
 
-    engine = SimpleNamespace(node_configuration_snapshot=lambda selected, *, module: ("running", snapshot))
+    owner = SimpleNamespace(node_configuration_snapshot=lambda selected: ("running", snapshot))
     with pytest.raises((ValueError, ConfigProfileConflictError), match=message):
-        NodeConfigurationService(engine, Mock()).configuration(role)
+        NodeConfigurationService(Mock(), stimulation=owner, actuation=owner).configuration(role)
 
 
-def test_unrelated_processing_transition_and_recovery_do_not_block_stimulation_publication(node_engine):
-    from omnibci.application.configuration.errors import ProfileRevisionConflict
-
-    reservation = node_engine.admission.reserve_transition("processing")
-    node_engine.admission.quarantine("Processing acknowledgement missing", "processing")
-    try:
-        assert node_engine.node_configuration_snapshot(lambda: {"role": "stimulation"}, module="stimulation") == (
-            "selected", {"role": "stimulation"})
-        with pytest.raises(ProfileRevisionConflict):
-            node_engine.node_configuration_snapshot(lambda: {}, module="processing")
-    finally:
-        node_engine.admission.release_reservation(reservation)
-
-
-def test_running_node_publication_requires_a_prepared_output_operation(node_engine):
-    from unittest.mock import Mock
+@pytest.mark.parametrize("operation", [None, "different"])
+def test_external_publication_requires_the_pinned_operation(actuation_service, actuation_host, runtime, operation):
     from omnibci.application.configuration.errors import ConfigProfileConflictError
-
-    _running_node_engine(node_engine, {"STIMULATION.auto_spawn": False, "CONFIG.generation": "run-1"})
-    node_engine._engine.node_operation_id.return_value = None
+    runtime["ACTUATION.auto_spawn"] = False
+    actuation_service.prepare_external(runtime)
+    snapshot = actuation_service.applied_snapshot
+    actuation_host.node_operation_id.side_effect = None
+    actuation_host.node_operation_id.return_value = operation
     with pytest.raises(ConfigProfileConflictError, match="Prepare"):
-        node_engine.node_configuration_snapshot(Mock(), module="stimulation")
-
-
-def test_node_operation_is_read_from_the_current_host_without_mutating_applied_state(node_engine):
-    from unittest.mock import Mock
-
-    _running_node_engine(node_engine, {"STIMULATION.auto_spawn": False, "CONFIG.generation": "run-1"})
-    node_engine._engine.node_operation_id.return_value = "operation-1"
-    state, snapshot = node_engine.node_configuration_snapshot(Mock(), module="stimulation")
-    assert state == "running"
-    assert snapshot["CONFIG.operation_id"] == "operation-1"
-    assert "CONFIG.operation_id" not in node_engine._applied_snapshot
-    node_engine._engine.node_operation_id.return_value = "operation-2"
-    assert node_engine.node_configuration_snapshot(Mock(), module="stimulation")[1]["CONFIG.operation_id"] == "operation-2"
+        actuation_service.node_configuration_snapshot(lambda: {})
+    assert actuation_service.applied_snapshot == snapshot

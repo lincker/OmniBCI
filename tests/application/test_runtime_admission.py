@@ -126,11 +126,14 @@ def test_nested_command_cannot_expand_its_owners_scope():
                 pass
 
 
-def test_engine_transition_conflicts_with_every_module_reservation():
+@pytest.mark.parametrize("role", ["stimulation", "actuation"])
+def test_engine_scope_excludes_outputs_but_server_shutdown_includes_them(role):
     gate = RuntimeAdmission()
-    reservation = gate.reserve_transition("stimulation")
+    reservation = gate.reserve_transition(role)
+    with gate.transition("engine"):
+        assert not gate.owns("actuation") and not gate.owns("stimulation")
     with pytest.raises(ProfileRevisionConflict):
-        gate.reserve_transition("engine")
+        gate.reserve_transition("all")
     gate.release_reservation(reservation)
     with gate.transition("engine"):
         assert gate.owns("processing")
@@ -164,7 +167,7 @@ async def test_engine_stop_waits_for_existing_module_stop():
     order = []
 
     async def stop_module():
-        async with gate.stop_transition("stimulation"):
+        async with gate.stop_transition("processing"):
             entered.set()
             await release.wait()
             order.append("module")

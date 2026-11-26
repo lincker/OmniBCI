@@ -107,6 +107,7 @@ def test_stimulation_without_selected_trigger_starts_and_clears_without_hardware
     paradigm.setup = Mock(return_value=None)
     monkeypatch.setattr(stimulator, "_load_paradigm", Mock(return_value=paradigm))
     renderer, loop = Mock(), Mock()
+    renderer.refresh_rate_hz.return_value = 60.0
     renderer.initialize.return_value = renderer.shutdown.return_value = None
     loop.run_async = AsyncMock()
     create_renderer = Mock(return_value=renderer)

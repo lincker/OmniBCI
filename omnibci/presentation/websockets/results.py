@@ -19,6 +19,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from omnibci.shared.events import Event, EventType
 from omnibci.application.events import TrialOutcome
 from omnibci.presentation.schemas.ws import (
+    LocalStimulationStatusMessage,
     PingMessage,
     StimulationAckMessage,
     TrialCompletedMessage,
@@ -141,6 +142,24 @@ class ResultsBroadcaster:
     # Named handlers registered on the EventBus during presentation lifespan.
     def on_trial_completed(self, event: Event) -> None:
         self._broadcast_event(event)
+
+    async def publish_stimulation_status(self, status):
+        previous = None
+        while True:
+            try:
+                if self._clients:
+                    current = await asyncio.to_thread(status)
+                    if current != previous:
+                        await self._broadcast(LocalStimulationStatusMessage(data=current).model_dump_json())
+                        previous = current
+                else:
+                    previous = None
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Stimulation status publisher failed; retrying")
+                previous = None
+            await asyncio.sleep(0.5)
 
     def on_stimulation_ack(self, event: Event) -> None:
         self._broadcast_event(event)

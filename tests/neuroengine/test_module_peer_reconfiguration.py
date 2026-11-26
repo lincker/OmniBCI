@@ -2,7 +2,6 @@
 import asyncio
 
 from tests.execution_helpers import output_bindings
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -78,89 +77,37 @@ def snapshot(**changes):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["CONFIG.generation", "CONFIG.engine_revision"])
-async def test_stale_engine_generation_or_configuration_never_replaces_a_peer(field):
-    engine = _make_engine(generation="run", engine_revision="c" * 64)
-    engine.peer_gateway.replace_peer = AsyncMock()
-    engine._loop = asyncio.get_running_loop()
-    with pytest.raises(ValueError, match="different Engine generation or configuration"):
-        await engine.reconfigure_output_modules(snapshot(**{field: "stale"}), ["stimulation"])
-    engine.peer_gateway.replace_peer.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_output_replacement_routes_new_identity_and_preserves_processing_workers():
-    engine = _make_engine(generation="run", engine_revision="c" * 64)
-    engine.peer_gateway.replace_peer = AsyncMock()
-    engine._loop = asyncio.get_running_loop()
-    await engine.reconfigure_output_modules(snapshot(), ["stimulation"])
-    role, selected = engine.peer_gateway.replace_peer.call_args.args
-    assert role == "stimulation"
-    assert selected.transport._server.identity.module_revision == "a" * 64
-    assert selected.transport._server.identity.engine_revision == "c" * 64
-    engine.acquisition_command_queue.put.assert_not_called()
-    engine.processor_command_queue.put.assert_not_called()
-    engine.acquisition_worker.start.assert_not_called()
-    engine.signal_processing_worker.start.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_actuation_configuration_keeps_transport_but_requires_explicit_start():
-    engine = _make_engine(generation="run", engine_revision="c" * 64)
-    engine.peer_gateway.replace_peer = AsyncMock()
-    engine._loop = asyncio.get_running_loop()
-    await engine.reconfigure_output_modules(snapshot(), ["actuation"])
-    assert engine.actuation_translator is not None
-    assert not engine._actuation_active
-    await engine.set_actuation_active(True)
-    assert engine._actuation_active
-    engine.event_bus.register_event_listener.assert_any_call(
-        EventType.TrialCompleted, engine.actuation_translator.on_trial_completed)
-    await engine.reconfigure_output_modules(snapshot(), ["actuation"])
-    assert not engine._actuation_active
-    engine.event_bus.unregister_event_listener.assert_called_with(
-        EventType.TrialCompleted, engine.actuation_translator.on_trial_completed)
-    assert engine.peer_gateway.replace_peer.call_args.args[1] is not None
-
-
-@pytest.mark.asyncio
-async def test_output_reconfiguration_from_another_loop_executes_on_engine_loop():
-    engine_loop = asyncio.get_running_loop()
-    engine = _make_engine(generation="run", engine_revision="c" * 64)
-    engine._loop = engine_loop
-    loops = []
-    async def replace(role, selected):
-        loops.append(asyncio.get_running_loop())
-    engine.peer_gateway.replace_peer = AsyncMock(side_effect=replace)
-    await asyncio.to_thread(asyncio.run, engine.reconfigure_output_modules(snapshot(), ["stimulation"]))
-    assert loops == [engine_loop]
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("module", ["stimulation", "actuation"])
 async def test_live_listener_address_change_preserves_other_modules(module, unused_tcp_port_factory):
     ports = {role: unused_tcp_port_factory() for role in ("stimulation", "actuation")}
     bus = FakeBus()
-    gateway = PeerGateway(bus)
-    engine = _make_engine(event_bus=bus, peer_gateway=gateway, generation="run", engine_revision="c" * 64)
+    engine = _make_engine(event_bus=bus, generation="run", engine_revision="c" * 64)
     engine._loop = asyncio.get_running_loop()
     engine._started = True
     original = snapshot(**{f"{role.upper()}.server_port": port for role, port in ports.items()})
     workers = engine.acquisition_worker, engine.signal_processing_worker
-    await gateway.start()
+    from omnibci.infrastructure.ipc.runtime import IpcRuntime
+    ipc = IpcRuntime()
+    ipc.start()
+    peer = ipc._gateway.peer
+    async def prepare(role, values):
+        await ipc.ensure_peer_ready(role, {**values, "CONFIG.engine_revision": None, "CONFIG.operation_id": "prepare"})
     try:
         for role in ports:
-            await engine.ensure_output_ready(role, original)
+            await prepare(role, original)
         other = "actuation" if module == "stimulation" else "stimulation"
-        unchanged = gateway.peer(other)
-        old = gateway.peer(module)
+        unchanged = peer(other)
+        old = peer(module)
         new_port = unused_tcp_port_factory()
         changed = {**original, f"{module.upper()}.server_port": new_port,
                    "CONFIG.module_revisions": {**original["CONFIG.module_revisions"], module: "d" * 64}}
-        await engine.ensure_output_ready(module, changed)
-        replacement = gateway.peer(module)
+        await prepare(module, changed)
+        replacement = peer(module)
         assert replacement is not old and replacement.is_ready
-        assert gateway.peer(other) is unchanged and unchanged.is_ready
+        assert peer(other) is unchanged and unchanged.is_ready
+        identity = replacement._transport._server.identity
+        assert identity.module_revision == "d" * 64 and identity.engine_revision is None
+        assert not hasattr(engine, "peer_gateway")
         assert replacement._transport._server.port == new_port
         assert engine._generation == "run" and engine._engine_revision == "c" * 64
         assert (engine.acquisition_worker, engine.signal_processing_worker) == workers
@@ -173,4 +120,4 @@ async def test_live_listener_address_change_preserves_other_modules(module, unus
             worker.start.assert_not_called()
             worker.join.assert_not_called()
     finally:
-        await gateway.stop()
+        ipc.stop()

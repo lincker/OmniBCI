@@ -1,38 +1,4 @@
-"""
-engine_channel — stimulation-side peer config for the engine connection.
+"""Compatibility names for the renderer connection to its server-owned IPC host."""
+from omnibci.infrastructure.ipc.peer_configs import ENGINE, stimulation_client_config as engine_peer_config
 
-The engine uses a ListenTransport (it binds a server port and waits).
-The stimulation process uses ConnectTransport (it dials out to the engine).
-Routes are the mirror image of the engine's stimulation_peer_config in peers.py:
-  outbound (stim → engine): CommandResult, StimulationAck
-  inbound  (engine → stim): TrialCompleted, StartStimTrial, StopStimulation, PauseStimulation
-"""
-
-from omnibci.shared.events import EventType
-from omnibci.infrastructure.ipc.peer_transport import ConnectTransport
-from omnibci.application.plugin_management.execution import PluginExecutionReceipt
-from omnibci.infrastructure.ipc.routing import PeerConfig, RouteSpec
-
-ENGINE = "engine"
-
-
-def engine_peer_config(host: str, port: int, *, receipt: PluginExecutionReceipt | None = None,
-                       reconnect: bool = True, on_disconnect=None) -> PeerConfig:
-    """PeerConfig for the stimulation process to connect to the neuroengine."""
-    return PeerConfig(
-        name=ENGINE,
-        transport=ConnectTransport(host=host, port=port, receipt=receipt,
-                                   reconnect=reconnect, on_disconnect=on_disconnect),
-        routes=RouteSpec(
-            outbound=frozenset({
-                EventType.CommandResult,
-                EventType.StimulationAck,
-            }),
-            inbound=frozenset({
-                EventType.TrialCompleted,
-                EventType.StartStimTrial,
-                EventType.StopStimulation,
-                EventType.PauseStimulation,
-            }),
-        ),
-    )
+__all__ = ["ENGINE", "engine_peer_config"]

@@ -254,7 +254,7 @@ async def test_startup_failure_keeps_log_consumer_until_its_engine_stops(failed_
     listener = AcquisitionLogListener(Queue())
     engine = _make_engine(acquisition_logs=listener)
     if failed_owner == "engine":
-        engine.peer_gateway.start.side_effect = RuntimeError("start failed")
+        engine.event_bus.start.side_effect = RuntimeError("start failed")
         with pytest.raises(RuntimeError, match="start failed"):
             await engine._start()
     else:

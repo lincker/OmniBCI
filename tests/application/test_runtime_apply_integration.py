@@ -301,14 +301,13 @@ async def test_live_source_parameter_change_resumes_checkpoint_and_failed_candid
         assert engine._engine.acquisition_worker.pid == source_pid
         assert container.acquisition_service.is_streaming
 
-        # A dormant output selection still updates the pinned runtime context;
-        # acquisition and processing processes remain alive.
+        # A stopped independent output keeps its selection for its next launch.
         generation = engine.generation
         worker_ids = (engine._engine.acquisition_worker.pid, engine._engine.signal_processing_worker.pid)
         effector = profiles.create('effector', builtin_selection('effector', 'logger'), 'Logger', {})
         bindings.append({'slot':'actuation.effector', 'profile_id':effector.profile_id})
         plan = runtime.plan("actuation", [bindings[-1]], expected_revision=None, settings=runtime.profiles.default_module_settings("actuation"))
-        assert plan.strategy == 'module'
+        assert plan.strategy == 'select_on_start'
         operation = runtime.submit(plan.plan_id, str(uuid4()))
         await runtime.wait_for_idle()
         result = runtime.operation(operation['operation_id'])

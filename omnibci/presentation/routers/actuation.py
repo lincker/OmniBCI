@@ -32,10 +32,7 @@ def actuation_status(
     svc: ActuationAppService = Depends(get_actuation_service),
 ):
     return ApiResponse(data=ActuationStatusResponse(
-        active=svc.is_active,
-        process_alive=svc.process_alive,
-        engine_connected=engine_service.is_peer_connected("actuation"),
-        effector=svc.current_effector,
+        **svc.status(engine_service.is_engine_ready),
     ))
 
 
@@ -59,9 +56,9 @@ async def start_actuation(
     response_model=ApiResponse,
     summary="Prepare actuation for an external connection",
 )
-async def prepare_actuation(svc: NeuroEngineService = Depends(get_engine_service)):
+def prepare_actuation(svc: ActuationAppService = Depends(get_actuation_service)):
     with command_errors(runtime_status=status.HTTP_409_CONFLICT):
-        await svc.prepare_output("actuation")
+        svc.prepare_external()
         return ApiResponse(message="Actuation ready for a connection")
 
 
@@ -71,7 +68,7 @@ async def prepare_actuation(svc: NeuroEngineService = Depends(get_engine_service
     responses=COMMAND_EXECUTION_RESPONSES,
     summary="Stop actuation",
 )
-async def stop_actuation(svc: NeuroEngineService = Depends(get_engine_service)):
+async def stop_actuation(svc: ActuationAppService = Depends(get_actuation_service)):
     with command_errors(runtime_status=status.HTTP_409_CONFLICT):
-        await svc.stop_module("actuation")
+        await svc.stop()
         return ApiResponse(message="Actuation stopped")

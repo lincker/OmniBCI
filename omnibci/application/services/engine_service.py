@@ -6,6 +6,7 @@ command / query objects.  The API layer never touches NeuroEngine directly.
 """
 
 import asyncio
+import inspect
 import logging
 from contextlib import asynccontextmanager, contextmanager
 from copy import deepcopy
@@ -15,20 +16,16 @@ from uuid import uuid4
 
 from omnibci.application.runtime_admission import RuntimeAdmission
 from omnibci.application.configuration.definitions import merge_module_settings
-from omnibci.application.configuration.errors import ConfigProfileConflictError, ProfileRevisionConflict
+from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.command_contracts import command_contract, command_event
-from omnibci.application.services.actuation_service import ActuationAppService
-from omnibci.application.ports.output_process import OutputProcess
-from omnibci.application.commands.stimulation_commands import StopStimulationCommand
 from omnibci.application.commands.acquisition_commands import StartStreamCommand
 from omnibci.application.queries.acquisition_queries import GetAcquisitionStatusQuery
 
-from omnibci.shared.events import Event
+from omnibci.shared.events import Event, EventType
 from omnibci.application.ports.engine_port import (
     EngineFactory,
     EngineHandle,
     EnginePort,
-    STIMULATION_PEER,
 )
 from omnibci.application.commands.engine_commands import (
     StartEngineCommand,
@@ -58,13 +55,10 @@ class NeuroEngineService(EnginePort):
     def __init__(
         self,
         engine_factory: EngineFactory,
-        actuation_process_manager: OutputProcess | None = None,
         *,
         snapshot_provider: Callable[[], dict] | None = None,
         admission: RuntimeAdmission | None = None,
-        stimulation_process_manager: OutputProcess | None = None,
         plugin_preparer: Callable[[dict, tuple[str, ...]], dict] | None = None,
-        actuation: ActuationAppService | None = None,
     ) -> None:
         # The composition root supplies a fresh graph factory and, for managed
         # configuration, the snapshot to pin before constructing any worker.
@@ -74,8 +68,7 @@ class NeuroEngineService(EnginePort):
         self._plugin_preparer = plugin_preparer
         self._graph_snapshot: dict | None = None
         self._applied_snapshot: dict | None = None
-        self._actuation = actuation or ActuationAppService(self, actuation_process_manager)
-        self._stimulation_manager = stimulation_process_manager
+        self._actuation = None
         self._stimulation = None
         self._acquisition = None
         self._commands = None
@@ -109,6 +102,11 @@ class NeuroEngineService(EnginePort):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+
+    def on_stimulation_ack(self, event: Event) -> None:
+        with self._configuration_lock:
+            if event.type == EventType.StimulationAck and self.is_engine_ready:
+                self._engine.dispatch(event)
 
     def read_acquisition_preview(self, capture_id: str | None, sequence_id: int | None = None) -> dict:
         """Read the current graph's independent cache without consuming signal data."""
@@ -213,20 +211,18 @@ class NeuroEngineService(EnginePort):
         """Wire module-specific preparation after the application services exist."""
         self._acquisition = acquisition
         self._commands = commands
-        if actuation is not None:
-            self._actuation = actuation
-        self._actuation.commands = commands
+        self._actuation = actuation
         self._signal_setup = signal_setup
         self._module_snapshot_provider = snapshot_provider
         self._stimulation = stimulation
 
     def is_module_running(self, module: str) -> bool:
+        if module == "stimulation":
+            return bool(self._stimulation and self._stimulation.is_active)
+        if module == "actuation":
+            return bool(self._actuation and self._actuation.is_active)
         if not self.is_engine_ready:
             return False
-        if module == "actuation":
-            return self._actuation.active and (self.actuation_process_alive or self.is_peer_connected(module))
-        if module == "stimulation":
-            return self.is_peer_connected(module)
         if module not in ("acquisition", "processing"):
             raise ValueError(f"Unknown module: {module}")
         return self._engine.is_module_running(module)
@@ -318,17 +314,9 @@ class NeuroEngineService(EnginePort):
         await asyncio.shield(task)
 
     async def stop_module(self, module: str) -> None:
-        if module not in ("acquisition", "processing", "stimulation", "actuation"):
+        if module not in ("acquisition", "processing"):
             raise ValueError(f"Unknown module: {module}")
         async def stop():
-            if module == "stimulation":
-                if self._stimulation is None:
-                    raise RuntimeError("Stimulation is unavailable")
-                await asyncio.to_thread(self._stimulation.handle_stop_stimulation, StopStimulationCommand())
-                return
-            if module == "actuation":
-                await self.stop_module_for_configuration(module)
-                return
             if not self.is_engine_ready:
                 if self._running or self._restart_blocked:
                     raise RuntimeError("Stop the unavailable engine to release its module resources")
@@ -348,6 +336,18 @@ class NeuroEngineService(EnginePort):
                 if boundary_error is not None:
                     raise RuntimeError(f"Input boundary failed: {boundary_error}; {module} stop failed: {exc}") from exc
                 raise
+            if module == "processing":
+                drain = getattr(self._engine, "drain_abandoned_processing_queue", None)
+                dirty = getattr(self._engine, "processing_queue_dirty", False) is True
+                if inspect.iscoroutinefunction(drain) and (boundary_error is not None or dirty):
+                    if not await drain():
+                        error = RuntimeError(
+                            "Processing input queue boundary could not be confirmed; stop and restart the Engine"
+                        )
+                        if boundary_error is not None:
+                            boundary_error.add_note(str(error))
+                            raise boundary_error
+                        raise error
             if boundary_error is not None:
                 if module == "processing":
                     raise boundary_error
@@ -358,24 +358,18 @@ class NeuroEngineService(EnginePort):
         if (not self._admission.is_transition_owner or not self._admission.owns(module)
                 or not self.is_engine_ready):
             raise RuntimeError("A running transition must own module startup")
-        if module == "actuation":
-            await self._actuation.start(snapshot)
-        else:
-            await self._engine.start_module(module, deepcopy(snapshot))
-            if module == "processing" and self._signal_setup is not None:
-                self._signal_setup.reset()
+        await self._engine.start_module(module, deepcopy(snapshot))
+        if module == "processing" and self._signal_setup is not None:
+            self._signal_setup.reset()
 
     async def stop_module_for_configuration(self, module):
         if not self._admission.is_transition_owner or not self._admission.owns(module):
             raise RuntimeError("A runtime transition must own module shutdown")
-        if module == "actuation":
-            await self._actuation.stop()
-        else:
-            await self._engine.stop_module(module)
-            if module == "acquisition" and self._acquisition is not None:
-                self._acquisition.reset()
-            if module == "processing" and self._signal_setup is not None:
-                self._signal_setup.reset()
+        await self._engine.stop_module(module)
+        if module == "acquisition" and self._acquisition is not None:
+            self._acquisition.reset()
+        if module == "processing" and self._signal_setup is not None:
+            self._signal_setup.reset()
 
     async def handle_stop_engine(self, cmd: StopEngineCommand) -> None:
         async def stop():
@@ -396,87 +390,20 @@ class NeuroEngineService(EnginePort):
             with self._configuration_lock:
                 self._transitioning = False
 
-    def node_configuration_snapshot(self, selected_snapshot: Callable[[], dict], *, module=None) -> tuple[str, dict]:
-        """Publish one settled snapshot; never expose an in-flight or historical graph."""
-        with self._admission.command(module, recovery=module in ("stimulation", "actuation")), self._configuration_lock:
-            if self._transitioning:
-                raise ConfigProfileConflictError("Engine transition in progress; retry after it completes")
-            if self._admission.requires_recovery(module):
-                snapshot = self._output_snapshot(module)
-                applied = self._applied_snapshot or {}
-                if (not self.is_engine_ready or applied.get("CONFIG.module_revisions", {}).get(module)
-                        != snapshot.get("CONFIG.module_revisions", {}).get(module)):
-                    raise ProfileRevisionConflict("Prepare the retained external configuration before reconnecting")
-            if self.is_engine_ready and self._applied_snapshot is not None:
-                snapshot = deepcopy(self._applied_snapshot)
-                if module in ("stimulation", "actuation") and not snapshot.get(f"{module.upper()}.auto_spawn", True):
-                    operation = self._engine.node_operation_id(module)
-                    if not isinstance(operation, str) or not operation:
-                        raise ConfigProfileConflictError("Prepare the external output before connecting its node")
-                    snapshot["CONFIG.operation_id"] = operation
-                return "running", snapshot
-            thread = self._engine_thread
-            if self._running or self._restart_blocked or thread is not None and thread.is_alive():
-                raise ConfigProfileConflictError("Runtime still owns resources; stop it before connecting nodes")
-            return "selected", selected_snapshot()
-
     async def _stop_engine_locked(self, cmd: StopEngineCommand) -> None:
         # Stop admission excludes new commands while the owned cleanup still
-        # uses the foundation to settle outputs and drain acquisition.
+        # drains acquisition before disposing the graph.
         if self._engine is None:
             return
         if not self._running and not self._restart_blocked and (
             self._engine_thread is None or not self._engine_thread.is_alive()
         ):
             return
-        manager_errors = []
-        local_cleanup_failed = False
-        stimulation_error = None
-        if self._stimulation is not None:
-            try:
-                if (self._stimulation.is_active or self.is_peer_connected("stimulation")
-                        or "stimulation" in self._admission.recovery_status):
-                    await asyncio.to_thread(self._stimulation.handle_stop_stimulation, StopStimulationCommand())
-            except Exception as exc:
-                stimulation_error = exc
-                manager_errors.append(("Stimulation", exc))
-                logger.exception("Stimulation failed to stop")
-        if self._stimulation_manager is not None:
-            try:
-                await asyncio.to_thread(self._stimulation_manager.stop)
-            except Exception as exc:
-                local_cleanup_failed = True
-                stimulation_error = exc
-                manager_errors.append(("Stimulation process", exc))
-                logger.exception("Stimulation process failed to stop")
-        if stimulation_error is not None:
-            self._admission.quarantine(str(stimulation_error), "stimulation")
-            snapshot = self.applied_snapshot or {}
-            if snapshot.get("CONFIG.module_revisions", {}).get("stimulation"):
-                self._recovery_snapshots["stimulation"] = merge_module_settings({}, snapshot, ("stimulation",))
-        elif self._stimulation is not None:
-            self._admission.clear_quarantine("stimulation")
-            self._recovery_snapshots.pop("stimulation", None)
-        actuation_snapshot = self._actuation.owned_snapshot or self.applied_snapshot or {}
-        try:
-            await self._actuation.stop()
-        except Exception as exc:
-            self._admission.quarantine(str(exc), "actuation")
-            if actuation_snapshot.get("CONFIG.module_revisions", {}).get("actuation"):
-                self._recovery_snapshots["actuation"] = merge_module_settings({}, actuation_snapshot, ("actuation",))
-            if (actuation_snapshot.get("ACTUATION.auto_spawn", True)
-                    and (self._actuation.owned_snapshot is not None or self.actuation_process_alive)):
-                local_cleanup_failed = True
-            manager_errors.append(("Actuation", exc))
-            logger.exception("Actuation failed to stop")
-        else:
-            self._admission.clear_quarantine("actuation")
-            self._recovery_snapshots.pop("actuation", None)
         if self._acquisition is not None and self.is_module_running("acquisition"):
             try:
                 if self._acquisition.is_streaming:
                     await asyncio.to_thread(self._acquisition.handle_stop_and_drain)
-            except Exception as exc:
+            except Exception:
                 logger.exception("Acquisition failed to drain before foundation shutdown")
         self._accepting_commands = False
         self._engine.request_stop()
@@ -496,21 +423,25 @@ class NeuroEngineService(EnginePort):
         self._running = False
         self._engine_thread = None
         if self._engine.shutdown_complete is not True:
+            reconcile = getattr(self._engine, "reconcile_shutdown", None)
+            if callable(reconcile):
+                try:
+                    await asyncio.to_thread(reconcile)
+                except Exception:
+                    logger.exception("NeuroEngine shutdown reconciliation failed")
+        if self._engine.shutdown_complete is not True:
             self._restart_blocked = True
             raise RuntimeError(
                 "NeuroEngine stopped with unreleased resources; restart is blocked"
             )
         self._needs_rebuild = True
-        self._restart_blocked = local_cleanup_failed
+        self._restart_blocked = False
         self._admission.clear_quarantine(("acquisition", "processing"))
         if self._acquisition is not None:
             self._acquisition.reset()
         if self._signal_setup is not None:
             self._signal_setup.reset()
         logger.info("NeuroEngine stopped")
-        if manager_errors:
-            details = "; ".join(f"{module}: {error}" for module, error in manager_errors)
-            raise RuntimeError(f"Module shutdown was not confirmed: {details}") from manager_errors[0][1]
 
     # ------------------------------------------------------------------
     # Query handlers
@@ -524,13 +455,14 @@ class NeuroEngineService(EnginePort):
                 running=False,
                 acquisition_alive=False,
                 processor_alive=False,
-                stimulation_connected=False,
+                stimulation_connected=self.is_peer_connected("stimulation"),
+                actuation_connected=self.is_peer_connected("actuation"),
             )
         return EngineStatusResult(
             running=True,
             acquisition_alive=self.is_module_running("acquisition"),
             processor_alive=self.is_module_running("processing"),
-            stimulation_connected=self.is_peer_connected(STIMULATION_PEER),
+            stimulation_connected=bool(self._stimulation and self._stimulation.is_connected),
             actuation_connected=self.is_peer_connected("actuation"),
         )
 
@@ -590,58 +522,6 @@ class NeuroEngineService(EnginePort):
             self._applied_snapshot = snapshot
             self._graph_snapshot = deepcopy(snapshot)
 
-    async def prepare_output(self, module):
-        if module not in ("stimulation", "actuation"):
-            raise ValueError("Only output modules have external listeners")
-        async def prepare():
-            if not self.is_engine_ready:
-                raise RuntimeError("Start the engine before preparing a module")
-            snapshot = self._output_snapshot(module)
-            await self._engine.ensure_output_ready(module, snapshot)
-            self.acknowledge_configuration(snapshot, modules=(module,))
-            if module == "actuation" and self._admission.requires_recovery(module):
-                self._actuation.reconnect(snapshot)
-        await self._owned_lifecycle("prepare", module, prepare)
-
-    def _output_snapshot(self, module):
-        if not self._admission.requires_recovery(module):
-            return self.selected_module_snapshot(module)
-        if "engine" in self._admission.recovery_status:
-            raise ProfileRevisionConflict("Foundation requires recovery before preparing an output")
-        retained = (self._actuation.owned_snapshot if module == "actuation" else None) or self.applied_snapshot or {}
-        if not retained.get("CONFIG.module_revisions", {}).get(module):
-            retained = self._recovery_snapshots.get(module, {})
-        if (retained.get(f"{module.upper()}.auto_spawn", True)
-                or not retained.get("CONFIG.module_revisions", {}).get(module)):
-            raise ProfileRevisionConflict("Only the retained external configuration can be prepared during recovery")
-        self._recovery_snapshots[module] = merge_module_settings({}, retained, (module,))
-        return merge_module_settings(self.applied_snapshot or {}, retained, (module,))
-
-    def ensure_output_ready_sync(self, module, snapshot):
-        if not self.is_engine_ready:
-            raise RuntimeError("Start the engine before starting a module")
-        self._engine.ensure_output_ready_sync(module, deepcopy(snapshot))
-
-    async def ensure_output_ready(self, module, snapshot):
-        if not self.is_engine_ready:
-            raise RuntimeError("Start the engine before preparing a module")
-        await self._engine.ensure_output_ready(module, deepcopy(snapshot))
-
-    async def set_actuation_active(self, active):
-        await self._engine.set_actuation_active(active)
-
-    async def stop_actuation_for_configuration(self):
-        """Release an output whose settlement was confirmed by the coordinator."""
-        if not self._admission.is_transition_owner or not self._admission.owns("actuation"):
-            raise RuntimeError("A running transition must own output replacement")
-        await self._actuation.stop(settled=True)
-
-    async def reconfigure_output_modules(self, snapshot: dict, modules: tuple[str, ...]):
-        if (not self._admission.is_transition_owner or not self._admission.owns(modules)
-                or not self.is_engine_ready):
-            raise RuntimeError("A running configuration transition must own output replacement")
-        await self._engine.reconfigure_output_modules(deepcopy(snapshot), modules)
-
     @property
     def is_initialized(self) -> bool:
         """True once the service can accept composition-time subscriptions."""
@@ -662,7 +542,7 @@ class NeuroEngineService(EnginePort):
     @property
     def actuation_process_alive(self) -> bool:
         """Expose managed output ownership independently of the acquisition graph."""
-        return self._actuation.process_alive
+        return bool(self._actuation and self._actuation.process_alive)
 
     @property
     def applied_snapshot(self) -> dict | None:
@@ -705,31 +585,8 @@ class NeuroEngineService(EnginePort):
             )
 
     def is_peer_connected(self, peer_name: str) -> bool:
-        """True when the named peer's transport has an active connection.
-
-        Returns False if the engine is not running or the peer doesn't exist.
-        Safe to call at any time — never raises.
-        """
-        if not self.is_engine_ready:
-            return False
-        try:
-            return self._engine.is_peer_connected(peer_name)
-        except Exception:
-            return False
-
-    def on_peer_delivery_fault(self, event: Event) -> None:
-        """Keep output delivery failures scoped to the current channel owner."""
-        fault = event.data
-        if (not isinstance(fault, dict) or self._engine is None
-                or fault.get("peer") not in {"stimulation", "actuation"}
-                or not isinstance(fault.get("channel_id"), str)
-                or not isinstance(fault.get("reason"), str)):
-            return
-        if not self._engine.is_current_peer_channel(fault["peer"], fault["channel_id"]):
-            return
-        self._admission.quarantine(fault["reason"], fault["peer"])
-        if self._commands is not None:
-            self._commands.on_peer_delivery_fault(event)
+        owner = {"stimulation": self._stimulation, "actuation": self._actuation}.get(peer_name)
+        return bool(owner and owner.is_connected)
 
     def subscribe(self, event_type, handler) -> None:
         """

@@ -139,7 +139,7 @@ def test_run_constructs_runtime_with_explicit_context(processing_input):
         source_id="test.source/default@1.0.0",
         generation="generation",
         acquisition_revision="revision", engine_revision="engine",
-        processing_active=None, runtime_counters=None,
+        processing_active=None, runtime_counters=None, stop_event=None,
     )
     runtime_class.return_value.run.assert_called_once_with()
     assert worker.runtime is runtime_class.return_value
@@ -175,7 +175,7 @@ def test_explicit_settings_are_shared_by_source_and_runtime():
         data_source=load_source.return_value, command_queue=worker.command_queue,
         data_manager=None, event_bus=None, source_id="test.source/default@1.0.0",
         generation="generation", acquisition_revision="revision", engine_revision="engine",
-        processing_active=None, runtime_counters=None,
+        processing_active=None, runtime_counters=None, stop_event=None,
     )
 
 

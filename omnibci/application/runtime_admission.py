@@ -6,7 +6,7 @@ from functools import wraps
 from inspect import iscoroutinefunction
 from threading import Condition, RLock
 
-from omnibci.application.configuration.definitions import MODULES
+from omnibci.application.configuration.definitions import ENGINE_MODULES, MODULES
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 
 
@@ -27,8 +27,10 @@ class RuntimeAdmission:
             owner = self._owners.get(self._owner.get())
             return owner[0] if owner is not None else frozenset(MODULES)
         scopes = {scopes} if isinstance(scopes, str) else set(scopes)
-        if scopes & {"all", "engine"}:
+        if "all" in scopes:
             return frozenset(MODULES)
+        if "engine" in scopes:
+            scopes = (scopes - {"engine"}) | set(ENGINE_MODULES)
         if scopes - set(MODULES):
             raise ValueError("Unsupported runtime scope")
         return frozenset(scopes)
@@ -199,15 +201,15 @@ class RuntimeAdmission:
     def requires_recovery(self, scopes):
         with self._lock:
             scopes = self._scopes(scopes)
-            return bool(scopes and ("engine" in self._quarantine or scopes & self._quarantine.keys()))
+            return bool(scopes and (scopes & self._quarantine.keys() or
+                                    "engine" in self._quarantine and scopes.intersection(ENGINE_MODULES)))
 
     def quarantine(self, reason: str, scopes=None):
         with self._lock:
-            scopes = self._scopes(scopes)
-            if scopes == frozenset(MODULES):
+            if scopes == "engine" or scopes is None or self._scopes(scopes) == frozenset(ENGINE_MODULES):
                 self._quarantine["engine"] = reason
             else:
-                self._quarantine.update({module: reason for module in scopes})
+                self._quarantine.update({module: reason for module in self._scopes(scopes)})
 
     def clear_quarantine(self, scopes=None):
         with self._lock:

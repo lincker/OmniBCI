@@ -10,7 +10,8 @@ from omnibci.application.configuration.errors import (
 
 
 MODULES = ("acquisition", "processing", "stimulation", "actuation")
-# Shared by nodes that may run on separate machines; any change rebuilds the graph.
+ENGINE_MODULES = ("acquisition", "processing")
+OUTPUT_MODULES = ("stimulation", "actuation")
 SECTIONS = (*MODULES, "engine")
 
 ENGINE_SETTING_DEFAULTS = {

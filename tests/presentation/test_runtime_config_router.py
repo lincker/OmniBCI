@@ -10,11 +10,11 @@ from omnibci.presentation.routers.runtime_config import router
 
 
 def test_status_and_review_plan_contract():
-    status = dict(running=False, recovery={}, accepted={"processing": "selected"}, applied=None,
+    status = dict(running=False, stimulation_state="stopped", stimulation_session=None, actuation_state="stopped", actuation_session=None, recovery={}, accepted={"processing": "selected"}, applied=None,
                   generation=None, operations={}, errors={})
     plan = dict(plan_id="plan", expected_revision="selected", expected_revisions={"processing": "selected"},
                 target_revisions={"processing": "new"}, applied_revisions=None,
-                generation=None, running=False, strategy="select_on_start",
+                generation=None, running=False, owner_state="stopped", strategy="select_on_start",
                 changed_slots=["processing.decoder"], changed_settings=[], errors=[], signal_summary=None,
                 module="processing")
     requests = []

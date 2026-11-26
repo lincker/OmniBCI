@@ -10,6 +10,7 @@ const shutdownStages = {
   waiting_for_configuration: "Waiting for configuration changes",
   stopping_stimulation: "Stopping stimulation",
   stopping_stimulation_process: "Stopping the stimulation process",
+  stopping_actuation: "Settling actuation",
   stopping_actuation_process: "Stopping the actuation process",
   draining_acquisition: "Draining acquisition and processing",
   stopping_engine: "Stopping the engine",

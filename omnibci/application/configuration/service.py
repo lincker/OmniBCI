@@ -6,7 +6,7 @@ from threading import RLock
 from uuid import uuid4
 
 from omnibci.application.configuration.definitions import (
-    MODULES, MODULE_SETTING_DEFAULTS, SERVER_SETTINGS, server_startup_settings,
+    MODULES, OUTPUT_MODULES, MODULE_SETTING_DEFAULTS, SERVER_SETTINGS, server_startup_settings,
     validate_server_settings,
 )
 from omnibci.application.configuration.errors import PluginProfileNotFoundError, PluginProfileValidationError, ProfileRevisionConflict
@@ -59,12 +59,13 @@ class ConfigurationService:
         return self.catalog.get(kind, selection)
 
     def selected_configuration(self, modules=MODULES) -> ActivationSet:
-        """Read requested modules and shared Engine settings without touching other modules."""
+        """Read selected modules and the Engine settings needed by graph-owned modules."""
         modules = tuple(modules)
         if set(modules) - set(MODULES):
             raise PluginSchemaError("Unsupported configuration module")
+        output_only = bool(modules) and set(modules).issubset(OUTPUT_MODULES)
         return ActivationSet({module: self.repository.get_module(module) for module in modules},
-                             self.repository.get_engine())
+                             None if output_only else self.repository.get_engine())
 
     def list_profiles(self, kind: str | None = None) -> list[PluginProfile]:
         return self.repository.list_profiles(kind)
@@ -323,7 +324,7 @@ class ConfigurationService:
             module: activation_set.modules[module].revision if activation_set.modules[module] else None
             for module in MODULES
         }
-        result["CONFIG.engine_revision"] = (activation_set.engine or EngineSettings({})).revision
+        result["CONFIG.engine_revision"] = activation_set.engine.revision if activation_set.engine is not None else None
         if generation is not None:
             result["CONFIG.generation"] = generation
         result["PLUGINS.bindings"] = bindings

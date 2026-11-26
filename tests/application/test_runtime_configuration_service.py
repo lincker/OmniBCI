@@ -46,7 +46,12 @@ def runtime(tmp_path, monkeypatch):
                              is_peer_connected=lambda role: False, admission=RuntimeAdmission(),
                              restart_blocked=False, foundation_requires_cleanup=False, runtime_package_snapshots=())
     engine.is_module_running = lambda module: engine.is_engine_ready
-    return RuntimeConfigurationService(profiles, engine), selections, snapshot
+    def output(role):
+        owner = SimpleNamespace(applied_snapshot=profiles.materialize(snapshot), is_connected=False)
+        owner.owner_identity = lambda: ("active", f"{role}-session", owner.applied_snapshot["CONFIG.module_revisions"][role])
+        return owner
+    return RuntimeConfigurationService(profiles, engine, stimulation=output("stimulation"),
+                                       actuation=output("actuation")), selections, snapshot
 
 
 def edit(runtime, slot, values):
@@ -70,6 +75,8 @@ def install(service, candidate):
     accepted = service.profiles.selected_configuration()
     service.engine.applied_revisions = accepted.revisions()
     service.engine.applied_snapshot = service.profiles.materialize(accepted, service.engine.generation)
+    if candidate.module in ("actuation", "stimulation"):
+        getattr(service, candidate.module).applied_snapshot = service.profiles.materialize(accepted)
 
 
 def test_plan_is_pinned_and_does_not_apply_saved_values(runtime):
@@ -165,7 +172,9 @@ def test_idle_plan_does_not_claim_applied_revision(runtime):
     edit(runtime, "processing.decoder", {"window_duration": 2.5})
     plan = request(runtime)
     assert plan.strategy == "select_on_start"
-    assert plan.applied_revisions is None and service.status()["applied"] is None
+    assert plan.applied_revisions is None and plan.generation is None
+    assert service.status()["applied"] == {role: getattr(service, role).owner_identity()[2] for role in ("stimulation", "actuation")}
+    assert service.resolve_plan(plan.plan_id).plan == plan
 
 
 def test_no_semantic_change_does_not_restart(runtime):
@@ -219,7 +228,7 @@ def test_external_mode_transitions_check_current_and_target(runtime, module, ext
     current = before.modules[module]
     settings = {**current.settings, f"{module.upper()}.auto_spawn": not external_before}
     install(service, ModuleActivation(module, settings, current.bindings))
-    service.engine.is_peer_connected = lambda role: connected and role == module
+    getattr(service, module).is_connected = connected
     plan = request(runtime, module, settings={**current.settings, f"{module.upper()}.auto_spawn": external_before})
     assert plan.strategy == "module"
     if connected:
@@ -330,8 +339,8 @@ def test_engine_change_rechecks_connected_external_outputs(runtime, role):
     plan = request(runtime, "engine", settings={**before.engine.settings, "debug": True})
     assert not plan.errors
     service.engine.is_peer_connected = lambda selected: selected == role
-    with pytest.raises(PluginSchemaError, match="externally managed"):
-        service.resolve_plan(plan.plan_id)
+    getattr(service, role).is_connected = True
+    assert service.resolve_plan(plan.plan_id).plan == plan
 
 
 def test_filter_order_is_a_real_module_change(runtime):
@@ -454,16 +463,18 @@ def test_unrelated_corrupt_configuration_is_reported_without_blocking_module_pla
 
 @pytest.mark.parametrize("module,strategy", [("acquisition", "select_on_start"),
                                              ("processing", "select_on_start"),
-                                             ("stimulation", "module"), ("actuation", "module")])
+                                             ("stimulation", "no_change"), ("actuation", "no_change")])
 def test_saved_module_can_be_prepared_after_foundation_only_start(runtime, module, strategy):
     service, _, _ = runtime
     service.engine.applied_revisions[module] = None
     service.engine.applied_snapshot["CONFIG.module_revisions"][module] = None
     service.engine.is_module_running = lambda selected: selected != module
+    if module in ("stimulation", "actuation"):
+        getattr(service, module).owner_identity = lambda: ("stopped", None, None)
     plan = request(runtime, module)
     assert not plan.errors
     assert plan.strategy == strategy
-    assert plan.applied_revisions[module] is None
+    assert (plan.applied_revisions or {}).get(module) is None
     assert service.resolve_plan(plan.plan_id).plan == plan
 
 
@@ -475,7 +486,7 @@ def test_nonfilter_binding_reorder_never_claims_no_change_for_different_revision
 
 
 @pytest.fixture
-def current_runtime(tmp_path, monkeypatch):
+def current_runtime(tmp_path, monkeypatch, stimulation_service):
     from omnibci.application.services.engine_service import NeuroEngineService
     from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 
@@ -484,8 +495,8 @@ def current_runtime(tmp_path, monkeypatch):
                                     CatalogConfigurationAdapter())
     engine = NeuroEngineService(lambda _: pytest.fail("Selecting current values must not start an engine"))
     coordinator = RuntimeApplyCoordinator(engine, profiles, None,
-                                          SimpleNamespace(is_active=False, process_alive=False), None, repository=profiles.repository)
-    return RuntimeConfigurationService(profiles, engine, executor=coordinator)
+                                          stimulation_service, None, repository=profiles.repository)
+    return RuntimeConfigurationService(profiles, engine, executor=coordinator, stimulation=stimulation_service)
 
 
 def _draft(rt, slot, kind, alias, **extra):
@@ -736,7 +747,7 @@ def test_existing_engine_keeps_single_module_target_scoped(mod_profiles):
 
 
 @pytest.fixture
-def flow(tmp_path, monkeypatch):
+def flow(tmp_path, monkeypatch, stimulation_service):
     from omnibci.application.services.engine_service import NeuroEngineService
     from omnibci.application.services.runtime_apply_service import RuntimeApplyCoordinator
 
@@ -745,8 +756,8 @@ def flow(tmp_path, monkeypatch):
                                     CatalogConfigurationAdapter())
     engine = NeuroEngineService(lambda _: pytest.fail("Selecting configuration must not start workers"))
     executor = RuntimeApplyCoordinator(engine, profiles, None,
-                                       SimpleNamespace(is_active=False, process_alive=False), None, repository=profiles.repository)
-    rt = RuntimeConfigurationService(profiles, engine, executor=executor)
+                                       stimulation_service, None, repository=profiles.repository)
+    rt = RuntimeConfigurationService(profiles, engine, stimulation=stimulation_service, executor=executor)
     definition = profiles.catalog.get("acquisition", builtin_selection("acquisition", "file_reader"))
     bindings = [{"slot": "acquisition.source", "selection": definition.selection.to_dict(),
                  "parameters": {"file_reader_chunk_size": 100}}]
@@ -1075,3 +1086,16 @@ async def test_confirmed_stop_clears_current_recovery_and_allows_apply_with_fail
     await svc.wait_for_idle()
     assert svc.operation(operation["operation_id"])["status"] == "succeeded"
     assert svc.operation(failed["operation_id"]) == failed
+
+
+@pytest.mark.parametrize("role", ["actuation", "stimulation"])
+def test_output_plan_tracks_only_its_owner_and_rejects_same_revision_replacement(runtime, role):
+    service, _, _ = runtime
+    plan = request(runtime, role)
+    service.engine.is_engine_ready = False
+    service.engine.generation = "another-engine"
+    assert service.resolve_plan(plan.plan_id).plan == plan
+    revision = getattr(service, role).owner_identity()[2]
+    getattr(service, role).owner_identity = lambda: ("active", "replacement", revision)
+    with pytest.raises(ProfileRevisionConflict, match="changed"):
+        service.resolve_plan(plan.plan_id)

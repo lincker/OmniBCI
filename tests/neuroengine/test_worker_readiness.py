@@ -105,9 +105,8 @@ def _engine_with_channels(*, delayed=None, stale=False, timeout=1):
         )
         channels.append(StartupChannel(name, process, receiver, MagicMock(spec=StartupReporter)))
     event_bus = MagicMock(start=AsyncMock(), stop=AsyncMock())
-    gateway = MagicMock(start=AsyncMock(), stop=AsyncMock())
     engine = NeuroEngine(event_bus, MagicMock(), workers[0], MagicMock(), workers[1],
-                         MagicMock(), gateway, startup_channels=tuple(channels),
+                         MagicMock(), startup_channels=tuple(channels),
                          startup_timeout_s=timeout, module_revisions={"acquisition": "a" * 64, "processing": "a" * 64}, engine_revision="b" * 64, generation="g")
     return engine, channels
 
@@ -135,7 +134,6 @@ async def test_worker_exit_keeps_foundation_and_other_module_running(worker_inde
         assert engine.is_module_running(other)
         assert not task.done()
         engine.event_bus.stop.assert_not_awaited()
-        engine.peer_gateway.stop.assert_not_awaited()
     finally:
         engine.should_stop = True
         await task
@@ -179,7 +177,6 @@ async def test_failed_module_readiness_leaves_foundation_running(failure):
             await engine.start_module("processing", _SNAPSHOT)
         assert engine._started
         assert not engine.is_module_running("processing")
-        engine.peer_gateway.stop.assert_not_awaited()
         engine.event_bus.stop.assert_not_awaited()
         channels[1].receiver.close.assert_called_once()
         channels[0].process.start.assert_not_called()
@@ -385,7 +382,6 @@ async def test_builder_manages_real_worker_startup_and_cleanup(broken, prepared_
     decoder_alias, constructed = prepared_input_decoder
     snapshot = _pinned_worker_snapshot(decoder_alias, "decoder" if broken else None)
     engine = NeuroEngineBuilder(settings_snapshot=snapshot).build()
-    engine.peer_gateway = MagicMock(start=AsyncMock(), stop=AsyncMock())
     try:
         await engine._start()
         assert engine._started

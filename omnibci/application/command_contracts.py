@@ -2,6 +2,8 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
+
+from omnibci.application.plugin_management.identity import valid_engine_revision
 from typing import Callable
 
 from omnibci.application.acquisition_preview import PreviewSelection, limits
@@ -197,11 +199,13 @@ def stimulation_trial_request(value):
     return {"n_trials": command.n_trials, "trial_params": command.trial_params}
 
 
-def _output_receipt(value, *, flags, counts=()):
+def _output_receipt(value, *, flags, counts=(), role="actuation"):
     fields = {"generation", "module_revision", "engine_revision"}
     data = _record(value, fields | set(flags) | set(counts))
-    for key in fields:
+    for key in ("generation", "module_revision"):
         _text(data[key])
+    if not valid_engine_revision(role, data["engine_revision"]):
+        raise ValueError("Invalid output Engine revision")
     for key, expected in flags.items():
         if data[key] is not expected:
             raise ValueError(f"Output did not confirm {key}")
@@ -237,7 +241,7 @@ _CONTRACTS = {
     EventType.StartStimTrial: CommandContract("stimulation", ("stimulation",), stimulation_trial_request, _none),
     EventType.StopStimulation: CommandContract("stimulation", ("stimulation",), _none, _none),
     EventType.PauseStimulation: CommandContract("stimulation", ("stimulation",), _none,
-        partial(_output_receipt, flags={"paused": True, "renderer_stopped": True}, counts=("cancelled_trials",))),
+        partial(_output_receipt, role="stimulation", flags={"paused": True, "renderer_stopped": True}, counts=("cancelled_trials",))),
     EventType.ActuationCommand: CommandContract("actuation", ("actuation",), validate_actuation_command, None),
     EventType.SettleActuation: CommandContract("actuation", ("actuation",), _none,
         partial(_output_receipt, flags={"paused": True, "execution_complete": True, "outputs_settled": True}, counts=("pending_cancelled",))),

@@ -18,12 +18,13 @@ device-side dead-man behaviour remains the controller's responsibility.
 """
 
 import asyncio
+from collections.abc import Callable
 import logging
 import time
 from typing import NamedTuple, Optional
 from uuid import uuid4
 
-from omnibci.application.events import CommandRequest
+from omnibci.application.events import CommandRequest, CommandResult
 from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.ipc.event_bus import EventBus
 from omnibci.infrastructure.ipc.network import PeerConnectionChanged
@@ -42,6 +43,7 @@ class _Outbound(NamedTuple):
     event: Event
     connection_token: object
     completion: asyncio.Future | None = None
+    eligible: Callable[[], bool] | None = None
 
 
 class PeerChannel:
@@ -350,7 +352,11 @@ class PeerChannel:
         """Enqueue without holding up the shared EventBus consumer."""
         return self._enqueue(event)
 
-    def _enqueue(self, event: Event, completion=None) -> bool:
+    def offer(self, event: Event, eligible: Callable[[], bool]) -> bool:
+        """Queue an explicitly routed event on the owning loop."""
+        return event.type in self._config.routes.outbound and self._enqueue(event, eligible=eligible)
+
+    def _enqueue(self, event: Event, completion=None, *, eligible=None) -> bool:
         if not self._started:
             return False
         if not self.is_connected:
@@ -360,7 +366,7 @@ class PeerChannel:
             return False
         try:
             self._outbound.put_nowait(_Outbound(
-                event, self._transport.connection_token, completion,
+                event, self._transport.connection_token, completion, eligible,
             ))
         except asyncio.QueueFull:
             self._fail_outbound("outbound queue is full", event)
@@ -446,6 +452,8 @@ class PeerChannel:
                 item = await self._outbound.get()
                 if item is None:
                     return
+                if item.eligible is not None and not item.eligible():
+                    continue
                 self._in_flight = item
                 try:
                     async with asyncio.timeout(_SEND_TIMEOUT_S):
@@ -484,6 +492,10 @@ class PeerChannel:
     def _on_inbound(self, event: Event) -> bool:
         """Inbound: peer → engine. White-list before touching the bus."""
         if event.type in self._config.routes.inbound:
+            if event.type == EventType.CommandResult:
+                result = CommandResult.from_value(event.data)
+                if result is None or EventType.__members__.get(result.command) not in self._config.routes.outbound:
+                    return False
             self._bus.put_event(event)
             return True
 

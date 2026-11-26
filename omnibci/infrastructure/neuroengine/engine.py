@@ -3,13 +3,13 @@ import asyncio
 import logging
 import multiprocessing as mp
 import threading
+import time
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from queue import Empty, Full
 from uuid import uuid4
 
-from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandRequest, CommandResult
-from omnibci.application.plugin_management.execution import bindings_fingerprint
+from omnibci.application.events import AcquisitionSnapshot, CommandFailureKind, CommandRequest, CommandResult, StreamBarrier
 from omnibci.infrastructure.acquisition.acquisition import AcquisitionCommand
 from omnibci.infrastructure.acquisition.logging import AcquisitionLogListener
 from omnibci.infrastructure.acquisition.worker import AcquisitionWorker
@@ -20,10 +20,7 @@ from omnibci.shared.events import Event, EventType
 from omnibci.infrastructure.async_lifecycle import await_owned
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessorCommand
 from omnibci.infrastructure.signal_processing.worker import SignalProcessingWorker
-from omnibci.infrastructure.neuroengine.gateway import PeerGateway
 from omnibci.infrastructure.neuroengine.stimulation_feedback import StimulationFeedbackHandler
-from omnibci.infrastructure.neuroengine.actuation_translator import ActuationCommandTranslator
-from omnibci.infrastructure.neuroengine.actuation_feedback import ActuationFeedbackHandler
 from omnibci.infrastructure.process_lifecycle import (
     ChildProcessStartupError, StartupChannel, wait_for_startup_report,
 )
@@ -49,8 +46,6 @@ class NeuroEngine:
         Optional pre-built SignalProcessingWorker, otherwise supplied by worker_factory.
     processor_command_queue:
         mp.Queue used to send (SignalProcessorCommand, payload) pairs to the process.
-    peer_gateway:
-        Routes EventBus events to/from external peers (stimulation, actuation).
     owned_ipc_queues:
         Additional builder-created queues whose close lifecycle belongs to this
         single-use engine graph (EventBus input and DataManager buffer).
@@ -67,9 +62,6 @@ class NeuroEngine:
         acquisition_command_queue: mp.Queue,
         signal_processing_worker: SignalProcessingWorker,
         processor_command_queue: mp.Queue,
-        peer_gateway: PeerGateway,
-        actuation_translator: "ActuationCommandTranslator | None" = None,
-        actuation_feedback: "ActuationFeedbackHandler | None" = None,
         debug: bool = False,
         owned_ipc_queues: tuple[mp.Queue, ...] = (),
         startup_channels: tuple[StartupChannel, ...] = (),
@@ -82,6 +74,8 @@ class NeuroEngine:
         acquisition_logs: AcquisitionLogListener | None = None,
         worker_factory=None,
         processing_active=None,
+        acquisition_stop_event=None,
+        data_queue_size: int = 100,
         record_execution=None,
     ) -> None:
         self._record_execution = record_execution
@@ -95,12 +89,11 @@ class NeuroEngine:
         self.processor_command_queue = processor_command_queue
         self._worker_factory = worker_factory
         self._processing_active = processing_active
+        self._acquisition_stop_event = acquisition_stop_event
+        self._data_queue_size = max(1, int(data_queue_size))
+        self._processing_queue_dirty = False
         self._ready_modules = set()
         self._module_locks = {module: asyncio.Lock() for module in ("acquisition", "processing")}
-        self._output_locks = {module: asyncio.Lock() for module in ("stimulation", "actuation")}
-        self._output_configurations = {}
-        self._output_identities = {}
-        self.peer_gateway = peer_gateway
         # Queues constructed by the composition builder but not otherwise
         # exposed as command queues (EventBus input + DataManager buffer).
         # Injecting them makes ownership explicit without teaching EventBus or
@@ -115,10 +108,6 @@ class NeuroEngine:
         self._allow_process_termination = allow_process_termination
         # Engine-side consumer of stimulation → engine feedback (StimulationAck).
         self.stim_feedback = StimulationFeedbackHandler()
-        # Forwarding starts only when the Actuation module is active.
-        self.actuation_translator = actuation_translator
-        self.actuation_feedback = actuation_feedback
-        self._actuation_active = False
         self._debug = debug
         # The public stop flag wakes the engine loop across thread boundaries.
         self._should_stop = False
@@ -136,7 +125,6 @@ class NeuroEngine:
         self._acquisition_started = False
         self._processor_started = False
         self._event_bus_started = False
-        self._gateway_started = False
         self._started = False
         self._queues_closed = False
         self._shutdown_complete = False
@@ -172,18 +160,6 @@ class NeuroEngine:
     def request_stop(self) -> None:
         self.should_stop = True
 
-    def is_peer_connected(self, peer_name: str) -> bool:
-        try:
-            return self.peer_gateway.peer(peer_name).is_connected
-        except KeyError:
-            return False
-
-    def is_current_peer_channel(self, peer_name: str, channel_id: str) -> bool:
-        try:
-            return self.peer_gateway.peer(peer_name).channel_id == channel_id
-        except KeyError:
-            return False
-
     def run(self) -> None:
         """Blocking entry point — call from a dedicated thread."""
         try:
@@ -214,6 +190,10 @@ class NeuroEngine:
         """Whether this single-use graph released every resource it owns."""
         return self._shutdown_complete
 
+    @property
+    def processing_queue_dirty(self) -> bool:
+        return self._processing_queue_dirty
+
     async def serve(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
@@ -234,7 +214,7 @@ class NeuroEngine:
         if self._started:
             return
         if any((self._acquisition_started, self._processor_started,
-                self._event_bus_started, self._gateway_started)) or (
+                self._event_bus_started)) or (
                     self.preview_cache is not None and not self.preview_cache.stopped) or (
                     self.acquisition_logs is not None and not self.acquisition_logs.stopped):
             raise RuntimeError("NeuroEngine is in a partial lifecycle state")
@@ -243,21 +223,16 @@ class NeuroEngine:
 
         try:
             self._loop = asyncio.get_running_loop()
-            # Install every internal consumer before workers or peers can
-            # publish.  Registering after the gateway bind left a small window
-            # where a valid inbound event could be consumed and then lost.
+            # Install every internal consumer before workers can publish.
             self._register_event_listeners()
             if self.acquisition_logs is not None:
                 self.acquisition_logs.start()
             if self.preview_cache is not None:
                 await self.preview_cache.start()
-            await self.event_bus.start()
+            # Mark EventBus ownership before awaiting start() so partial
+            # startup failures still run stop() during rollback.
             self._event_bus_started = True
-            # start() may allocate a listener and then fail while rolling it
-            # back.  Record the cleanup obligation before awaiting so a failed
-            # rollback keeps the engine graph dirty and blocks replacement.
-            self._gateway_started = True
-            await self.peer_gateway.start()
+            await self.event_bus.start()
             self._started = True
         except BaseException:
             logger.exception("NeuroEngine startup failed; rolling back")
@@ -311,10 +286,16 @@ class NeuroEngine:
             raise ValueError("Module belongs to a different Engine generation or configuration")
         if self.is_module_running(module):
             return
+        if module == "processing" and self._processing_queue_dirty:
+            raise RuntimeError(
+                "Processing input queue cleanup was not confirmed; stop and restart the Engine"
+            )
         flag = "_acquisition_started" if module == "acquisition" else "_processor_started"
         worker_attr = "acquisition_worker" if module == "acquisition" else "signal_processing_worker"
         if getattr(self, flag):
             await self._stop_module(module)
+        if module == "acquisition" and self._acquisition_stop_event is not None:
+            self._acquisition_stop_event.clear()
         queue = self.acquisition_command_queue if module == "acquisition" else self.processor_command_queue
         if self._worker_factory is not None:
             self._discard_queued(queue)
@@ -356,14 +337,111 @@ class NeuroEngine:
         worker = self.acquisition_worker if module == "acquisition" else self.signal_processing_worker
         queue = self.acquisition_command_queue if module == "acquisition" else self.processor_command_queue
         command = AcquisitionCommand.stop_acquisition if module == "acquisition" else SignalProcessorCommand.should_stop
+        if module == "acquisition" and self._acquisition_stop_event is not None:
+            self._acquisition_stop_event.set()
         self._put_stop_command(queue, command, module)
-        await asyncio.to_thread(self._join_process, worker, module,
-                                allow_process_termination=self._allow_process_termination)
+        if module == "acquisition" and not self._processor_started:
+            await asyncio.to_thread(self._join_acquisition_with_drain, worker, "acquisition")
+        else:
+            await asyncio.to_thread(self._join_process, worker, module,
+                                    allow_process_termination=self._allow_process_termination)
         setattr(self, flag, False)
         if self._worker_factory is not None:
             self._discard_queued(queue)
         if module == "acquisition":
             self.event_bus.put_event(Event(EventType.AcquisitionState, AcquisitionSnapshot(False, False)))
+
+    async def drain_abandoned_processing_queue(self, timeout_s: float = 3.0) -> bool:
+        """Confirm an empty FIFO boundary on the shared data queue after consumer exit."""
+        return await self._on_engine_loop(self._drain_abandoned_processing_queue(timeout_s))
+
+    async def _drain_abandoned_processing_queue(self, timeout_s: float) -> bool:
+        async with self._module_locks["processing"]:
+            if self._processor_started:
+                self._processing_queue_dirty = True
+                return False
+            if self._processing_active is not None:
+                self._processing_active.clear()
+            if not isinstance(self.data_manager, DataManager):
+                self._processing_queue_dirty = False
+                return True
+            if self.is_module_running("acquisition"):
+                token = uuid4().hex
+                try:
+                    self.acquisition_command_queue.put_nowait((AcquisitionCommand.flush_processing_queue, token))
+                except Exception:
+                    self._processing_queue_dirty = True
+                    return False
+                confirmed = await asyncio.to_thread(self._drain_until_flush_barrier, token, timeout_s)
+                self._processing_queue_dirty = not confirmed
+                return confirmed
+            if not self._acquisition_started:
+                await asyncio.to_thread(self._drain_until_empty, min(timeout_s, 0.25))
+                self._processing_queue_dirty = False
+                return True
+            self._processing_queue_dirty = True
+            return False
+
+    def _drain_until_flush_barrier(self, token: str, timeout_s: float) -> bool:
+        deadline = time.monotonic() + timeout_s
+        max_items = max(self._data_queue_size * 4, 256)
+        drained = 0
+        while time.monotonic() < deadline and drained < max_items:
+            remaining = max(0.01, min(0.05, deadline - time.monotonic()))
+            try:
+                item = self.data_manager.get_data(timeout=remaining)
+            except Exception:
+                return False
+            if item is None:
+                continue
+            if (isinstance(item, StreamBarrier)
+                    and item.command == "FlushProcessingQueue"
+                    and item.command_id == token):
+                return True
+            drained += 1
+        return False
+
+    def _drain_until_empty(self, timeout_s: float) -> int:
+        deadline = time.monotonic() + timeout_s
+        max_items = max(self._data_queue_size * 4, 256)
+        drained = 0
+        while time.monotonic() < deadline and drained < max_items:
+            try:
+                item = self.data_manager.get_data(timeout=0.02)
+            except Exception:
+                break
+            if item is None:
+                break
+            drained += 1
+        return drained
+
+    def _join_acquisition_with_drain(self, process: mp.Process, name: str, timeout: float = 3.0) -> None:
+        """Drain a retiring EEG queue while AcquisitionWorker exits so Queue._finalize_join cannot block."""
+        if not isinstance(self.data_manager, DataManager) or self._processor_started:
+            self._join_process(
+                process, name, timeout=timeout,
+                allow_process_termination=self._allow_process_termination,
+            )
+            return
+        deadline = time.monotonic() + timeout
+        process.join(timeout=min(0.1, timeout))
+        if process.is_alive():
+            max_items = max(self._data_queue_size * 4, 256)
+            drained = 0
+            while process.is_alive() and time.monotonic() < deadline and drained < max_items:
+                try:
+                    item = self.data_manager.get_data(timeout=0.05)
+                except Exception:
+                    break
+                if item is None:
+                    process.join(timeout=0.02)
+                    continue
+                drained += 1
+        remaining = max(0.0, deadline - time.monotonic())
+        self._join_process(
+            process, name, timeout=remaining,
+            allow_process_termination=self._allow_process_termination,
+        )
 
     @staticmethod
     def _discard_queued(queue):
@@ -472,7 +550,7 @@ class NeuroEngine:
     async def _shutdown_resources(self) -> None:
         self._started = False
         async with AsyncExitStack() as locks:
-            for lock in (*self._module_locks.values(), *self._output_locks.values()):
+            for lock in self._module_locks.values():
                 await locks.enter_async_context(lock)
             await self._release_resources()
 
@@ -495,6 +573,8 @@ class NeuroEngine:
             errors.append(exc)
 
         if self._acquisition_started:
+            if self._acquisition_stop_event is not None:
+                self._acquisition_stop_event.set()
             self._put_stop_command(
                 self.acquisition_command_queue,
                 AcquisitionCommand.stop_acquisition,
@@ -507,22 +587,36 @@ class NeuroEngine:
                 "SignalProcessingWorker",
             )
 
-        for attr, process, name in (
-            ("_acquisition_started", self.acquisition_worker, "AcquisitionWorker"),
-            ("_processor_started", self.signal_processing_worker, "SignalProcessingWorker"),
-        ):
-            if not getattr(self, attr):
-                continue
+        # Join the consumer before draining and joining the producer so a full
+        # EEG pipe cannot deadlock AcquisitionWorker's Queue._finalize_join.
+        if self._processor_started:
             try:
                 await asyncio.to_thread(
-                    self._join_process, process, name,
+                    self._join_process, self.signal_processing_worker, "SignalProcessingWorker",
                     allow_process_termination=self._allow_process_termination,
                 )
             except Exception as exc:  # keep releasing the remaining owners
                 errors.append(exc)
-                logger.exception("Error stopping %s", name)
+                logger.exception("Error stopping %s", "SignalProcessingWorker")
             else:
-                setattr(self, attr, False)
+                self._processor_started = False
+
+        if self._acquisition_started:
+            try:
+                if not self._processor_started:
+                    await asyncio.to_thread(
+                        self._join_acquisition_with_drain, self.acquisition_worker, "AcquisitionWorker",
+                    )
+                else:
+                    await asyncio.to_thread(
+                        self._join_process, self.acquisition_worker, "AcquisitionWorker",
+                        allow_process_termination=self._allow_process_termination,
+                    )
+            except Exception as exc:  # keep releasing the remaining owners
+                errors.append(exc)
+                logger.exception("Error stopping %s", "AcquisitionWorker")
+            else:
+                self._acquisition_started = False
 
         if self.acquisition_logs is not None and not self._acquisition_started:
             try:
@@ -538,15 +632,6 @@ class NeuroEngine:
             except Exception as exc:
                 errors.append(exc)
                 logger.exception("Error stopping acquisition preview consumer")
-
-        if self._gateway_started:
-            try:
-                await self.peer_gateway.stop()
-            except Exception as exc:
-                errors.append(exc)
-                logger.exception("Error stopping PeerGateway")
-            else:
-                self._gateway_started = False
 
         if self._event_bus_started:
             try:
@@ -584,7 +669,6 @@ class NeuroEngine:
 
         self._shutdown_complete = (
             workers_stopped
-            and not self._gateway_started
             and not self._event_bus_started
             and self._queues_closed
             and self._startup_channels_closed
@@ -593,6 +677,92 @@ class NeuroEngine:
         )
         if errors:
             raise ExceptionGroup("NeuroEngine shutdown failed", errors)
+
+    def reconcile_shutdown(self) -> bool:
+        """Retry synchronous cleanup off the retired Engine loop after an earlier timeout."""
+        if self._shutdown_complete:
+            return True
+        if self._processing_active is not None:
+            self._processing_active.clear()
+        errors: list[Exception] = []
+        try:
+            self._close_startup_channels()
+        except Exception as exc:
+            errors.append(exc)
+        if self._processor_started:
+            self._put_stop_command(
+                self.processor_command_queue,
+                SignalProcessorCommand.should_stop,
+                "SignalProcessingWorker",
+            )
+            try:
+                self._join_process(
+                    self.signal_processing_worker, "SignalProcessingWorker",
+                    allow_process_termination=self._allow_process_termination,
+                )
+            except Exception as exc:
+                errors.append(exc)
+                logger.exception("Error reconciling SignalProcessingWorker shutdown")
+            else:
+                self._processor_started = False
+        if self._acquisition_started:
+            if self._acquisition_stop_event is not None:
+                self._acquisition_stop_event.set()
+            self._put_stop_command(
+                self.acquisition_command_queue,
+                AcquisitionCommand.stop_acquisition,
+                "AcquisitionWorker",
+            )
+            try:
+                if not self._processor_started:
+                    self._join_acquisition_with_drain(self.acquisition_worker, "AcquisitionWorker")
+                else:
+                    self._join_process(
+                        self.acquisition_worker, "AcquisitionWorker",
+                        allow_process_termination=self._allow_process_termination,
+                    )
+            except Exception as exc:
+                errors.append(exc)
+                logger.exception("Error reconciling AcquisitionWorker shutdown")
+            else:
+                self._acquisition_started = False
+        if self.acquisition_logs is not None and not self._acquisition_started and not self.acquisition_logs.stopped:
+            try:
+                if not self.acquisition_logs.stop():
+                    raise RuntimeError("Acquisition log consumer did not stop")
+            except Exception as exc:
+                errors.append(exc)
+                logger.exception("Error reconciling acquisition log consumer")
+        workers_stopped = not (self._acquisition_started or self._processor_started)
+        preview_stopped = self.preview_cache is None or self.preview_cache.stopped
+        logs_stopped = self.acquisition_logs is None or self.acquisition_logs.stopped
+        if workers_stopped and preview_stopped and logs_stopped and not self._event_bus_started and not self._queues_closed:
+            queue_errors = []
+            for queue in (
+                self.processor_command_queue,
+                self.acquisition_command_queue,
+                *self._owned_ipc_queues,
+            ):
+                try:
+                    self._close_queue(queue)
+                except Exception as exc:
+                    queue_errors.append(exc)
+                    logger.exception("Error closing an engine-owned IPC queue during reconciliation")
+            if queue_errors:
+                errors.extend(queue_errors)
+            else:
+                self._queues_closed = True
+        self._shutdown_complete = (
+            workers_stopped
+            and not self._event_bus_started
+            and self._queues_closed
+            and self._startup_channels_closed
+            and preview_stopped
+            and logs_stopped
+        )
+        if errors:
+            raise ExceptionGroup("NeuroEngine shutdown reconciliation failed", errors)
+        return self._shutdown_complete
 
     @staticmethod
     def _put_stop_command(queue: mp.Queue, command, owner: str) -> None:
@@ -642,115 +812,6 @@ class NeuroEngine:
             raise RuntimeError("Acquisition preview is unavailable")
         return self.preview_cache.read(capture_id, sequence_id)
 
-    async def reconfigure_output_modules(self, snapshot: dict, modules) -> None:
-        """Replace selected output listeners on the engine loop, preserving workers."""
-        await self._on_engine_loop(self._reconfigure_output_modules(deepcopy(snapshot), tuple(modules)))
-
-    async def ensure_output_ready(self, module: str, snapshot: dict) -> None:
-        """Prepare only the requested output listener, without enabling output."""
-        await self._on_engine_loop(self._reconfigure_output_modules(deepcopy(snapshot), (module,), ensure=True))
-
-    def ensure_output_ready_sync(self, module: str, snapshot: dict) -> None:
-        """Bridge synchronous application services to the engine-owned loop."""
-        if self._loop is None or not self._loop.is_running():
-            raise RuntimeError("NeuroEngine loop is unavailable")
-        try:
-            current = asyncio.get_running_loop()
-        except RuntimeError:
-            current = None
-        if current is self._loop:
-            raise RuntimeError("Synchronous output preparation cannot run on the NeuroEngine loop")
-        future = asyncio.run_coroutine_threadsafe(
-            self._reconfigure_output_modules(deepcopy(snapshot), (module,), ensure=True), self._loop)
-        try:
-            future.result(timeout=self._startup_timeout_s)
-        except TimeoutError:
-            future.cancel()
-            raise
-
-    async def _reconfigure_output_modules(self, snapshot, modules, *, ensure=False):
-        if (snapshot.get("CONFIG.generation") != self._generation
-                or snapshot.get("CONFIG.engine_revision") != self._engine_revision):
-            raise ValueError("Output replacement belongs to a different Engine generation or configuration")
-        if set(modules) - {"stimulation", "actuation"}:
-            raise ValueError("Only output modules can replace peer listeners")
-        revisions = snapshot.get("CONFIG.module_revisions") or {}
-        for module in modules:
-            async with self._output_locks[module]:
-                if ensure and not self._started:
-                    raise RuntimeError("Start NeuroEngine before preparing an output")
-                identity_key = (
-                    revisions.get(module), snapshot.get(f"{module.upper()}.auto_spawn", True),
-                    snapshot.get(f"{module.upper()}.server_ip", "127.0.0.1"),
-                    snapshot.get(f"{module.upper()}.server_port", 8765 if module == "stimulation" else 8001),
-                    snapshot.get("ACTUATION.watchdog_timeout_s", 1.0) if module == "actuation" else None,
-                )
-                if (ensure and self._output_configurations.get(module) == identity_key
-                        and self.peer_gateway.is_peer_ready(module)):
-                    continue
-                self._output_configurations.pop(module, None)
-                await self._replace_output(module, snapshot, revisions)
-                self._output_configurations[module] = identity_key
-
-    async def _replace_output(self, module, snapshot, revisions):
-        from omnibci.infrastructure.ipc.peer_identity import PeerIdentity
-        from omnibci.infrastructure.neuroengine.gateway.peers import stimulation_peer_config, actuation_peer_config
-
-        identity = None
-        self._output_identities.pop(module, None)
-        if not snapshot.get(f"{module.upper()}.auto_spawn", True):
-            identity = PeerIdentity(module, revisions.get(module), self._engine_revision, self._generation,
-                                    uuid4().hex, bindings_fingerprint(snapshot["PLUGINS.bindings"], module))
-        if module == "stimulation":
-            config = stimulation_peer_config(
-                host=snapshot.get("STIMULATION.server_ip", "127.0.0.1"),
-                port=int(snapshot.get("STIMULATION.server_port", 8765)), identity=identity,
-                record_execution=self._record_execution,
-            )
-        else:
-            config = actuation_peer_config(
-                host=snapshot.get("ACTUATION.server_ip", "127.0.0.1"),
-                port=int(snapshot.get("ACTUATION.server_port", 8001)),
-                watchdog_timeout_s=float(snapshot.get("ACTUATION.watchdog_timeout_s", 1.0)),
-                identity=identity, record_execution=self._record_execution,
-            )
-        if module == "actuation":
-            self._set_actuation_active(False)
-        await self.peer_gateway.replace_peer(module, config)
-        if identity is not None:
-            self._output_identities[module] = identity
-        if module == "actuation":
-            self._configure_actuation_listeners()
-
-    def node_operation_id(self, role: str) -> str | None:
-        identity = self._output_identities.get(role)
-        if identity is not None and self.peer_gateway.is_peer_ready(role):
-            return identity.operation_id
-        return None
-
-    async def set_actuation_active(self, active: bool) -> None:
-        async def apply():
-            self._set_actuation_active(active)
-        await self._on_engine_loop(apply())
-
-    def _set_actuation_active(self, active):
-        if active == self._actuation_active:
-            return
-        if active and self.actuation_translator is None:
-            raise RuntimeError("Actuation is not configured")
-        if self.actuation_translator is not None:
-            register = (self.event_bus.register_event_listener if active
-                        else self.event_bus.unregister_event_listener)
-            register(EventType.TrialCompleted, self.actuation_translator.on_trial_completed)
-        self._actuation_active = active
-
-    def _configure_actuation_listeners(self):
-        if self.actuation_translator is None:
-            self.actuation_translator = ActuationCommandTranslator(self.event_bus)
-            self.actuation_feedback = ActuationFeedbackHandler()
-            for event_type in (EventType.ActuationAck, EventType.ActuationState, EventType.ActuationFault):
-                self.event_bus.register_event_listener(event_type, self.actuation_feedback.on_feedback)
-
     def _on_processing_input_fault(self, event):
         fault = event.data
         if (not isinstance(fault, dict)
@@ -783,21 +844,6 @@ class NeuroEngine:
         self.event_bus.register_event_listener(
             EventType.StimulationAck, self.stim_feedback.on_ack
         )
-        # Actuation wiring (only when enabled): translate each decoded trial into
-        # an ActuationCommand, and consume the device's inbound feedback.
-        if self.actuation_translator is not None and self._actuation_active:
-            self.event_bus.register_event_listener(
-                EventType.TrialCompleted, self.actuation_translator.on_trial_completed
-            )
-        if self.actuation_feedback is not None:
-            for event_type in (
-                EventType.ActuationAck,
-                EventType.ActuationState,
-                EventType.ActuationFault,
-            ):
-                self.event_bus.register_event_listener(
-                    event_type, self.actuation_feedback.on_feedback
-                )
 
     @staticmethod
     def _make_command_router(queue: mp.Queue, command,

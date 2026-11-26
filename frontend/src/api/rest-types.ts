@@ -1163,10 +1163,18 @@ export interface components {
             active: boolean;
             /** Process Alive */
             process_alive: boolean;
-            /** Engine Connected */
-            engine_connected: boolean;
+            /** Connected */
+            connected: boolean;
+            /** Engine Linked */
+            engine_linked: boolean;
             /** Effector */
             effector?: string | null;
+            /**
+             * Engine Connected
+             * @deprecated
+             * @description Legacy name for the controller's IPC connection.
+             */
+            readonly engine_connected: boolean;
         };
         /** ApiResponse */
         ApiResponse: {
@@ -2014,7 +2022,7 @@ export interface components {
                 [key: string]: string;
             };
             /** Engine Revision */
-            engine_revision: string;
+            engine_revision: string | null;
             /** Generation */
             generation: string | null;
             /** Operation Id */
@@ -2321,6 +2329,20 @@ export interface components {
         };
         /** RuntimeConfigurationResponse */
         RuntimeConfigurationResponse: {
+            /**
+             * Stimulation State
+             * @enum {string}
+             */
+            stimulation_state: "stopped" | "prepared" | "active";
+            /** Stimulation Session */
+            stimulation_session: string | null;
+            /**
+             * Actuation State
+             * @enum {string}
+             */
+            actuation_state: "stopped" | "prepared" | "active";
+            /** Actuation Session */
+            actuation_session: string | null;
             /** Running */
             running: boolean;
             /** Recovery */
@@ -2419,6 +2441,11 @@ export interface components {
             generation: string | null;
             /** Running */
             running: boolean;
+            /**
+             * Owner State
+             * @enum {string}
+             */
+            owner_state: "stopped" | "prepared" | "active";
             /**
              * Strategy
              * @enum {string}
@@ -2604,15 +2631,18 @@ export interface components {
          *
          *     active          — the application service has started stimulation.
          *     process_alive   — the Stimulation subprocess is currently running (auto_spawn only).
-         *     engine_connected — the Stimulation process has an active IPC connection to the engine.
+         *     connected       — the renderer has an active IPC connection to the server.
+         *     engine_linked   — closed-loop feedback is enabled.
          */
         StimulationStatusResponse: {
             /** Active */
             active: boolean;
             /** Process Alive */
             process_alive: boolean;
-            /** Engine Connected */
-            engine_connected: boolean;
+            /** Connected */
+            connected: boolean;
+            /** Engine Linked */
+            engine_linked: boolean;
             /** Paradigm */
             paradigm?: string | null;
         };

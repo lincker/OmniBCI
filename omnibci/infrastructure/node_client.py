@@ -107,9 +107,9 @@ def fetch_node_configuration(server_url: str, role: str, api_token: str | None =
     if configuration.role != role:
         raise ValueError("Server returned configuration for a different node role")
     if data["state"] == "selected":
-        raise NodeConfigurationUnavailable("Waiting for the engine to start")
+        raise NodeConfigurationUnavailable(f"Waiting for the server to prepare {role}")
     if not configuration.generation:
-        raise ValueError("Running node configuration requires an engine generation")
+        raise ValueError("Running node configuration requires a runtime generation")
     return configuration
 
 

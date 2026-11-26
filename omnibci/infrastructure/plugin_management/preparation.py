@@ -235,5 +235,5 @@ def execution_receipt(snapshot: dict, module: str, operation_id: str) -> PluginE
         raise PluginLoadError('Execution requires owned plugin artifacts')
     return PluginExecutionReceipt(
         module, operation_id, snapshot['CONFIG.generation'], snapshot['CONFIG.module_revisions'][module],
-        snapshot['CONFIG.engine_revision'], *environment, records,
+        snapshot.get('CONFIG.engine_revision'), *environment, records,
     )

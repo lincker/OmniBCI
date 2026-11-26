@@ -9,6 +9,7 @@ messages without inspecting payload shape.
 from datetime import datetime
 from typing import Literal, Optional, Union
 
+from omnibci.presentation.schemas.stimulation import StimulationStatusResponse
 from pydantic import BaseModel, Field, JsonValue
 
 
@@ -65,7 +66,12 @@ class PingMessage(BaseModel):
 
 
 # Union type for documentation / client code generation
+class LocalStimulationStatusMessage(BaseModel):
+    event: Literal["StimulationStatus"] = "StimulationStatus"
+    data: StimulationStatusResponse
+
 WsMessage = Union[
+    LocalStimulationStatusMessage,
     TrialCompletedMessage,
     StimulationAckMessage,
     PingMessage,

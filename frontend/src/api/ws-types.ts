@@ -39,6 +39,7 @@ interface PingMessage {
 }
 
 type WsMessage =
+  | { event: "StimulationStatus"; data: import("./rest-types").components["schemas"]["StimulationStatusResponse"] }
   | TrialCompletedMessage
   | StimulationAckMessage
   | PingMessage;
@@ -49,7 +50,7 @@ export function isWsMessage(value: unknown): value is WsMessage {
     typeof value === "object" &&
     value !== null &&
     "event" in value &&
-    ["TrialCompleted", "StimulationAck", "Ping"].includes(
+    ["TrialCompleted", "StimulationAck", "Ping", "StimulationStatus"].includes(
       (value as { event: string }).event,
     )
   );

@@ -342,13 +342,12 @@ async def test_acquisition_starts_and_stops_without_starting_processing_or_outpu
         await engine.start_module("acquisition", {})
         assert engine.is_module_running("acquisition")
         assert not engine.is_module_running("processing")
-        assert not engine._actuation_active
+        assert not hasattr(engine, "peer_gateway")
         await engine.stop_module("acquisition")
         assert not engine.is_module_running("acquisition")
         assert engine._started
         engine.signal_processing_worker.start.assert_not_called()
         engine.event_bus.stop.assert_not_awaited()
-        engine.peer_gateway.stop.assert_not_awaited()
     finally:
         await engine._stop()
 

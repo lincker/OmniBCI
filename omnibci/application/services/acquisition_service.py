@@ -136,7 +136,11 @@ class AcquisitionAppService:
                 logger.warning("Processing input remains unavailable: %s", exc)
 
     def handle_stop_stream(self, cmd: StopStreamCommand) -> None:
-        with self._admission.stop_transition_sync("acquisition") if self._admission is not None else nullcontext():
+        # Hold both acquisition and processing scopes so a concurrent
+        # stop_module("processing") waits for the in-flight StopAndDrain
+        # barrier to settle before stopping the consumer.
+        with (self._admission.stop_transition_sync(("acquisition", "processing"))
+              if self._admission is not None else nullcontext()):
             self.handle_stop_and_drain()
         logger.info("Stream stopped and processing drained")
 

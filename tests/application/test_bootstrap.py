@@ -2,7 +2,7 @@
 P4 tests — composition root wiring.
 
 Covers the pure, I/O-free parts of omnibci.bootstrap:
-  - assemble(): acquisition, stimulation and live results share ONE engine instance.
+  - assemble(): acquisition and live results use Engine while stimulation owns its IPC host.
   - register_engine_listeners(): registers read-model + extra subscriptions via
     engine.subscribe, in order, and no-ops when the engine isn't ready.
 
@@ -34,6 +34,8 @@ class FakeEngine(EnginePort):
     """Engine stub recording subscribe() calls; lifecycle flags toggleable."""
 
     def __init__(self, initialized: bool = True, ready: bool = False):
+        from omnibci.application.runtime_admission import RuntimeAdmission
+        self.admission = RuntimeAdmission()
         self._initialized = initialized
         self._ready = ready
         self.subscriptions = []
@@ -52,6 +54,9 @@ class FakeEngine(EnginePort):
 
     def subscribe(self, event_type, handler) -> None:
         self.subscriptions.append((event_type, handler))
+
+    def on_stimulation_ack(self, event):
+        pass
 
     def on_peer_delivery_fault(self, event):
         pass
@@ -80,12 +85,14 @@ def _container(engine) -> AppContainer:
 # ---------------------------------------------------------------------------
 
 class TestAssemble:
-    def test_acquisition_and_stimulation_share_one_engine(self):
+    def test_acquisition_and_stimulation_dispatch_to_their_owners(self):
         engine = FakeEngine()
         c = assemble(engine)
         assert c.acquisition_service._command_executor is c.command_results
-        assert c.stimulation_service._engine is engine
-        assert c.stimulation_service._command_results is c.command_results
+        assert c.actuation_service._host is c.ipc_runtime
+        assert c.actuation_feedback is not None
+        assert c.stimulation_service._host is c.ipc_runtime
+        assert c.stimulation_service._command_results._dispatcher is c.ipc_runtime
         assert c.engine_service is engine
         assert c.acquisition_service._preview_provider == engine.read_acquisition_preview
         engine.generation = "next-generation"
@@ -130,15 +137,14 @@ class TestRegisterListeners:
         assert registered_types == [
             EventType.CommandResult,
             EventType.TrialCompleted,
+            EventType.TrialCompleted,
             EventType.EpochProcessed,
             EventType.AcquisitionState,
-            EventType.PeerDeliveryFault,
             EventType.TrialCompleted,
         ]
         assert engine.subscriptions[1][1] == container.results_service.on_trial_completed
-        assert engine.subscriptions[2][1] == container.results_service.on_epoch_processed
-        assert engine.subscriptions[3][1] == container.acquisition_service.on_acquisition_state
-        assert engine.subscriptions[4][1] == engine.on_peer_delivery_fault
+        assert engine.subscriptions[3][1] == container.results_service.on_epoch_processed
+        assert engine.subscriptions[4][1] == container.acquisition_service.on_acquisition_state
         assert engine.subscriptions[5][1] is broadcaster_handler
 
     def test_default_subscriptions_without_extra(self):

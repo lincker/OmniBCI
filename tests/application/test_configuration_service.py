@@ -220,7 +220,7 @@ def test_materialized_runtime_uses_pinned_source_values_and_generation(service):
     assert values["CONFIG.module_revisions"]["acquisition"] == source.revision
     assert values["CONFIG.generation"] == "run-1"
     assert values["CONFIG.module_revisions"]["processing"] is None
-    assert values["CONFIG.engine_revision"] == EngineSettings({}).revision
+    assert values["CONFIG.engine_revision"] is None
 
 
 @pytest.mark.parametrize("kind,slot,alias", [
@@ -850,12 +850,12 @@ def test_selected_query_does_not_read_unrelated_corrupt_module(consumer_profiles
     selected = consumer_profiles.selected_configuration(("actuation",))
     assert selected.modules["actuation"] == consumer_profiles.get_module("actuation")
     assert selected.modules["processing"] is None
-    assert selected.engine == consumer_profiles.get_engine()
+    assert selected.engine is None
 
 
 def test_external_node_selected_projection_uses_queries_only(consumer_profiles):
-    engine = SimpleNamespace(node_configuration_snapshot=lambda selected, *, module: ("selected", selected()))
-    value = NodeConfigurationService(engine, _queries(consumer_profiles)).configuration("actuation")
+    owner = SimpleNamespace(node_configuration_snapshot=lambda selected: ("selected", selected()))
+    value = NodeConfigurationService(_queries(consumer_profiles), actuation=owner, stimulation=None).configuration("actuation")
     assert value["configuration"]["module_revisions"] == {"actuation": consumer_profiles.get_module("actuation").revision}
     assert {binding["kind"] for binding in value["configuration"]["bindings"]} == {"effector"}
 

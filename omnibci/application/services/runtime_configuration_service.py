@@ -8,7 +8,7 @@ from threading import RLock
 from time import monotonic
 from uuid import UUID, uuid4
 
-from omnibci.application.configuration.definitions import MODULES, SECTIONS, ENGINE_SETTING_DEFAULTS
+from omnibci.application.configuration.definitions import ENGINE_MODULES, MODULES, OUTPUT_MODULES, SECTIONS, ENGINE_SETTING_DEFAULTS
 from omnibci.application.configuration.models import ActivationSet, ModuleActivation, EngineSettings, MODULE_KINDS
 from omnibci.application.configuration.errors import ProfileRevisionConflict
 from omnibci.application.plugin_management.schema import PluginSchemaError
@@ -20,31 +20,43 @@ from omnibci.application.services.command_result_service import CommandDeliveryE
 def read_configuration(repository, sections):
     """Read only the persisted inputs owned or consumed by this operation."""
     return ActivationSet({module: repository.get_module(module) for module in MODULES if module in sections},
-                         repository.get_engine())
+                         repository.get_engine() if "engine" in sections else None)
 
 
 def operation_scopes(stored):
     plan = stored.plan
     if plan.module == "engine" or stored.engine is not None:
-        return tuple(MODULES)
+        return ENGINE_MODULES
     if plan.module == "acquisition" and plan.running and plan.strategy not in ("select_on_start", "no_change"):
         return ("acquisition", "processing")
     return (plan.module,)
 
 
-def validate_external_peers(engine, activation_set, candidates, strategy):
-    if not engine.is_engine_ready or strategy == "no_change":
+def owner_identity(module, engine, stimulation, dependencies, actuation=None):
+    if module in OUTPUT_MODULES:
+        owner = stimulation if module == "stimulation" else actuation
+        state, session, revision = owner.owner_identity() if owner is not None else ("stopped", None, None)
+        return state, session, {module: revision} if state != "stopped" else None
+    if not engine.is_engine_ready:
+        return "stopped", None, None
+    applied = engine.applied_revisions or {}
+    return "active", engine.generation, {key: applied.get(key) for key in dependencies}
+
+
+def plan_matches(plan, engine, stimulation, actuation=None):
+    return (plan.owner_state, plan.generation, plan.applied_revisions) == owner_identity(
+        plan.module, engine, stimulation, plan.expected_revisions, actuation)
+
+
+def validate_external_peers(activation_set, candidates, strategy, stimulation=None, actuation=None):
+    if strategy == "no_change":
         return
-    active = engine.applied_snapshot or {}
-    target = activation_set.settings()
-    for role in ("stimulation", "actuation"):
-        if role not in candidates and not (strategy == "rebuild" and not candidates):
-            continue
-        key = role.upper()
-        external = (not active.get(f"{key}.auto_spawn", True)
-                    or not target.get(f"{key}.auto_spawn", True))
-        if external and engine.is_peer_connected(role):
-            raise PluginSchemaError(f"{role.title()} is externally managed; disconnect its node before changing configuration")
+    for role, owner in (("stimulation", stimulation), ("actuation", actuation)):
+        if role in candidates and owner is not None and owner.is_connected:
+            active = owner.applied_snapshot or {}
+            key = f"{role.upper()}.auto_spawn"
+            if not active.get(key, True) or not activation_set.settings().get(key, True):
+                raise PluginSchemaError(f"{role.title()} is externally managed; disconnect its node before changing configuration")
 
 
 _APPLY_STRATEGIES = frozenset({"select_on_start", "no_change", "rebuild", "trial_boundary", "module"})
@@ -60,6 +72,7 @@ class ConfigurationPlan:
     applied_revisions: dict[str, str | None] | None
     generation: str | None
     running: bool
+    owner_state: str
     strategy: str
     changed_slots: tuple[str, ...]
     changed_settings: tuple[str, ...]
@@ -93,7 +106,9 @@ class RuntimeConfigurationService:
     _PLAN_TTL_S = 300
     _MAX_PLANS = 32
 
-    def __init__(self, profiles, engine, *, executor=None, reference_guard=None):
+    def __init__(self, profiles, engine, *, executor=None, reference_guard=None, stimulation=None, actuation=None):
+        self.stimulation = stimulation
+        self.actuation = actuation
         self.profiles = profiles
         self.engine = engine
         self.executor = executor
@@ -128,16 +143,22 @@ class RuntimeConfigurationService:
             except (ValueError, KeyError, RuntimeError, OSError) as exc:
                 accepted[section] = None
                 errors[section] = str(exc)
-        running = self.engine.is_engine_ready
+        state, generation, applied = owner_identity("engine", self.engine, self.stimulation, (*ENGINE_MODULES, "engine"))
+        stim_state, session, stim_applied = owner_identity("stimulation", self.engine, self.stimulation, ("stimulation",))
+        act_state, act_session, act_applied = owner_identity("actuation", self.engine, self.stimulation, ("actuation",), self.actuation)
         with self._lock:
             operations = {section: self.operation(self._active_operations[section])
                           if section in self._active_operations else None for section in SECTIONS}
         return {
-            "running": running,
+            "running": state == "active",
+            "stimulation_state": stim_state,
+            "stimulation_session": session,
+            "actuation_state": act_state,
+            "actuation_session": act_session,
             "recovery": self._admission.recovery_status,
             "accepted": accepted,
-            "applied": self.engine.applied_revisions if running else None,
-            "generation": self.engine.generation if running else None,
+            "applied": {**(applied or {}), **(stim_applied or {}), **(act_applied or {})} if applied or stim_applied or act_applied else None,
+            "generation": generation,
             "operations": operations,
             "errors": errors,
         }
@@ -177,20 +198,20 @@ class RuntimeConfigurationService:
         return deepcopy(stored.plan)
 
     def _prepare(self, module, candidate, expected_revision, *, restored_from=None):
-        dependencies = {module, "engine"}
+        dependencies = {module} if module in OUTPUT_MODULES else {module, "engine"}
         if module == "processing":
             dependencies.add("acquisition")
         if module == "acquisition" and self.engine.is_module_running("processing"):
             dependencies.add("processing")
         if module == "engine":
-            dependencies.update(SECTIONS)
+            dependencies.update(ENGINE_MODULES)
         current = self.profiles.selected_configuration(dependencies - {"engine"})
         revisions = current.revisions()
         if revisions[module] != expected_revision:
             raise ProfileRevisionConflict("The module configuration changed; reload before planning")
         candidates = {} if module == "engine" else {module: candidate}
         engine_settings = candidate if module == "engine" else None
-        if engine_settings is None and current.engine is None:
+        if module not in OUTPUT_MODULES and engine_settings is None and current.engine is None:
             engine_settings = self.profiles.propose_engine(ENGINE_SETTING_DEFAULTS)
         combined = ActivationSet({**current.modules, **candidates}, engine_settings or current.engine)
         targets = {name: value.revision for name, value in candidates.items()}
@@ -207,17 +228,17 @@ class RuntimeConfigurationService:
         changed_settings = tuple(sorted(k for k in old_settings.keys() | candidate.settings.keys()
                                         if old_settings.get(k) != candidate.settings.get(k)))
         changed = any(revisions[k] != v for k, v in targets.items())
-        running = self.engine.is_engine_ready
-        applied = self.engine.applied_revisions if running else None
+        owner_state, generation, applied = owner_identity(module, self.engine, self.stimulation, dependencies, self.actuation)
+        running = owner_state != "stopped"
         strategy = self._strategy(module, slots, changed_settings, old, new) if changed else "no_change"
         if changed and engine_settings is not None and engine_settings.revision != revisions["engine"]:
             strategy = "rebuild"
         if changed and (not running or module in ("acquisition", "processing")
                         and not self.engine.is_module_running(module)):
             strategy = "select_on_start"
-        if (running and module != "engine" and not self.engine.is_module_running(module)
+        if (running and module in ENGINE_MODULES and not self.engine.is_module_running(module)
                 and applied.get(module) != candidate.revision):
-            strategy = "select_on_start" if module in ("acquisition", "processing") else "module"
+            strategy = "select_on_start"
         expected = {key: revisions[key] for key in SECTIONS if key in dependencies}
         errors = []
         try:
@@ -225,13 +246,13 @@ class RuntimeConfigurationService:
         except (ValueError, KeyError) as exc:
             errors.append(str(exc))
         if running and any(applied.get(key) != revision for key, revision in expected.items()
-                           if revision is not None and (key == "engine" or self.engine.is_module_running(key))):
+                           if revision is not None and (key in ("engine", *OUTPUT_MODULES) or self.engine.is_module_running(key))):
             errors.append("Applied and selected module revisions differ; reconcile the runtime before applying")
         projection = {"PLUGINS.bindings": [b.to_dict() for b in combined.bindings()]}
         plan = ConfigurationPlan(
             str(uuid4()), module, expected_revision, expected, targets,
             {key: applied.get(key) for key in expected} if applied is not None else None,
-            self.engine.generation if running else None, running, strategy,
+            generation, running, owner_state, strategy,
             tuple(slots), changed_settings, tuple(errors),
             self._signal_summary(projection) if module == "processing" else None,
         )
@@ -267,11 +288,8 @@ class RuntimeConfigurationService:
             raise PluginSchemaError("; ".join(plan.errors))
         current = self.profiles.selected_configuration(set(plan.expected_revisions) - {"engine"})
         revisions = current.revisions()
-        applied = self.engine.applied_revisions or {}
         if (any(revisions[k] != v for k, v in plan.expected_revisions.items())
-                or self.engine.is_engine_ready != plan.running
-                or (plan.running and (self.engine.generation != plan.generation
-                    or any(applied.get(k) != v for k, v in plan.applied_revisions.items())))):
+                or not plan_matches(plan, self.engine, self.stimulation, self.actuation)):
             raise ProfileRevisionConflict("Runtime or module configuration changed; create a new plan")
         self._validate_runtime(stored.activation_set(current), stored.candidates, plan.strategy)
         if (plan.running and plan.module in ("acquisition", "processing") and plan.strategy != "no_change"
@@ -280,17 +298,17 @@ class RuntimeConfigurationService:
         return deepcopy(stored)
 
     def _validate_runtime(self, activation_set, candidates, strategy):
-        if not self.engine.is_engine_ready and self.engine.foundation_requires_cleanup:
+        if not set(candidates).intersection(OUTPUT_MODULES) and not self.engine.is_engine_ready and self.engine.foundation_requires_cleanup:
             raise PluginSchemaError("The previous engine still owns resources; stop it before selecting configuration")
-        validate_external_peers(self.engine, activation_set, candidates, strategy)
+        validate_external_peers(activation_set, candidates, strategy, self.stimulation, self.actuation)
         usage = getattr(self.executor, "active_kinds", None)
         active_kinds = usage(activation_set) if callable(usage) else None
         modules = activation_set.modules if strategy == "rebuild" and not candidates else candidates
         for candidate in modules.values():
             if candidate is not None:
                 self.profiles.validate_module(candidate, active_kinds=active_kinds)
-        if (self.engine.is_module_running("acquisition") and
-                ("acquisition" in candidates or strategy == "rebuild" and not candidates)
+        if (("acquisition" in candidates or strategy == "rebuild" and not candidates)
+                and self.engine.is_module_running("acquisition")
                 and not any(binding.slot == "acquisition.source" for binding in activation_set.bindings())):
             raise PluginSchemaError("The running Acquisition module requires acquisition.source")
 
@@ -325,8 +343,8 @@ class RuntimeConfigurationService:
                 if self._admission.requires_recovery(module):
                     raise ProfileRevisionConflict("Resolve or stop the uncertain runtime module before starting")
                 start_foundation = module in ("acquisition", "processing") and not self.engine.is_engine_ready
-                scopes = tuple(MODULES) if (start_foundation
-                                           or self.profiles.get_engine() is None) else (module,)
+                scopes = ENGINE_MODULES if (start_foundation or module not in OUTPUT_MODULES
+                                            and self.profiles.get_engine() is None) else (module,)
                 reservation = self._admission.reserve_transition(scopes, recovery=start_foundation)
                 self._current_requests[operation_id] = request
                 self._operations[operation_id] = dict(
@@ -361,8 +379,6 @@ class RuntimeConfigurationService:
         try:
             with self._admission.transition(scopes, reservation=reservation):
                 progress("validating")
-                if not self.engine.is_engine_ready and module not in ("acquisition", "processing"):
-                    raise RuntimeError("Start the engine before starting a module")
                 candidate = self.profiles.propose(module, configuration["bindings"], settings=configuration["settings"])
                 previous = self.profiles.get_module(module)
                 if (previous.revision if previous else None) != configuration["expected_revision"]:

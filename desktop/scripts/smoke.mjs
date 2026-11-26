@@ -6,6 +6,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { createServer as createTcpServer } from "node:net";
 import { build } from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -136,17 +137,56 @@ try {
   await page.waitForFunction(() => document.querySelector(".connection-open"), null, { timeout: 20_000 });
   await page.screenshot({ path: path.join(output, "local-workspace.png") });
 
-  stage = "independent Engine startup";
+  stage = "standalone Stimulation from the Run console";
+  const probe = createTcpServer();
+  await new Promise((resolve, reject) => probe.once("error", reject).listen(0, "127.0.0.1", resolve));
+  const rendererPort = probe.address().port;
+  await new Promise((resolve, reject) => probe.close(error => error ? reject(error) : resolve()));
+  await page.getByRole("button", { name: "Stimulation", exact: true }).click();
+  const paradigm = (await api("/config/plugin-catalog/paradigm")).body.data
+    .find(item => item.selection.package_id === "OmniBCI.classic40SSVEP" && item.selection.contribution_id === "default");
+  assert.ok(paradigm?.available, "The bundled Classic40 paradigm must be available");
+  await page.getByRole("combobox", { name: /^Plugin and version/ }).selectOption(JSON.stringify([
+    paradigm.selection.package_id, paradigm.selection.contribution_id, paradigm.selection.version,
+  ]));
+  await page.getByRole("combobox", { name: /^Renderer/ }).selectOption("pyopengl");
+  await page.getByLabel("Listen port", { exact: true }).fill(String(rendererPort));
   await page.getByRole("button", { name: "Run", exact: true }).click();
+  await page.locator("#run-step-stimulation").click();
+  const [launchResponse] = await Promise.all([
+    page.waitForResponse(response => response.url().endsWith("/api/v1/stimulation/start") && response.request().method() === "POST", { timeout: 60_000 }),
+    page.getByRole("button", { name: "Launch stimulation", exact: true }).click(),
+  ]);
+  assert.equal((await launchResponse.json()).data?.status, "succeeded");
+  const stimulationStatus = async () => (await api("/stimulation/status")).body.data;
+  await pollUntil("Standalone renderer", stimulationStatus, state => state.active && state.connected && !state.engine_linked, 60_000);
+  const standalone = (await api("/config/runtime")).body.data;
+  assert.ok(standalone.stimulation_session);
+  assert.equal(standalone.accepted.engine, null);
+  await page.getByLabel("Target sequence", { exact: true }).fill("1");
+  await page.getByRole("button", { name: "Trigger trial", exact: true }).click();
+  await page.waitForFunction(() => Number(document.querySelector(".ack-panel .count")?.textContent) > 0);
+
+  stage = "Engine start and stop preserve the renderer";
+  await page.getByRole("button", { name: "Start engine", exact: true }).click();
+  await pollUntil("Engine feedback link", stimulationStatus, state => state.engine_linked);
+  await page.getByRole("button", { name: "Stop engine", exact: true }).click();
+  await pollUntil("Standalone renderer after Engine stop", stimulationStatus, state => state.active && state.connected && !state.engine_linked);
+  assert.equal((await api("/config/runtime")).body.data.stimulation_session, standalone.stimulation_session);
+  await page.getByRole("button", { name: "Stop stimulation", exact: true }).click();
+  await pollUntil("Renderer shutdown", stimulationStatus, state => !state.active && !state.connected && !state.process_alive);
+
+  stage = "independent Engine startup";
   await page.getByRole("button", { name: "Start engine", exact: true }).click();
   await page.getByText("Engine running", { exact: true }).first().waitFor({ timeout: 60_000 });
   assert.deepEqual((await api("/engine/status")).body.data, {
     running: true, acquisition_alive: false, processor_alive: false,
-    stimulation_connected: false, actuation_alive: false, actuation_connected: false,
+    stimulation_connected: false, actuation_connected: false,
   });
 
   stage = "file selection and current configuration";
   await page.getByRole("button", { name: "Setup", exact: true }).click();
+  await page.getByRole("button", { name: "Acquisition", exact: true }).click();
   await page.getByRole("heading", { name: "Acquisition source", exact: true }).waitFor();
   // Input is supplied by the test, outside the installation. No fixture is shipped.
   const recording = path.join(directory, "subject 数据.cnt");
@@ -174,7 +214,7 @@ try {
   await page.getByRole("button", { name: "Signal Processing", exact: true }).click();
   await page.getByRole("heading", { name: "Decoder", exact: true }).waitFor();
   const decoder = (await api("/config/plugin-catalog/decoder")).body.data
-    .find(item => item.plugin_type === "THUBCI_SSVEP_classic40CCA");
+    .find(item => item.selection.package_id === "OmniBCI.classic40_cca" && item.selection.contribution_id === "default");
   assert.ok(decoder?.available, "The bundled CCA decoder must be available");
   await page.getByRole("combobox", { name: /^Plugin and version/ }).selectOption(JSON.stringify([
     decoder.selection.package_id, decoder.selection.contribution_id, decoder.selection.version,
@@ -185,6 +225,7 @@ try {
 
   stage = "real file replay";
   await page.getByRole("button", { name: "Run", exact: true }).click();
+  await page.locator("#run-step-processing").click();
   await page.getByRole("button", { name: "Start processing", exact: true }).click();
   await pollUntil("Independent Processing startup", async () => (await api("/engine/status")).body.data,
     current => current.processor_alive === true);
@@ -194,20 +235,30 @@ try {
   assert.equal(workers.acquisition_alive, true);
   assert.equal(workers.processor_alive, true);
   assert.equal(workers.stimulation_connected, false);
-  assert.equal(workers.actuation_alive, false);
+  assert.equal((await api("/actuation/status")).body.data.process_alive, false);
   assert.equal((await api("/acquisition/status")).body.data.streaming, false);
   assert.deepEqual((await api("/config/plugin-profiles")).body.data, []);
+  await page.locator("#run-step-acquisition").click();
   await page.getByRole("button", { name: "Start reading", exact: true }).click();
   const recorded = await pollUntil("First decoded file trial", async () => {
     const response = await api("/results");
     return { status: response.status, trials: response.body.data?.trials };
   }, current => current.status === 200 && current.trials?.length > 0, 90_000);
   assert.ok(recorded.trials.length > 0);
-  await page.getByRole("button", { name: "Stop reading", exact: true }).click();
+  const [stopReadResponse] = await Promise.all([
+    page.waitForResponse(response => response.url().endsWith("/api/v1/acquisition/stream/stop") && response.request().method() === "POST", { timeout: 60_000 }),
+    page.getByRole("button", { name: "Stop reading", exact: true }).click(),
+  ]);
+  assert.equal(stopReadResponse.status(), 200);
   await pollUntil("Stopped reading", async () => (await api("/acquisition/status")).body.data,
     current => current.connected === true && current.streaming === false);
   assert.equal((await api("/engine/status")).body.data.processor_alive, true);
-  await page.getByRole("button", { name: "Stop processing", exact: true }).click();
+  await page.locator("#run-step-processing").click();
+  const [stopProcessingResponse] = await Promise.all([
+    page.waitForResponse(response => response.url().endsWith("/api/v1/processing/stop") && response.request().method() === "POST", { timeout: 60_000 }),
+    page.getByRole("button", { name: "Stop processing", exact: true }).click(),
+  ]);
+  assert.equal(stopProcessingResponse.status(), 200);
   await pollUntil("Independent Processing stop", async () => (await api("/engine/status")).body.data,
     current => current.processor_alive === false && current.acquisition_alive === true && current.running === true);
   await page.getByRole("button", { name: "Results", exact: true }).click();

@@ -130,8 +130,12 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
     manager = StimulationProcessManager()
     snapshot = _paradigm_snapshot()
     snapshot.update({"CONFIG.module_revisions": {"stimulation": "a" * 64}, "CONFIG.engine_revision": "b" * 64, "CONFIG.generation": "run"})
-    startup_pipe.receiver.recv.return_value = StartupReport.ready("Stimulation", module_revisions={"stimulation": "a" * 64}, engine_revision="b" * 64, generation="run",
-        execution=execution_receipt(_paradigm_snapshot(), "stimulation", "prepare-1"))
+    def ready():
+        launched = mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"]
+        return StartupReport.ready("Stimulation", module_revisions={"stimulation": "a" * 64},
+                                    engine_revision=None, generation=launched["CONFIG.generation"],
+                                    execution=execution_receipt(launched, "stimulation", launched["CONFIG.operation_id"]))
+    startup_pipe.receiver.recv.side_effect = ready
     if legacy_alias is not None:
         snapshot["STIMULATION.paradigm"] = legacy_alias
     # A dormant processing profile must not participate in stimulation startup.
@@ -146,7 +150,7 @@ def test_ready_status_reports_paradigm_from_pinned_binding(
     paradigm = "OmniBCI.classic40SSVEP/default@0.1.0"
     assert manager.current_paradigm == paradigm
     assert mock_process_cls.call_args.kwargs["kwargs"]["settings_snapshot"] == {
-        **snapshot, "PLUGINS.bindings": [snapshot["PLUGINS.bindings"][0]], "CONFIG.operation_id": "prepare-1",
+        **stimulation_service.applied_snapshot, "PLUGINS.bindings": [snapshot["PLUGINS.bindings"][0]],
     }
     status = api_client.get("/api/v1/stimulation/status").json()["data"]
     assert status["active"] is True and status["process_alive"] is True
