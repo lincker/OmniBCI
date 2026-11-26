@@ -10,7 +10,7 @@ from omnibci.application.configuration.models import ProfileBinding
 from omnibci.application.events import CommandRequest, SignalPreparationReceipt
 from omnibci.application.plugin_management.identity import PluginSelection
 from omnibci.domain.channel_mapping import ProcessingInput, compile_processing_plan
-from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHistory
+from omnibci.infrastructure.plugin_management.execution_history import PluginExecutionHistory
 from omnibci.infrastructure.plugin_management.preparation import execution_receipt
 from omnibci.infrastructure.signal_processing import configuration_transactions, signal_configuration
 from omnibci.infrastructure.signal_processing.pipeline_configuration import ConfiguredPipeline

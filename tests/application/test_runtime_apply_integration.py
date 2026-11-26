@@ -21,7 +21,7 @@ from omnibci.infrastructure.plugin_management.catalog import CatalogConfiguratio
 from omnibci.application.configuration.accepted import accepted_runtime_settings
 from tests.plugin_configuration_helpers import accept_profiles, builtin_selection, install_package_root, prepare_runtime_plugins
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
-from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHistory
+from omnibci.infrastructure.plugin_management.execution_history import PluginExecutionHistory
 
 
 SOURCE = '''

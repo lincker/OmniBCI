@@ -96,7 +96,6 @@ async def test_host_mode_does_not_override_current_snapshot_default(monkeypatch,
     finally:
         manager.stop()
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.parametrize(("module", "manager_class", "component", "key"), MANAGERS)
