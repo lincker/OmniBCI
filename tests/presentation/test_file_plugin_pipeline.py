@@ -102,7 +102,8 @@ def test_file_starter_decoder_and_logger_preserve_trial_and_execution_identity(t
         visible = client.get("/api/v1/results").json()["data"]
         assert visible["trials"] and visible["generation"] == trial.generation
     assert app.state.shutdown_complete
-    assert not (tmp_path / "plugins/state/.controller.active").exists()
+    for forbidden in (".controller.active", ".controller.lock", "controller.json"):
+        assert not (tmp_path / "plugins/state" / forbidden).exists()
 
 
 def _cnt_cca_configurations(catalog, *, chunk_size=100):

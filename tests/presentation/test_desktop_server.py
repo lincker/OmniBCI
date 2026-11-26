@@ -201,7 +201,6 @@ async def test_lifespan_preserves_ipc_startup_error_and_retries_only_retained_re
     ipc.start.side_effect = RuntimeError("ipc startup boom")
     if rollback_fails:
         ipc.stop.side_effect = OSError("outer stop retry failed")
-    package_owner = MagicMock()
     container = SimpleNamespace(
         engine_service=SimpleNamespace(is_engine_ready=False, is_initialized=False),
         acquisition_service=SimpleNamespace(),
@@ -211,7 +210,6 @@ async def test_lifespan_preserves_ipc_startup_error_and_retries_only_retained_re
         plugin_package_service=None,
         plugin_market_service=None,
         ipc_runtime=ipc,
-        package_owner=package_owner,
     )
     shutdown_prepare = AsyncMock(return_value=[])
     monkeypatch.setattr(main, "build_container", AsyncMock(return_value=container))
@@ -224,14 +222,11 @@ async def test_lifespan_preserves_ipc_startup_error_and_retries_only_retained_re
 
     shutdown_prepare.assert_awaited_once()
     if rollback_fails:
-        package_owner.abandon.assert_called_once()
-        package_owner.close.assert_not_called()
         ipc.stop.assert_called_once()
+        assert app.state.shutdown_complete is False
         assert app.state.shutdown_errors == ["IPC runtime: outer stop retry failed"]
         assert any("outer stop retry failed" in note for note in getattr(exc_info.value, "__notes__", ()))
     else:
-        package_owner.close.assert_called_once()
-        package_owner.abandon.assert_not_called()
         ipc.stop.assert_not_called()
         assert app.state.shutdown_errors == []
 
@@ -244,7 +239,6 @@ async def test_lifespan_runs_full_teardown_when_status_publisher_task_fails(monk
 
     ipc = MagicMock()
     ipc.has_owned_resources = True
-    package_owner = MagicMock()
     container = SimpleNamespace(
         engine_service=SimpleNamespace(is_engine_ready=False, is_initialized=False),
         acquisition_service=SimpleNamespace(),
@@ -254,7 +248,6 @@ async def test_lifespan_runs_full_teardown_when_status_publisher_task_fails(monk
         plugin_package_service=None,
         plugin_market_service=None,
         ipc_runtime=ipc,
-        package_owner=package_owner,
     )
     shutdown_prepare = AsyncMock(return_value=[])
 
@@ -272,5 +265,5 @@ async def test_lifespan_runs_full_teardown_when_status_publisher_task_fails(monk
 
     shutdown_prepare.assert_awaited_once()
     ipc.stop.assert_called_once()
-    package_owner.abandon.assert_called_once()
+    assert app.state.shutdown_complete is False
     assert app.state.shutdown_errors == ["Status publisher: publisher died"]
