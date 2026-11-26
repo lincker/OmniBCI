@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def window_refresh_rate_hz(window) -> float | None:
-    """Return the refresh rate (Hz) of the monitor containing most of *window*."""
+    """Return the nominal (integer-Hz) GLFW refresh rate of the monitor containing most of *window*."""
     if not window:
         return None
     monitors = glfw.get_monitors()

@@ -14,9 +14,10 @@ from omnibci.domain.ports.acquisition import TriggerOutput
 
 
 class Paradigm(ABC):
-    # Optional fixed display refresh rate (Hz) required by this paradigm.
-    # When set, the host validates the active display mode at startup, on
-    # trial admission, and during rendering.
+    # Optional nominal display refresh rate (Hz) required by this paradigm.
+    # When set, the host validates the system-reported nominal display rate
+    # once at startup, exits on mismatch, then runs the paradigm at its
+    # declared rate while logging the reported and measured refresh rates.
     required_refresh_rate_hz: float | None = None
 
     @abstractmethod

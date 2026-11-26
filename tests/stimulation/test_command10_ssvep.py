@@ -307,12 +307,134 @@ def test_gap_past_entire_stimulus_omits_expired_start_marker(paradigm, trigger):
     assert not paradigm.is_presenting()
 
 
-def test_duplicate_or_regressed_timestamp_does_not_advance(paradigm, surface, trigger):
+def test_duplicate_or_regressed_timestamp_redraws_without_advancing(paradigm, surface, trigger):
     paradigm.present_trial({'cue_target_id': 0})
     paradigm.render_frame(1.0)
     surface.reset_mock()
     paradigm.render_frame(1.0)
     paradigm.render_frame(0.5)
-    surface.clear.assert_not_called()
-    surface.draw_rect.assert_not_called()
+    assert surface.clear.call_count == 2
+    target_1_colors = [
+        entry.args[1]
+        for entry in surface.draw_rect.call_args_list
+        if entry.args[0] == target_rect(1, 3)
+    ]
+    assert len(target_1_colors) == 2
+    for color in target_1_colors:
+        assert (color.r, color.g, color.b) == pytest.approx((0.5, 0.5, 0.5))
     trigger.send.assert_called_once_with(11)
+
+
+class _DoubleBufferedRenderer:
+    """Two-buffer renderer model exposing stale or uninitialized back buffers on swap."""
+
+    def __init__(self, refresh_rate: float = 60.0) -> None:
+        self._refresh_rate = refresh_rate
+        self.front: list[object] = ["UNINITIALIZED_FRONT"]
+        self.back: list[object] = ["UNINITIALIZED_BACK"]
+        self.presented: list[list[object]] = []
+        self._remaining = 0
+
+    def run_times(self, paradigm, times: list[float], monkeypatch) -> None:
+        import asyncio
+        from omnibci.infrastructure.stimulation.render_loop import RenderLoop
+
+        self._remaining = len(times)
+        samples = iter([0.0, *times])
+        monkeypatch.setattr(
+            "omnibci.infrastructure.stimulation.render_loop.time.perf_counter",
+            lambda: next(samples),
+        )
+        asyncio.run(RenderLoop(self, paradigm).run_async())
+
+    def should_close(self) -> bool:
+        if self._remaining <= 0:
+            return True
+        self._remaining -= 1
+        return False
+
+    def poll_events(self) -> None:
+        pass
+
+    def refresh_rate_hz(self) -> float:
+        return self._refresh_rate
+
+    def upload_texture(self, image) -> TextureHandle:
+        return TextureHandle()
+
+    def release_texture(self, handle: TextureHandle) -> None:
+        pass
+
+    def clear(self, color=None) -> None:
+        self.back = []
+
+    def draw_rect(self, rect, color) -> None:
+        self.back.append(("rect", rect, color))
+
+    def draw_texture(self, handle, rect) -> None:
+        self.back.append(("tex", handle, rect))
+
+    def end_frame(self) -> None:
+        self.front, self.back = self.back, self.front
+        self.presented.append(list(self.front))
+
+
+def _presented_target_color(frame: list[object], row: int, column: int):
+    rect = target_rect(row, column)
+    for kind, item_rect, color in frame:
+        if kind == "rect" and item_rect == rect:
+            return color
+    raise AssertionError("target rect not drawn")
+
+
+def _has_cue_border(frame: list[object], row: int, column: int) -> bool:
+    cx, cy = (column - 3) * 360, (2 - row) * 300
+    border = Rect(x=(cx - 107) / 960, y=(cy - 107) / 540, w=214 / 960, h=214 / 540)
+    return any(kind == "rect" and item_rect == border for kind, item_rect, _ in frame)
+
+
+def test_double_buffer_duplicate_and_regressed_slots_never_replay_stale_frame(trigger, monkeypatch):
+    renderer = _DoubleBufferedRenderer()
+    instance = Command10SSVEP(parameters={}, resource_root=PACKAGE)
+    instance.setup(renderer=renderer, trigger=trigger)
+    try:
+        instance.present_trial({'cue_target_id': 0})
+        # Exact Codex 7.1 reproduction plus a regressed timestamp:
+        # slot 0 (0.0), slot 1 (1/60), duplicate slot 1 (0.020), regressed slot 0 (0.005).
+        renderer.run_times(instance, [0.0, 1 / 60, 0.020, 0.005], monkeypatch)
+    finally:
+        instance.teardown()
+
+    slot0 = 0.5
+    slot1 = 0.5 + 0.5 * math.sin(2 * math.pi * 8.0 * 1 / 60)
+    assert all("UNINITIALIZED_FRONT" not in f and "UNINITIALIZED_BACK" not in f for f in renderer.presented)
+    brightnesses = [_presented_target_color(f, 1, 3).r for f in renderer.presented]
+    assert brightnesses == pytest.approx([slot0, slot1, slot1, slot1])
+    trigger.send.assert_called_once_with(11)
+
+
+def test_double_buffer_boundaries_preserve_scene_and_single_shot_markers(trigger, monkeypatch):
+    renderer = _DoubleBufferedRenderer()
+    instance = Command10SSVEP(parameters={}, resource_root=PACKAGE)
+    instance.setup(renderer=renderer, trigger=trigger)
+    try:
+        instance.present_trial({'cue_target_id': 5})
+        # First cue frame, last cue frame + duplicate, first stim frame + duplicate.
+        renderer.run_times(instance, [0.0, 59 / 60, 59 / 60 + 0.002, 1.0, 1.002], monkeypatch)
+        instance.present_result({'target_id': 5})
+        # Last stim frame, first result frame + duplicate.
+        renderer.run_times(instance, [1.0 + 239 / 60, 5.0, 5.002], monkeypatch)
+    finally:
+        instance.teardown()
+
+    assert all("UNINITIALIZED_FRONT" not in f and "UNINITIALIZED_BACK" not in f for f in renderer.presented)
+    # Frames 0..2: cue border on target 5 (row 1, col 1).
+    assert [_has_cue_border(f, 1, 1) for f in renderer.presented[:3]] == [True, True, True]
+    # Frames 3..4: first stim slot (no cue border, target 1 brightness == 0.5 on both swaps).
+    assert [_has_cue_border(f, 1, 1) for f in renderer.presented[3:5]] == [False, False]
+    assert [_presented_target_color(f, 1, 3).r for f in renderer.presented[3:5]] == pytest.approx([0.5, 0.5])
+    # Frames 6..7: result highlight (red on target 5, repeated cleanly on duplicate slot).
+    for frame in renderer.presented[6:8]:
+        color = _presented_target_color(frame, 1, 1)
+        assert (color.r, color.g, color.b) == pytest.approx((1.0, 0.0, 0.0))
+    assert trigger.mock_calls == [call.clear(), call.send(5), call.clear()]

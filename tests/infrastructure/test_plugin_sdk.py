@@ -122,6 +122,7 @@ def test_sdk_inputs_work_across_spawn(tmp_path):
 
 def test_paradigm_borrows_required_capabilities_only_during_setup():
     import inspect
+    from omnibci import sdk
     from omnibci.sdk import Paradigm
 
     parameters = inspect.signature(Paradigm.setup).parameters
@@ -129,3 +130,6 @@ def test_paradigm_borrows_required_capabilities_only_during_setup():
         assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
         assert parameters[name].default is inspect.Parameter.empty
     assert tuple(inspect.signature(Paradigm.teardown).parameters) == ("self",)
+    assert tuple(inspect.signature(Paradigm.render_frame).parameters) == ("self", "elapsed_seconds")
+    assert len(sdk.__all__) == 18
+    assert not hasattr(sdk, "FrameTiming")

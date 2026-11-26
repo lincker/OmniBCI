@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 from types import SimpleNamespace
 
 import asyncio
+import logging
 import numpy as np
 import pytest
 
@@ -115,7 +116,7 @@ class TestStimulatorStart:
             asyncio.run(s.start_async())
         assert call_order == ["trigger", "paradigm"]
 
-    @pytest.mark.parametrize("observed_hz", [None, 59, 59.94, 75, 120, 144])
+    @pytest.mark.parametrize("observed_hz", [None, 0, -60, 59, 61, 75, 120, 144, float("nan"), True])
     def test_unsupported_or_missing_display_rate_fails_before_trigger_or_paradigm_setup(self, observed_hz):
         s, mock_renderer, mock_paradigm, mock_trigger, mock_loop = _make_stimulator()
         mock_paradigm.required_refresh_rate_hz = 60.0
@@ -133,25 +134,34 @@ class TestStimulatorStart:
         mock_paradigm.setup.assert_not_called()
         mock_renderer.shutdown.assert_called_once()
 
-    def test_fixed_60hz_paradigm_starts_and_rejects_trial_if_display_rate_changes(self):
+    @pytest.mark.parametrize("observed_hz", [60.0, 59.94])
+    def test_nominal_display_rate_matches_logs_and_does_not_requery_on_trial(self, observed_hz, caplog):
         s, mock_renderer, mock_paradigm, _, mock_loop = _make_stimulator()
         s._payload_schemas = {"trial": {"type": "object", "properties": {}, "additionalProperties": False}}
         mock_paradigm.required_refresh_rate_hz = 60.0
-        mock_renderer.refresh_rate_hz.return_value = 60.0
-        with patch(
-            "omnibci.infrastructure.stimulation.stimulator._create_renderer",
-            return_value=mock_renderer,
-        ), patch(
-            "omnibci.infrastructure.stimulation.stimulator.RenderLoop",
-            return_value=mock_loop,
-        ):
-            asyncio.run(s.start_async())
+        mock_renderer.refresh_rate_hz.return_value = observed_hz
+        with caplog.at_level(logging.INFO, logger="omnibci.infrastructure.stimulation.render_loop"):
+            with patch(
+                "omnibci.infrastructure.stimulation.stimulator._create_renderer",
+                return_value=mock_renderer,
+            ), patch(
+                "omnibci.infrastructure.stimulation.stimulator.RenderLoop",
+                return_value=mock_loop,
+            ):
+                asyncio.run(s.start_async())
+        mock_renderer.refresh_rate_hz.assert_called_once()
+        assert any(
+            f"system={observed_hz:g} Hz" in record.getMessage() and "paradigm_required=60 Hz" in record.getMessage()
+            for record in caplog.records
+        )
         s.paradigm = mock_paradigm
         s._renderer = mock_renderer
+        mock_paradigm.present_trial.return_value = None
+        mock_renderer.refresh_rate_hz.reset_mock()
         mock_renderer.refresh_rate_hz.return_value = 120.0
-        with pytest.raises(RuntimeError, match="120 Hz"):
-            s.present_trial({})
-        mock_paradigm.present_trial.assert_not_called()
+        s.present_trial({})
+        mock_renderer.refresh_rate_hz.assert_not_called()
+        mock_paradigm.present_trial.assert_called_once_with({})
 
 
 # ---------------------------------------------------------------------------

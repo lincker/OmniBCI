@@ -194,7 +194,6 @@ class Stimulator:
         self._check_owner()
         if self.paradigm is None:
             raise RuntimeError("Stimulation paradigm has not been initialized")
-        validate_display_refresh_rate(self._renderer, self.paradigm)
         payload = validate_parameters(self._payload_schemas["trial"], parameters, apply_defaults=False)
         self._require_none(self.paradigm.present_trial(payload), "Paradigm.present_trial")
 

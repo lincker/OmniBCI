@@ -156,7 +156,7 @@ class Renderer(RenderSurface, Protocol):
         ...
 
     def refresh_rate_hz(self) -> float | None:
-        """Return the active display mode refresh rate in Hz for this window, or None if unavailable."""
+        """Return the system-reported nominal display refresh rate in Hz for this window, or None if unavailable."""
         ...
 
     # -- Frame submission ----------------------------------------------------

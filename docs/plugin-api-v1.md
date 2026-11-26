@@ -269,7 +269,7 @@ The trigger plugin owns device I/O; Stimulation owns `setup`/`clear`/`teardown` 
 
 ### 5.6 Paradigm
 
-`render_frame()` receives `elapsed_seconds` from a monotonic clock relative to the start of the rendering session, while the host owns event polling and VSync frame submission. Paradigms that require a fixed monitor refresh rate may declare `required_refresh_rate_hz: float | None = None` for host startup, trial-admission, and runtime validation.
+`render_frame()` receives `elapsed_seconds` from a monotonic clock relative to the start of the rendering session, while the host owns event polling and VSync frame submission. Paradigms that require a fixed monitor refresh rate may declare `required_refresh_rate_hz: float | None = None` for startup nominal display-rate validation, while the host logs both the reported and measured refresh rates.
 
 ```python
 class Paradigm(ABC):

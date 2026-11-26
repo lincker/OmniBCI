@@ -503,14 +503,112 @@ class TestTimelineAndMissedFrames:
         paradigm.render_frame(_RESULT_FRAMES / 60)
         assert not paradigm.is_presenting()
 
-    def test_duplicate_or_regressed_timestamp_does_not_advance(self, paradigm, renderer, trigger):
+    def test_duplicate_or_regressed_timestamp_redraws_without_advancing(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
         paradigm.present_trial({"event_id": 0})
         paradigm.render_frame(1.0)
         renderer.reset_mock()
         paradigm.render_frame(1.0)
         paradigm.render_frame(0.9)
-        renderer.draw_texture.assert_not_called()
+        assert renderer.clear.call_count == 2
+        drawn_stim = [c.args[0] for c in renderer.draw_texture.call_args_list[::2]]
+        assert drawn_stim == [paradigm._stim_textures[0], paradigm._stim_textures[0]]
+        assert paradigm.missed_frames == 0
+
+    def test_double_buffer_duplicate_regressed_and_boundary_slots_never_replay_stale_frame(
+        self, paradigm, trigger, monkeypatch
+    ):
+        import asyncio
+        from omnibci.infrastructure.stimulation.render_loop import RenderLoop
+
+        class _DoubleBufferedRenderer:
+            def __init__(self) -> None:
+                self.front: list[object] = ["UNINITIALIZED_FRONT"]
+                self.back: list[object] = ["UNINITIALIZED_BACK"]
+                self.presented: list[list[object]] = []
+                self._remaining = 0
+
+            def run_times(self, times: list[float]) -> None:
+                self._remaining = len(times)
+                samples = iter([0.0, *times])
+                monkeypatch.setattr(
+                    "omnibci.infrastructure.stimulation.render_loop.time.perf_counter",
+                    lambda: next(samples),
+                )
+                asyncio.run(RenderLoop(self, paradigm).run_async())
+
+            def should_close(self) -> bool:
+                if self._remaining <= 0:
+                    return True
+                self._remaining -= 1
+                return False
+
+            def poll_events(self) -> None:
+                pass
+
+            def refresh_rate_hz(self) -> float:
+                return 60.0
+
+            def upload_texture(self, image) -> TextureHandle:
+                return TextureHandle()
+
+            def release_texture(self, handle: TextureHandle) -> None:
+                pass
+
+            def clear(self, color=None) -> None:
+                self.back = []
+
+            def draw_rect(self, rect, color) -> None:
+                self.back.append(("rect", rect, color))
+
+            def draw_texture(self, handle, rect) -> None:
+                self.back.append(("tex", handle, rect))
+
+            def end_frame(self) -> None:
+                self.front, self.back = self.back, self.front
+                self.presented.append(list(self.front))
+
+        db = _DoubleBufferedRenderer()
+        paradigm.setup(renderer=db, trigger=trigger)
+
+        # Free-run duplicate slot + regressed timestamp: slot 0, slot 1, duplicate slot 1, regressed slot 0.
+        paradigm.present_trial({"event_id": 0})
+        db.run_times([0.0, 1 / 60, 0.020, 0.005])
+        assert all("UNINITIALIZED_FRONT" not in f and "UNINITIALIZED_BACK" not in f for f in db.presented)
+        presented_tex = [f[0][1] for f in db.presented]
+        assert presented_tex == [
+            paradigm._stim_textures[0],
+            paradigm._stim_textures[1],
+            paradigm._stim_textures[1],
+            paradigm._stim_textures[1],
+        ]
+
+        # Cued trial boundary: last cue frame (slot 59) + duplicate slot 59 (even though _state is now STIM!),
+        # then first stim frame (slot 60) + duplicate slot 60, then stimulus end (slot 65) + duplicate.
+        db.presented.clear()
+        trigger.reset_mock()
+        paradigm.present_trial({"event_id": 7})
+        db.run_times([
+            0.0,
+            59 / 60,
+            59 / 60 + 0.002,
+            60 / 60,
+            60 / 60 + 0.002,
+            (_CUE_FRAMES + _N_STIM_FRAMES) / 60,
+            (_CUE_FRAMES + _N_STIM_FRAMES) / 60 + 0.002,
+        ])
+        assert all("UNINITIALIZED_FRONT" not in f and "UNINITIALIZED_BACK" not in f for f in db.presented)
+        boundary_tex = [f[0][1] for f in db.presented]
+        assert boundary_tex == [
+            paradigm._cue_textures[6],
+            paradigm._cue_textures[6],
+            paradigm._cue_textures[6],
+            paradigm._stim_textures[0],
+            paradigm._stim_textures[0],
+            paradigm._init_tex,
+            paradigm._init_tex,
+        ]
+        assert trigger.mock_calls == [call.clear(), call.send(7), call.clear()]
 
 
 from unittest.mock import Mock

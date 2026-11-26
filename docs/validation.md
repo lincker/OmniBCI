@@ -12,7 +12,7 @@ frontend tests and builds, generated REST types, and architecture imports.
 
 The headless jobs build and install a wheel, then run
 [check_installed_wheel.py](../.github/scripts/check_installed_wheel.py) in isolated
-Python. It verifies API v1 manifests, schemas, settings defaults, the 19 canonical
+Python. It verifies API v1 manifests, schemas, settings defaults, the 18 canonical
 SDK exports, the author CLI entry point, deterministic starter packaging and all
 281 Classic40 stimulus frames, 11 Command10 label textures and ten synthetic
 Command10 FBCCA predictions without importing the editable checkout. The two

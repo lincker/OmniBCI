@@ -109,6 +109,7 @@ class Classic40SSVEP_2(Paradigm):
         self._marker_sent      = False
         self._missed_frames    = 0
         self._result_target_id = 0
+        self._last_drawn_tex: TextureHandle | None = None
 
     # ── Paradigm port ──────────────────────────────────────────────────────
 
@@ -137,6 +138,7 @@ class Classic40SSVEP_2(Paradigm):
             self._marker_sent = False
             self._missed_frames = 0
             self._result_target_id = 0
+            self._last_drawn_tex = self._init_tex
 
     def teardown(self) -> None:
         """Attempt every safe release, including after partial texture upload."""
@@ -167,6 +169,7 @@ class Classic40SSVEP_2(Paradigm):
             raise ExceptionGroup("Paradigm texture cleanup failed", errors)
         self._renderer = None
         self.trigger = None
+        self._last_drawn_tex = None
 
     # ── RenderLoop interface ───────────────────────────────────────────────
 
@@ -183,14 +186,17 @@ class Classic40SSVEP_2(Paradigm):
 
         with self._lock:
             if self._state == _State.IDLE:
-                r.clear()
-                self._draw_idle(r)
+                self._last_drawn_tex = self._init_tex
+                self._draw_frame(r, self._init_tex)
                 return
 
             if self._phase_start_time is None:
                 self._phase_start_time = t
             slot = math.floor((t - self._phase_start_time) * _REFRESH_RATE_HZ + 0.5)
             if slot <= self._last_slot:
+                # Redraw the current slot's image so the unconditional swap never
+                # presents a stale or undefined back buffer, without advancing state.
+                self._draw_frame(r, self._last_drawn_tex or self._init_tex)
                 return
             if self._state in (_State.CUE, _State.STIM) and self._last_slot >= 0 and slot > self._last_slot + 1:
                 missed_start = max(self._last_slot + 1, self._cue_frames)
@@ -198,7 +204,6 @@ class Classic40SSVEP_2(Paradigm):
                 if missed_end > missed_start:
                     self._missed_frames += missed_end - missed_start
             self._last_slot = slot
-            r.clear()
 
             if self._state == _State.CUE and slot >= self._cue_frames:
                 self._state = _State.STIM
@@ -211,9 +216,9 @@ class Classic40SSVEP_2(Paradigm):
                 else:
                     logging.warning("Classic40 stimulus interval elapsed before its start marker")
 
+            tex = self._init_tex
             if self._state == _State.CUE:
-                r.draw_texture(self._cue_textures[self._current_event - 1], _STIM_RECT)
-                self._text_view.draw(r)
+                tex = self._cue_textures[self._current_event - 1]
                 if slot == self._cue_frames - 1:
                     # Preserve last-cue marker placement on nominal 60 Hz pacing.
                     self.trigger.clear()
@@ -224,8 +229,7 @@ class Classic40SSVEP_2(Paradigm):
             elif self._state == _State.STIM:
                 stim_idx = slot - self._cue_frames
                 if stim_idx < len(self._stim_textures):
-                    r.draw_texture(self._stim_textures[stim_idx], _STIM_RECT)
-                    self._text_view.draw(r)
+                    tex = self._stim_textures[stim_idx]
                 else:
                     if self._missed_frames:
                         logging.warning(
@@ -236,17 +240,16 @@ class Classic40SSVEP_2(Paradigm):
                     if self._marker_sent:
                         self.trigger.clear()
                     self._state = _State.IDLE
-                    self._draw_idle(r)
 
             elif self._state == _State.RESULT:
                 if slot < _RESULT_FRAMES:
-                    r.draw_texture(self._result_textures[self._result_target_id - 1], _STIM_RECT)
-                    self._text_view.draw(r)
-                else:
-                    self._draw_idle(r)
+                    tex = self._result_textures[self._result_target_id - 1]
                 if slot >= _RESULT_FRAMES - 1:
                     self._result_target_id = 0
                     self._state = _State.IDLE
+
+            self._last_drawn_tex = tex
+            self._draw_frame(r, tex)
 
     # ── Trial control (application thread) ────────────────────────────────
 
@@ -309,9 +312,10 @@ class Classic40SSVEP_2(Paradigm):
 
     # ── Private ────────────────────────────────────────────────────────────
 
-    def _draw_idle(self, r: RenderSurface) -> None:
-        """Draw initial frame + text. Caller must hold _lock."""
-        r.draw_texture(self._init_tex, _STIM_RECT)
+    def _draw_frame(self, r: RenderSurface, tex: TextureHandle) -> None:
+        """Clear and draw the selected texture + text view. Caller must hold _lock."""
+        r.clear()
+        r.draw_texture(tex, _STIM_RECT)
         self._text_view.draw(r)
 
     def _parse_feedback(self, target_id: int) -> str:

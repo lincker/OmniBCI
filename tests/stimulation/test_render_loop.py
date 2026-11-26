@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from unittest.mock import MagicMock
 
 import pytest
 
+from omnibci.infrastructure.stimulation import render_loop as render_loop_module
 from omnibci.infrastructure.stimulation.render_loop import RenderLoop
 
 
@@ -87,10 +89,39 @@ def test_callbacks_run_on_calling_thread():
     assert threads == [threading.get_ident()] * 3
 
 
-def test_refresh_rate_change_during_loop_aborts_before_drawing():
-    loop, renderer, paradigm = _make_loop(2)
+def test_render_loop_does_not_requery_display_refresh_rate():
+    loop, renderer, paradigm = _make_loop(3)
     paradigm.required_refresh_rate_hz = 60.0
-    renderer.refresh_rate_hz.side_effect = [60.0, 120.0]
-    with pytest.raises(RuntimeError, match="60 Hz.*120 Hz"):
+    renderer.refresh_rate_hz.return_value = 120.0
+    asyncio.run(loop.run_async())
+    renderer.refresh_rate_hz.assert_not_called()
+    assert paradigm.render_frame.call_count == 3
+
+
+def test_render_loop_logs_measured_refresh_rate_on_exit(monkeypatch, caplog):
+    frame_count = 61
+    loop, _, paradigm = _make_loop(frame_count)
+    paradigm.required_refresh_rate_hz = 60.0
+    samples = iter([0.0, *(i / 59.94 for i in range(frame_count))])
+    monkeypatch.setattr(render_loop_module.time, "perf_counter", lambda: next(samples))
+    with caplog.at_level(logging.INFO, logger="omnibci.infrastructure.stimulation.render_loop"):
         asyncio.run(loop.run_async())
-    assert paradigm.render_frame.call_count == 1
+    assert any(
+        "session measured refresh rate: 59.94 Hz" in record.getMessage()
+        and "paradigm_required=60 Hz" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_render_loop_logs_periodic_measured_refresh_rate(monkeypatch, caplog):
+    frame_count = 75
+    loop, _, paradigm = _make_loop(frame_count)
+    paradigm.required_refresh_rate_hz = 60.0
+    monkeypatch.setattr(render_loop_module, "_RATE_LOG_INTERVAL_SECONDS", 1.0)
+    samples = iter([0.0, *(i / 59.94 for i in range(frame_count))])
+    monkeypatch.setattr(render_loop_module.time, "perf_counter", lambda: next(samples))
+    with caplog.at_level(logging.INFO, logger="omnibci.infrastructure.stimulation.render_loop"):
+        asyncio.run(loop.run_async())
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("RenderLoop measured refresh rate: 59.94 Hz" in msg for msg in messages)
+    assert any("RenderLoop session measured refresh rate: 59.94 Hz" in msg for msg in messages)

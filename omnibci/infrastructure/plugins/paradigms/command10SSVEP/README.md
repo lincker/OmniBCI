@@ -46,9 +46,10 @@ Submit `{"cue_target_id": 1}` to cue target 1; IDs 1 through 10 are accepted.
 The selected target has a red cue border for 1 second (60 slots at 60 Hz).
 Then all ten targets stimulate together for 4 seconds (240 slots at 60 Hz).
 Submit `{"cue_target_id": 0}` for free choice: there is no cue interval and
-stimulation starts at the next frame callback. The host checks
-`required_refresh_rate_hz = 60.0` at startup, before starting trials, and during
-rendering, rejecting unsupported modes such as 75 Hz, 120 Hz, or 144 Hz.
+stimulation starts at the next frame callback. The host verifies the system-reported nominal display refresh rate against
+`required_refresh_rate_hz = 60.0` at startup, exiting on unsupported modes such
+as 75 Hz, 120 Hz, or 144 Hz, and then runs the paradigm at its declared 60 Hz
+schedule while logging both the reported and measured refresh rates.
 
 The target background uses sampled sinusoidal grayscale values:
 
