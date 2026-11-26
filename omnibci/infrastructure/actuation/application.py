@@ -101,6 +101,7 @@ class Actuation:
         self._device_ready = False
         self._outputs_settled = False
         self._settlement_error = None
+        self.cleanup_confirmed = False
 
     def run(self):
         logger.info('---ActuationMain run---')
@@ -120,6 +121,7 @@ class Actuation:
 
     async def serve(self):
         startup_complete = False
+        self.cleanup_confirmed = False
         try:
             if self._stop_requested():
                 self._report_startup_failed(
@@ -167,6 +169,7 @@ class Actuation:
             raise
         finally:
             await await_owned(asyncio.create_task(self._shutdown()))
+            self.cleanup_confirmed = True
 
     async def _call_device(self, function, *args):
         if self._device_executor is None:

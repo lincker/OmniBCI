@@ -77,8 +77,9 @@ The current regression suite checks:
   reading and previewing.
 - Static source validation/packaging through the shared installer, fixed development
   snapshots, explicit companion packages and fresh normal hosts. Source edits cannot
-  change a running snapshot; repeated interrupts and unconfirmed shutdown retain
-  ownership. Development command-timeout overrides affect only isolated settings.
+  change a running snapshot; non-zero host exit retains isolated run artifacts for
+  diagnostics without blocking subsequent runs. Development command-timeout overrides
+  affect only isolated settings.
 - File Reader → packaged starter Decoder → Logger through real HTTP/module paths,
   joining trial/configuration identity to output acknowledgement and private
   execution history, then confirming normal shutdown.

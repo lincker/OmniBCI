@@ -21,7 +21,6 @@ from omnibci.infrastructure.plugin_management.catalog import CatalogConfiguratio
 from omnibci.infrastructure.plugin_management.installer import PackageInstallError
 from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from omnibci.infrastructure.plugin_management.project_tools import package_project
-from omnibci.infrastructure.plugin_management.ownership import PluginStoreOwner
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.infrastructure.storage import strict_json_loads
 from omnibci.presentation.schemas.runtime_config import ModuleConfigurationRequest
@@ -115,22 +114,9 @@ def _wait_host(process):
             print("Waiting for development host resource cleanup...", file=sys.stderr)
 
 
-def _settled(run):
-    report = run / "shutdown.json"
-    try:
-        if report.is_symlink() or report.stat().st_size > 4096:
-            return False
-        value = json.loads(report.read_text(encoding="utf-8"))
-        return (isinstance(value, dict) and value.keys() == {"shutdown_complete"}
-                and value["shutdown_complete"] is True
-                and not (run / "plugins/state/.controller.active").exists())
-    except (OSError, ValueError):
-        return False
-
-
 def develop_project(project: Path, configuration: Path, contribution: str, *, companions=(), port=8002,
                     command_timeout=None) -> int:
-    """Use one project restart guard and a fresh process/store for every run."""
+    """Launch an isolated plugin snapshot in a fresh host process."""
     if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError("Development API port must be between 1 and 65535")
     project = Path(project).resolve()
@@ -139,7 +125,6 @@ def develop_project(project: Path, configuration: Path, contribution: str, *, co
     workspace = project / ".omnibci-dev"
     if workspace.is_symlink():
         raise PackageInstallError("Development workspace must not be a symlink")
-    owner = PluginStoreOwner(workspace, configuration_root=workspace)
     run, launch_attempted = None, False
     try:
         run = _prepare_run(project, configuration, contribution, companions, workspace, command_timeout=command_timeout)
@@ -153,18 +138,13 @@ def develop_project(project: Path, configuration: Path, contribution: str, *, co
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         )
         result = _wait_host(process)
-        if not _settled(run):
+        if result != 0:
             raise PluginPackageConflictError(f"Development shutdown is unconfirmed; retained artifacts at {run}")
         shutil.rmtree(run)
-        owner.close()
         return result
     except BaseException:
-        if launch_attempted:
-            owner.abandon()
-        else:
-            if run is not None:
-                shutil.rmtree(run)
-            owner.close()
+        if not launch_attempted and run is not None:
+            shutil.rmtree(run)
         raise
 
 
@@ -216,10 +196,6 @@ def main():
         server.run()
     except KeyboardInterrupt:
         pass
-    finally:
-        (run / "shutdown.json").write_text(json.dumps({
-            "shutdown_complete": app.state.shutdown_complete is True,
-        }), encoding="utf-8")
     return 0 if server.started and app.state.shutdown_complete else 1
 
 

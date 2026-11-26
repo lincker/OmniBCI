@@ -216,7 +216,6 @@ async def test_saved_edits_do_not_change_explicitly_selected_startup():
         assert container.engine_service._snapshot_provider()["PLUGINS.bindings"] == []
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -235,7 +234,6 @@ async def test_fresh_installation_does_not_select_plugins():
         assert all(module is None for module in profiles.selected_configuration().modules.values())
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 def test_status_reads_applied_values_while_engine_running():
@@ -272,7 +270,6 @@ async def test_stream_prepares_only_processing_and_keeps_receipt(monkeypatch):
         container.actuation_process_manager.start.assert_not_called()
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -295,7 +292,6 @@ async def test_metadata_binding_uses_the_running_source_without_reading_saved_pr
         assert _acquisition_binding(engine) is None
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -317,7 +313,6 @@ async def test_server_restart_changes_command_timeout_without_blocking_engine_re
     assert _toml_files(config_root()) == original_files
 
     await first.engine_service.shutdown()
-    first.package_owner.close()
     restarted = await build_container()
     try:
         assert restarted.command_results._timeout_s == 15.0
@@ -329,7 +324,6 @@ async def test_server_restart_changes_command_timeout_without_blocking_engine_re
         assert _toml_files(config_root()) == original_files
     finally:
         await restarted.engine_service.shutdown()
-        restarted.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -356,7 +350,6 @@ async def test_plugin_directory_edits_do_not_block_engine_review(bootstrap_setti
         assert _toml_files(config_root()) == original_files
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -378,7 +371,6 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
     original_settings = (bootstrap_settings.root / "settings.toml").read_bytes()
 
     await first.engine_service.shutdown()
-    first.package_owner.close()
     restarted = await build_container()
     try:
         assert restarted.configuration_service.selected_configuration() == historical
@@ -398,7 +390,6 @@ async def test_existing_activation_keeps_its_revision_and_pinned_inputs(bootstra
         assert (bootstrap_settings.root / "settings.toml").read_bytes() == original_settings
     finally:
         await restarted.engine_service.shutdown()
-        restarted.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -413,7 +404,6 @@ async def test_broken_activation_keeps_management_available_without_replacement(
     original_files = _toml_files(repository.root)
 
     await first.engine_service.shutdown()
-    first.package_owner.close()
     container = await build_container()
     try:
         assert container.configuration_service.read_server()[0][0]
@@ -426,7 +416,6 @@ async def test_broken_activation_keeps_management_available_without_replacement(
         assert repository.get_engine() is not None
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -446,7 +435,6 @@ async def test_saved_edit_during_bootstrap_does_not_change_loaded_startup_baseli
         assert "NEUROENGINE.command_timeout_s" not in candidate.settings
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -463,105 +451,90 @@ async def test_bootstrap_shares_pinned_plugin_selection_between_status_and_engin
     monkeypatch.setenv("OMNIBCI_PLUGIN_DIR", str(tmp_path / "plugins"))
     with patch.object(bootstrap, "NeuroEngineBuilder") as builder:
         container = await bootstrap.build_container()
-        try:
-            builder.assert_not_called()
-            profiles = container.configuration_service
-            selected = profiles.create("acquisition", builtin_selection(
-                "acquisition", "neuroscan_scan45_reader"), "Lab", {
-                    "DATA_PROVIDER_IP": "192.168.0.3", "DATA_PROVIDER_PORT": 4000,
-                    "sample_rate": 500, "channel_count": 10,
-                })
-            bindings = [{"slot": "acquisition.source", "profile_id": selected.profile_id}]
-            for slot, kind, alias in (
-                ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA"),
-                ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
-                ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
-            ):
-                selected = profiles.create(kind, builtin_selection(kind, alias), alias, {})
-                bindings.append({"slot": slot, "profile_id": selected.profile_id})
-            profiles.repository.save_engine(profiles.propose_engine({"NEUROENGINE.queue_size": 32}),
-                                            expected_revision=profiles.repository.get_engine().revision)
-            for module in ("acquisition", "processing", "stimulation"):
-                profiles.repository.save_module(profiles.propose(module, [
-                    binding for binding in bindings if binding["slot"].startswith(f"{module}.")
-                ], settings=profiles.default_module_settings(module)), expected_revision=None)
-            assert container.acquisition_service._device_metadata() == ("OmniBCI.neuroscan_scan45_reader/default@0.1.0", None, None)
-            with patch("omnibci.application.services.engine_service.Thread"):
-                await container.engine_service.handle_start_engine(StartEngineCommand())
-            snapshot = builder.call_args.kwargs["settings_snapshot"]
-            assert snapshot["PLUGINS.bindings"] == []
-            source_snapshot = container.engine_service._module_snapshot_provider("acquisition")
-            assert source_snapshot["ACQUISITION.sample_rate"] == 500
-            assert source_snapshot["ACQUISITION.DATA_PROVIDER_PORT"] == 4000
-        finally:
-            container.package_owner.close()
+        builder.assert_not_called()
+        profiles = container.configuration_service
+        selected = profiles.create("acquisition", builtin_selection(
+            "acquisition", "neuroscan_scan45_reader"), "Lab", {
+                "DATA_PROVIDER_IP": "192.168.0.3", "DATA_PROVIDER_PORT": 4000,
+                "sample_rate": 500, "channel_count": 10,
+            })
+        bindings = [{"slot": "acquisition.source", "profile_id": selected.profile_id}]
+        for slot, kind, alias in (
+            ("processing.decoder", "decoder", "THUBCI_SSVEP_classic40CCA"),
+            ("processing.epoch_detector", "epoch_detector", "DEFAULT_EPOCH_DETECTOR"),
+            ("stimulation.paradigm", "paradigm", "STIMULATION_THUBCI_SSVEP_classic40"),
+        ):
+            selected = profiles.create(kind, builtin_selection(kind, alias), alias, {})
+            bindings.append({"slot": slot, "profile_id": selected.profile_id})
+        profiles.repository.save_engine(profiles.propose_engine({"NEUROENGINE.queue_size": 32}),
+                                        expected_revision=profiles.repository.get_engine().revision)
+        for module in ("acquisition", "processing", "stimulation"):
+            profiles.repository.save_module(profiles.propose(module, [
+                binding for binding in bindings if binding["slot"].startswith(f"{module}.")
+            ], settings=profiles.default_module_settings(module)), expected_revision=None)
+        assert container.acquisition_service._device_metadata() == ("OmniBCI.neuroscan_scan45_reader/default@0.1.0", None, None)
+        with patch("omnibci.application.services.engine_service.Thread"):
+            await container.engine_service.handle_start_engine(StartEngineCommand())
+        snapshot = builder.call_args.kwargs["settings_snapshot"]
+        assert snapshot["PLUGINS.bindings"] == []
+        source_snapshot = container.engine_service._module_snapshot_provider("acquisition")
+        assert source_snapshot["ACQUISITION.sample_rate"] == 500
+        assert source_snapshot["ACQUISITION.DATA_PROVIDER_PORT"] == 4000
 
 
-@pytest.mark.asyncio
-async def test_bootstrap_rejects_second_controller_before_runtime_construction():
-    from omnibci.application.plugin_management.packages import PluginPackageConflictError
-    from omnibci.bootstrap import build_container
-
-    first = await build_container()
-    try:
-        with pytest.raises(PluginPackageConflictError, match="owner"):
-            await build_container()
-    finally:
-        await first.engine_service.shutdown()
-        first.package_owner.close()
-
-
-def test_shutdown_prepare_and_resume_keep_ownership_until_lifespan_exits(tmp_path):
-    from fastapi.testclient import TestClient
-    from omnibci.application.plugin_management.packages import PluginPackageConflictError
-    from omnibci.infrastructure.config_paths import config_root
-    from omnibci.presentation.main import create_app
-    from tests.infrastructure.test_plugin_store_ownership import claim
-
-    app = create_app()
-    with TestClient(app) as client:
-        assert client.portal.call(app.state.shutdown_service.prepare) == []
-        with pytest.raises(PluginPackageConflictError, match="owner"):
-            claim(tmp_path / "plugins", configuration_root=config_root())
-        app.state.shutdown_service.resume()
-        with pytest.raises(PluginPackageConflictError, match="owner"):
-            claim(tmp_path / "plugins", configuration_root=config_root())
-    next_owner = claim(tmp_path / "plugins", configuration_root=config_root())
-    next_owner.close()
-
-
-def test_failed_final_shutdown_does_not_admit_another_owner(tmp_path, monkeypatch):
+def test_failed_final_shutdown_does_not_block_subsequent_startup(tmp_path, monkeypatch):
     from unittest.mock import AsyncMock
     from fastapi.testclient import TestClient
-    from omnibci.application.plugin_management.packages import PluginPackageConflictError
-    from omnibci.infrastructure.config_paths import config_root
     from omnibci.presentation.main import create_app
-    from tests.infrastructure.test_plugin_store_ownership import claim
 
     app = create_app()
     with pytest.raises(RuntimeError, match="resources still held"):
         with TestClient(app):
             monkeypatch.setattr(app.state.engine_service, "shutdown",
                                 AsyncMock(side_effect=RuntimeError("resources still held")))
-    with pytest.raises(PluginPackageConflictError, match="unconfirmed shutdown"):
-        claim(tmp_path / "plugins", configuration_root=config_root())
+    state_dir = tmp_path / "plugins" / "state"
+    assert not (state_dir / ".controller.active").exists()
+    assert not (state_dir / ".controller.lock").exists()
+    assert not (state_dir / "controller.json").exists()
+
+    restarted = create_app()
+    with TestClient(restarted) as client:
+        assert client.get("/healthz").status_code == 200
+    assert restarted.state.shutdown_complete is True
 
 
-def test_presentation_startup_failure_still_settles_the_acquired_owner(tmp_path, monkeypatch):
+def test_stale_legacy_markers_and_controller_binding_do_not_block_startup(tmp_path):
+    import json
+    from fastapi.testclient import TestClient
+    from omnibci.presentation.main import create_app
+
+    state_dir = tmp_path / "plugins" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    for name in (".controller.active", ".stimulation.active", ".actuation.active"):
+        (state_dir / name).write_text("Plugin resource settlement has not been confirmed.\n", encoding="utf-8")
+    (state_dir / "controller.json").write_text(
+        json.dumps({"schema_version": 1, "configuration_root": str(tmp_path / "other-config")}),
+        encoding="utf-8",
+    )
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+    assert app.state.shutdown_complete is True
+
+
+def test_presentation_startup_failure_leaves_no_runtime_state_files(tmp_path, monkeypatch):
     from unittest.mock import Mock
     from fastapi.testclient import TestClient
-    from omnibci.infrastructure.config_paths import config_root
     from omnibci.presentation import main
     from omnibci.presentation.main import create_app
-    from tests.infrastructure.test_plugin_store_ownership import claim
 
     monkeypatch.setattr(main, "register_engine_listeners",
                         Mock(side_effect=RuntimeError("listener registration failed")))
     with pytest.raises(RuntimeError, match="listener registration failed"):
         with TestClient(create_app()):
             pytest.fail("Startup should fail")
-    owner = claim(tmp_path / "plugins", configuration_root=config_root())
-    owner.close()
+    assert not (tmp_path / "plugins" / "state").exists()
 
 
 @pytest.fixture
@@ -604,9 +577,11 @@ async def test_actual_container_shares_package_references_without_runtime_gate(t
     try:
         packages = container.plugin_package_service
         assert not hasattr(packages, "profiles")
-        assert container.configuration_service.change_guard() is container.package_owner
+        assert not hasattr(container, "package_owner")
+        shared_lock = container.configuration_service.change_guard()
+        assert container.runtime_configuration.reference_guard() is shared_lock
+        assert packages.admission_guard() is shared_lock
         assert packages.store.plugin_dir == tmp_path / "plugins"
-        assert container.runtime_configuration.reference_guard() is container.package_owner
         assert container.plugin_market_service is None
         assert container.engine_service.is_initialized and not container.engine_service.is_engine_ready
         assert container.engine_service._engine is None
@@ -628,7 +603,6 @@ async def test_actual_container_shares_package_references_without_runtime_gate(t
             packages.set_enabled(installed.package_id, "2.0.0", False)
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -662,7 +636,6 @@ async def test_queued_current_configuration_pins_its_package_before_execution(tm
         assert profiles.repository.get_module("actuation") is not None
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
@@ -683,37 +656,27 @@ async def test_operator_configured_market_uses_same_installer_and_admission(monk
         assert not (tmp_path / "cache").exists()
     finally:
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["stimulation", "actuation"])
-@pytest.mark.parametrize("action", ["install", "enable", "remove"])
-async def test_node_resources_block_package_mutation_without_blocking_configuration(tmp_path, role, action, isolated_composition):
-    from omnibci.application.plugin_management.packages import PluginPackageConflictError
+async def test_additive_package_operations_create_no_runtime_state_files(tmp_path, isolated_composition):
     from omnibci.bootstrap import build_container
-    from omnibci.infrastructure.plugin_management.ownership import PluginStoreOwner
     from tests.infrastructure.test_package_store import package_archive
 
     container = await build_container()
-    packages = container.plugin_package_service
-    installed = packages.install(package_archive(tmp_path)).package
-    node = PluginStoreOwner(packages.store.plugin_dir, role=role)
     try:
-        configuration = container.configuration_service
-        configuration.save_server({"LOGGING.level": "DEBUG"}, expected_revision=configuration.read_server()[1])
-        with pytest.raises(PluginPackageConflictError, match="node owner"):
-            if action == "install":
-                packages.install(package_archive(tmp_path, "2.0.0"))
-            elif action == "enable":
-                packages.set_enabled(installed.package_id, installed.version, True)
-            else:
-                packages.remove(installed.package_id, installed.version)
-        assert packages.list() == [installed]
+        packages = container.plugin_package_service
+        first = packages.install(package_archive(tmp_path)).package
+        packages.set_enabled(first.package_id, first.version, True)
+        second = packages.install(package_archive(tmp_path, "2.0.0")).package
+        assert [item.version for item in packages.list()] == ["1.0.0", "2.0.0"]
+        assert not second.enabled
+        state_dir = tmp_path / "plugins" / "state"
+        for forbidden in (".controller.active", ".stimulation.active", ".actuation.active",
+                          ".controller.lock", ".stimulation.lock", ".actuation.lock", "controller.json"):
+            assert not (state_dir / forbidden).exists()
     finally:
-        node.close()
         await container.engine_service.shutdown()
-        container.package_owner.close()
 
 
 def test_real_lifespan_routes_install_enable_save_references_and_remove(tmp_path, isolated_composition):

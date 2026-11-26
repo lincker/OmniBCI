@@ -4,6 +4,7 @@ import logging
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
+from threading import RLock
 from typing import Callable, Iterable
 
 from omnibci.shared.events import EventType
@@ -31,7 +32,7 @@ from omnibci.infrastructure.neuroengine.builder import NeuroEngineBuilder
 from omnibci.infrastructure.repositories.configuration_repository import TomlConfigurationRepository
 from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter, user_plugins_dir
 from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
-from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHistory, PluginStoreOwner
+from omnibci.infrastructure.plugin_management.execution_history import PluginExecutionHistory
 from omnibci.infrastructure.plugin_management.market import configured_market_service
 from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer
 from omnibci.infrastructure.stimulation.process_manager import StimulationProcessManager
@@ -89,7 +90,6 @@ class AppContainer:
     plugin_package_service: PluginPackageService | None = None
     plugin_market_service: PluginMarketService | None = None
     signal_setup_service: SignalSetupService | None = None
-    package_owner: PluginStoreOwner | None = None
     ipc_runtime: IpcRuntime | None = None
 
 
@@ -171,15 +171,9 @@ async def build_container(*, host_settings: dict | None = None,
     host_settings = load_host_settings() if host_settings is None else dict(host_settings)
     store = ManagedPluginPackageStore()
     repository = TomlConfigurationRepository()
-    owner = PluginStoreOwner(store.plugin_dir, configuration_root=repository.root)
-    try:
-        container = await _build_container_services(host_settings, allow_process_termination, store, repository, owner)
-    except BaseException:
-        # Composition has not started an engine or executed plugin code.
-        owner.close()
-        raise
-    container.package_owner = owner
-    return container
+    return await _build_container_services(
+        host_settings, allow_process_termination, store, repository, RLock(),
+    )
 
 
 async def _build_container_services(host_settings, allow_process_termination, package_store, repository, package_references_lock):
@@ -264,7 +258,7 @@ async def _build_container_services(host_settings, allow_process_termination, pa
                              *container.actuation_service.runtime_package_snapshots, *container.runtime_configuration.pending_package_snapshots)
             for reference in package_references_from_settings(snapshot)
         ),
-        admission_guard=package_references_lock.mutation,
+        admission_guard=lambda: package_references_lock,
     )
     container.plugin_package_service = packages
     container.plugin_market_service = configured_market_service(packages)

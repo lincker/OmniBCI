@@ -16,7 +16,6 @@ from omnibci.application.node_configuration import (
 from omnibci.infrastructure.plugin_management.catalog import CatalogConfigurationAdapter
 from omnibci.infrastructure.plugin_management.store import ManagedPluginPackageStore
 from omnibci.infrastructure.plugin_management.preparation import PluginArtifactPreparer
-from omnibci.infrastructure.plugin_management.ownership import PluginStoreOwner
 
 logger = logging.getLogger(__name__)
 
@@ -133,25 +132,19 @@ def run_configured_node(role: str, application_factory, *, server_url: str) -> N
             time.sleep(_RETRY_DELAY_S)
             continue
 
-        owner = PluginStoreOwner(store.plugin_dir, role=role)
-        try:
-            snapshot = materialize_node_configuration(configuration, CatalogConfigurationAdapter(store.catalog))
-            snapshot = PluginArtifactPreparer(store).prepare_snapshot(snapshot, (role,))
-        except BaseException:
-            # Static preparation has not executed any plugin code.
-            owner.close()
-            raise
+        snapshot = materialize_node_configuration(configuration, CatalogConfigurationAdapter(store.catalog))
+        snapshot = PluginArtifactPreparer(store).prepare_snapshot(snapshot, (role,))
         logger.info(
             "Starting %s for modules %s, Engine %s, generation %s",
             role, configuration.module_revisions, configuration.engine_revision, configuration.generation,
         )
+        application = application_factory(settings_snapshot=snapshot)
         try:
-            application = application_factory(settings_snapshot=snapshot)
             reconnect = application.run()
-        except BaseException:
-            owner.abandon()
+        except KeyboardInterrupt as exc:
+            if getattr(application, "cleanup_confirmed", True) is False:
+                raise RuntimeError(f"{role.title()} teardown failed during interrupt") from exc
             raise
-        owner.close()
         if reconnect is not True:
             return
         logger.info("%s disconnected and stopped cleanly; refreshing configuration", role)

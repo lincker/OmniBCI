@@ -10,7 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
-from omnibci.infrastructure.plugin_management.ownership import PluginExecutionHistory
+from omnibci.infrastructure.plugin_management.execution_history import PluginExecutionHistory
 from omnibci.infrastructure.signal_processing.signal_processor import SignalProcessor
 from omnibci.infrastructure.process_lifecycle import StartupReporter
 

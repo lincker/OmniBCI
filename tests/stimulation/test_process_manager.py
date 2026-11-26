@@ -12,6 +12,7 @@ from omnibci.infrastructure.plugin_management.preparation import execution_recei
 from tests.plugin_configuration_helpers import prepared_snapshot
 
 from omnibci.infrastructure.process_lifecycle import (
+    CLEAN_FAILURE_EXITCODE,
     ChildProcessStartupError,
     ChildProcessStartupTimeout,
     ChildProcessState,
@@ -362,6 +363,78 @@ def test_unclean_exit_keeps_failure_and_blocks_replacement(process_factory, exit
 @patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
 def test_forced_exit_cannot_claim_cleanup_even_with_zero_exitcode(process_factory):
     process, _ = _mock_process(exits_after_join=2)
+    process_factory.return_value = process
+    manager = StimulationProcessManager()
+    manager.start(settings_snapshot=_paradigm_snapshot())
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.stop()
+    process.terminate.assert_called_once()
+    assert manager.state is ChildProcessState.FAILED
+    with pytest.raises(RuntimeError, match="cleanup.*not confirmed"):
+        manager.start(settings_snapshot=_paradigm_snapshot())
+    assert process_factory.call_count == 1
+
+
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Event")
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_clean_failure_exitcode_confirms_cleanup_and_allows_retry(
+    mock_process_cls, mock_event_cls, startup_pipe
+):
+    failed_startup_proc, _ = _mock_process(exits_after_join=1, pid=4001)
+    failed_startup_proc.exitcode = CLEAN_FAILURE_EXITCODE
+    mid_run_proc, mid_run_state = _mock_process(pid=4002)
+    retry_proc, _ = _mock_process(exits_after_join=1, pid=4003)
+    mock_process_cls.side_effect = [failed_startup_proc, mid_run_proc, retry_proc]
+    mock_event_cls.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+    ready_report = StartupReport.ready(
+        "Stimulation",
+        module_revisions={"stimulation": "a" * 64},
+        engine_revision="b" * 64,
+        generation="run",
+        execution=execution_receipt(_paradigm_snapshot(), "stimulation", "prepare-1"),
+    )
+    startup_pipe.receiver.recv.side_effect = [
+        StartupReport.failed(
+            "Stimulation",
+            stage="initialization",
+            error=RuntimeError("display refresh rate mismatch"),
+            module_revisions={"stimulation": "a" * 64},
+            engine_revision="b" * 64,
+            generation="run",
+        ),
+        ready_report,
+        ready_report,
+    ]
+    manager = StimulationProcessManager()
+
+    # Startup failure with confirmed teardown does not latch cleanup error.
+    with pytest.raises(ChildProcessStartupError, match="display refresh rate mismatch"):
+        manager.start(settings_snapshot=_paradigm_snapshot())
+    assert manager.state is ChildProcessState.FAILED
+    assert not manager.is_alive
+    failed_startup_proc.close.assert_called_once()
+    manager.stop()
+
+    # Retry succeeds immediately, and a later mid-run clean failure also recovers.
+    manager.start(settings_snapshot=_paradigm_snapshot())
+    mid_run_state["alive"] = False
+    mid_run_proc.exitcode = CLEAN_FAILURE_EXITCODE
+    manager.stop()
+    assert manager.state is ChildProcessState.FAILED
+    assert not manager.is_alive
+    mid_run_proc.close.assert_called_once()
+
+    manager.start(settings_snapshot=_paradigm_snapshot())
+    assert manager.state is ChildProcessState.READY
+    assert mock_process_cls.call_count == 3
+    manager.stop()
+    assert manager.state is ChildProcessState.STOPPED
+
+
+@patch("omnibci.infrastructure.stimulation.process_manager.mp.Process")
+def test_forced_exit_cannot_claim_cleanup_even_with_clean_failure_exitcode(process_factory):
+    process, _ = _mock_process(exits_after_join=2)
+    process.exitcode = CLEAN_FAILURE_EXITCODE
     process_factory.return_value = process
     manager = StimulationProcessManager()
     manager.start(settings_snapshot=_paradigm_snapshot())

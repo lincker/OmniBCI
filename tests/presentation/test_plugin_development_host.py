@@ -100,7 +100,7 @@ def test_cli_starts_fresh_real_hosts_and_cleans_up_only_after_shutdown(tmp_path,
                 process.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
                 assert process.wait(timeout=45) == 0, log.read_text()
                 assert not run.exists()
-                assert not (project / ".omnibci-dev/state/.controller.active").exists()
+                assert not (project / ".omnibci-dev/state").exists()
             finally:
                 if process.poll() is None:
                     process.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
