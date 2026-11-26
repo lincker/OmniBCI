@@ -22,6 +22,7 @@ unchanged — this class only manages the OS-level process lifecycle.
 """
 from __future__ import annotations
 
+import logging
 import multiprocessing
 from typing import Any
 from uuid import uuid4  # noqa: F401 - patched by tests via module attribute
@@ -49,6 +50,13 @@ def _run_stimulation(
     settings_snapshot: dict,
 ) -> None:
     """Stimulation subprocess entry point.  Runs in the spawned child process."""
+    # Spawn does not inherit logging setup. Match the standalone entry point;
+    # stderr is also collected by the desktop host. Preserve existing handlers.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
     def _create_app(**kwargs):
         from omnibci.infrastructure.stimulation.application import Stimulation
         return Stimulation(**kwargs)

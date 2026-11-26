@@ -1,6 +1,5 @@
 """Exercise PyOpenGL startup and drawing with a real, hidden core context."""
 import glfw
-import time
 import numpy as np
 import pytest
 from OpenGL.GL import GL_NO_ERROR, GL_RGB, GL_UNSIGNED_BYTE, glGetError, glReadPixels
@@ -36,13 +35,6 @@ def _center_pixel(renderer):
 @pytest.mark.parametrize('run', [1, 2])
 def test_start_draw_and_close_fresh_context(renderer, run):
     renderer.initialize(32, 32, f'PyOpenGL regression {run}')
-    deadline = time.monotonic() + 2
-    frame = None
-    while frame is None and time.monotonic() < deadline:
-        renderer.poll_events()
-        frame = renderer.begin_frame()
-        time.sleep(.001)
-    assert frame is not None
     renderer.clear()
     renderer.draw_rect(Rect(-1, -1, 2, 2), Color(1, 0, 0))
     np.testing.assert_array_equal(_center_pixel(renderer), [255, 0, 0])
@@ -52,7 +44,8 @@ def test_start_draw_and_close_fresh_context(renderer, run):
     texture = renderer.upload_texture(image)
     renderer.draw_texture(texture, Rect(-1, -1, 2, 2))
     np.testing.assert_array_equal(_center_pixel(renderer), [0, 255, 0])
-    renderer.end_frame(frame, submit=True)
+    renderer.end_frame()
+    assert renderer.refresh_rate_hz() > 0
     renderer.release_texture(texture)
     assert glGetError() == GL_NO_ERROR
     renderer.shutdown()

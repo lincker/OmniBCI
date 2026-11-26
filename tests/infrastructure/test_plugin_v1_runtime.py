@@ -61,12 +61,12 @@ def catalog():
     })
 
 
-def test_sdk_has_only_the_nineteen_v1_exports():
+def test_sdk_has_only_the_eighteen_v1_exports():
     assert set(sdk.__all__) == {
         "SignalSource", "Filter", "Decoder", "EpochDetector", "Paradigm", "TriggerEmitter",
         "Effector", "SignalInfo", "ChannelDescriptor", "SourceObservation", "SourceCheckpoint",
         "Prediction", "EpochBoundary", "RenderSurface", "Color", "Rect", "TextureHandle",
-        "TriggerOutput", "FrameTiming",
+        "TriggerOutput",
     }
     for name in ("PluginContext", "PluginParameters", "SignalChunk", "Renderer", "FilterContext"):
         assert not hasattr(sdk, name)

@@ -39,9 +39,9 @@ def main():
             validate_parameters(contribution.configuration_schema, {})
         contributions.extend(selected)
     assert len(contributions) == 13, len(contributions)
-    assert len(sdk.__all__) == 19
+    assert len(sdk.__all__) == 18
     assert all(getattr(sdk, name).__module__.startswith("omnibci.domain.") for name in sdk.__all__)
-    assert not any(hasattr(sdk, name) for name in ("PluginContext", "PluginParameters", "Renderer"))
+    assert not any(hasattr(sdk, name) for name in ("PluginContext", "PluginParameters", "Renderer", "FrameTiming"))
     entrypoint, = [item for item in metadata.distribution("omnibci").entry_points
                    if item.group == "console_scripts" and item.name == "omnibci-plugin"]
     from omnibci.plugin_cli import main as plugin_main
@@ -79,7 +79,7 @@ def main():
         paradigm.setup(renderer=renderer, trigger=trigger)
         assert renderer.upload_texture.call_count == 11
         paradigm.present_trial({"cue_target_id": 0})
-        assert paradigm.render_frame(sdk.FrameTiming(refresh_index=0, target_time=0, refresh_period=1 / 60))
+        assert paradigm.render_frame(0.0) is None
         trigger.send.assert_called_once_with(11)
     finally:
         paradigm.teardown()
@@ -103,7 +103,7 @@ def main():
             assert decoder.decode(data, latest_raw_segment=data[:, -10:]).target_id == target_id
     finally:
         decoder.teardown()
-    print(f"Installed wheel verified: {len(contributions)} API v1 contributions, 19 SDK exports, "
+    print(f"Installed wheel verified: {len(contributions)} API v1 contributions, 18 SDK exports, "
           "author CLI, 281 Classic40 frames, 11 Command10 textures and 10 FBCCA target predictions")
 
 

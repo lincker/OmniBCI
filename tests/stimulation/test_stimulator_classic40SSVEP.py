@@ -22,7 +22,7 @@ from omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep import (
     _STIM_RECT,
     _State,
 )
-from omnibci.sdk import FrameTiming, TextureHandle
+from omnibci.sdk import TextureHandle
 
 # ---------------------------------------------------------------------------
 # Constants matching the fake frame pack
@@ -46,68 +46,6 @@ _RESULT_FRAME_DATA = [
     np.full((10, 10, 3), i + 101, dtype=np.uint8)
     for i in range(_N_RESULT_FRAMES)
 ]
-
-
-def timing(index, rate=60):
-    return FrameTiming(refresh_index=index, target_time=index / rate, refresh_period=1 / rate)
-
-
-class TestDisplayTimeline:
-    def test_gap_selects_current_image_without_replay(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.present_trial({'event_id': 0})
-        paradigm.render_frame(timing(100))
-        renderer.reset_mock()
-        paradigm.render_frame(timing(103))
-        assert renderer.draw_texture.call_args_list[0] == call(paradigm._stim_textures[3], _STIM_RECT)
-
-    def test_missing_final_images_does_not_extend_stimulus(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.present_trial({'event_id': 0})
-        paradigm.render_frame(timing(100))
-        renderer.reset_mock()
-        paradigm.render_frame(timing(100 + _N_STIM_FRAMES))
-        assert not paradigm.is_presenting()
-        assert renderer.draw_texture.call_args_list[0] == call(paradigm._init_tex, _STIM_RECT)
-
-    def test_gap_across_cue_boundary_keeps_stimulus_origin(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.present_trial({'event_id': 7})
-        paradigm.render_frame(timing(100))
-        renderer.reset_mock()
-        paradigm.render_frame(timing(100 + _CUE_FRAMES + 1))
-        assert renderer.draw_texture.call_args_list[0] == call(paradigm._stim_textures[1], _STIM_RECT)
-        paradigm.render_frame(timing(100 + _CUE_FRAMES + 3))
-        trigger.send.assert_called_once_with(7)
-
-    def test_gap_past_entire_trial_does_not_emit_expired_start(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.present_trial({'event_id': 7})
-        paradigm.render_frame(timing(100))
-        paradigm.render_frame(timing(100 + _CUE_FRAMES + _N_STIM_FRAMES))
-        assert not paradigm.is_presenting()
-        trigger.send.assert_not_called()
-
-    def test_result_duration_uses_refreshes_not_calls(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.present_result({'target_id': 7})
-        paradigm.render_frame(timing(100))
-        paradigm.render_frame(timing(100 + _RESULT_FRAMES))
-        assert not paradigm.is_presenting()
-
-    def test_duplicate_refresh_does_not_draw_or_advance(self, paradigm, renderer, trigger):
-        paradigm.setup(renderer=renderer, trigger=trigger)
-        paradigm.present_trial({'event_id': 0})
-        paradigm.render_frame(timing(100))
-        renderer.reset_mock()
-        assert paradigm.render_frame(timing(100)) is False
-        renderer.draw_texture.assert_not_called()
-
-    @pytest.mark.parametrize('rate', [30, 59.94, 75, 120])
-    def test_wrong_display_rate_cannot_play_60_hz_pack(self, paradigm, renderer, trigger, rate):
-        paradigm.setup(renderer=renderer, trigger=trigger)
-        with pytest.raises(ValueError, match='60 Hz'):
-            paradigm.render_frame(timing(100, rate))
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +191,13 @@ class TestTrialStimulusPresent:
         paradigm.present_trial({"event_id": 0})          # 0 = baseline / no-cue
         assert paradigm._state == _State.STIM
 
-    def test_cue_origin_waits_for_first_display_opportunity(self, paradigm, renderer, trigger):
+    def test_requires_fixed_60hz_display_mode(self):
+        assert Classic40SSVEP_2.required_refresh_rate_hz == 60.0
+
+    def test_cue_timeline_starts_at_first_frame(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
         paradigm.present_trial({"event_id": 2})
-        assert paradigm._phase_start_refresh is None
+        assert paradigm._phase_start_time is None
 
     def test_current_event_stored(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
@@ -282,10 +223,11 @@ class TestTrialStimulusPresent:
 
 class TestRenderFrameTransitions:
     def _tick(self, paradigm, n=1):
+        t = getattr(self, "_t", 0.0)
         for _ in range(n):
-            index = getattr(self, '_next_refresh', 0)
-            paradigm.render_frame(timing(index))
-            self._next_refresh = index + 1
+            paradigm.render_frame(t)
+            t += 1 / 60
+        self._t = t
 
     def test_cue_transitions_to_stim_after_countdown(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
@@ -360,10 +302,10 @@ class TestTrialResultPresent:
         paradigm.present_result({"target_id": 1})
         assert paradigm._state == _State.RESULT
 
-    def test_result_origin_waits_for_first_display_opportunity(self, paradigm, renderer, trigger):
+    def test_result_timeline_starts_at_first_frame(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
         paradigm.present_result({"target_id": 1})
-        assert paradigm._phase_start_refresh is None
+        assert paradigm._phase_start_time is None
 
     def test_add_text_accumulates(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
@@ -420,7 +362,7 @@ class TestRenderFrameDrawing:
     def test_idle_calls_clear_and_draw_texture(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
         renderer.reset_mock()
-        paradigm.render_frame(timing(0))
+        paradigm.render_frame(0.0)
         renderer.clear.assert_called_once()
         renderer.draw_texture.assert_called()
 
@@ -429,7 +371,7 @@ class TestRenderFrameDrawing:
         paradigm.setup(renderer=renderer, trigger=trigger)
         paradigm.present_trial({"event_id": target_id})
         renderer.reset_mock()
-        paradigm.render_frame(timing(0))
+        paradigm.render_frame()
 
         assert renderer.draw_texture.call_args_list == [
             call(paradigm._cue_textures[target_id - 1], _STIM_RECT),
@@ -444,10 +386,10 @@ class TestRenderFrameDrawing:
         paradigm.setup(renderer=renderer, trigger=trigger)
         paradigm.present_result({"target_id": 1})
         paradigm.present_trial({"event_id": 1})
-        paradigm.render_frame(timing(0))
+        paradigm.render_frame(0.0)
         paradigm.present_result({"target_id": result_id})
         renderer.reset_mock()
-        paradigm.render_frame(timing(1))
+        paradigm.render_frame(1 / 60)
 
         assert paradigm._current_event == 1
         assert paradigm._result_target_id == result_id
@@ -461,12 +403,12 @@ class TestRenderFrameDrawing:
     def test_new_trial_clears_result_and_moves_cue(self, paradigm, renderer, trigger):
         paradigm.setup(renderer=renderer, trigger=trigger)
         paradigm.present_trial({"event_id": 1})
-        paradigm.render_frame(timing(0))
+        paradigm.render_frame(0.0)
         paradigm.present_result({"target_id": 40})
-        paradigm.render_frame(timing(1))
+        paradigm.render_frame(1 / 60)
         paradigm.present_trial({"event_id": 9})
         renderer.reset_mock()
-        paradigm.render_frame(timing(2))
+        paradigm.render_frame(2 / 60)
 
         assert paradigm._result_target_id == 0
         assert renderer.draw_texture.call_args_list[0] == call(
@@ -480,7 +422,7 @@ class TestRenderFrameDrawing:
         paradigm.present_result({"target_id": 1})
         paradigm.present_trial({"event_id": target_id})
         renderer.reset_mock()
-        paradigm.render_frame(timing(0))
+        paradigm.render_frame()
 
         assert paradigm._result_target_id == 0
         assert renderer.draw_texture.call_args_list[0] == call(
@@ -489,7 +431,184 @@ class TestRenderFrameDrawing:
         renderer.draw_rect.assert_not_called()
 
     def test_render_frame_noop_without_renderer(self, paradigm):
-        assert paradigm.render_frame(timing(0)) is False
+        # should not raise
+        paradigm.render_frame(0.0)
+
+
+class TestTimelineAndMissedFrames:
+    def test_short_gap_skips_expired_images_without_replay(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 0})
+        paradigm.render_frame(10.0)
+        renderer.reset_mock()
+        paradigm.render_frame(10.0 + 3 / 60)
+        assert renderer.draw_texture.call_args_list[0] == call(paradigm._stim_textures[3], _STIM_RECT)
+        assert paradigm.missed_frames == 2
+
+    def test_one_second_gap_ends_240_frame_stimulus_on_deadline(self, tmp_path, renderer, trigger):
+        frames_240 = [np.full((10, 10, 1), (i % 200) + 1, dtype=np.uint8) for i in range(240)]
+        pack = MagicMock()
+        pack.idle_frame = _IDLE_FRAME
+        pack.iter_stimulation_frames.return_value = iter(frames_240)
+        pack.iter_cue_frames.return_value = iter(_CUE_FRAME_DATA)
+        pack.iter_result_frames.return_value = iter(_RESULT_FRAME_DATA)
+        with (
+            patch(
+                "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep._frame_pack_path",
+                return_value=Path("fake.ofp"),
+            ),
+            patch(
+                "omnibci.infrastructure.plugins.paradigms.classic40SSVEP.ssvep.FramePack",
+                return_value=MagicMock(
+                    __enter__=MagicMock(return_value=pack),
+                    __exit__=MagicMock(return_value=False),
+                ),
+            ),
+        ):
+            p240 = Classic40SSVEP_2(parameters={}, resource_root=tmp_path)
+            p240.setup(renderer=renderer, trigger=trigger)
+            p240.present_trial({"event_id": 0})
+            for i in range(60):
+                p240.render_frame(i / 60)
+            for i in range(120, 240):
+                p240.render_frame(i / 60)
+            assert p240.is_presenting()
+            p240.render_frame(4.0)
+            assert not p240.is_presenting()
+            assert p240.missed_frames == 60
+            trigger.clear.assert_called()
+
+    def test_gap_across_cue_boundary_emits_single_delayed_marker(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 7})
+        paradigm.render_frame(0.0)
+        renderer.reset_mock()
+        paradigm.render_frame((_CUE_FRAMES + 1) / 60)
+        assert renderer.draw_texture.call_args_list[0] == call(paradigm._stim_textures[1], _STIM_RECT)
+        paradigm.render_frame((_CUE_FRAMES + 3) / 60)
+        trigger.send.assert_called_once_with(7)
+
+    def test_gap_past_entire_stimulus_omits_expired_start_marker(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 7})
+        paradigm.render_frame(0.0)
+        paradigm.render_frame((_CUE_FRAMES + _N_STIM_FRAMES) / 60)
+        assert not paradigm.is_presenting()
+        trigger.send.assert_not_called()
+
+    def test_result_interval_ends_on_time_after_gap(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_result({"target_id": 7})
+        paradigm.render_frame(0.0)
+        paradigm.render_frame(_RESULT_FRAMES / 60)
+        assert not paradigm.is_presenting()
+
+    def test_duplicate_or_regressed_timestamp_redraws_without_advancing(self, paradigm, renderer, trigger):
+        paradigm.setup(renderer=renderer, trigger=trigger)
+        paradigm.present_trial({"event_id": 0})
+        paradigm.render_frame(1.0)
+        renderer.reset_mock()
+        paradigm.render_frame(1.0)
+        paradigm.render_frame(0.9)
+        assert renderer.clear.call_count == 2
+        drawn_stim = [c.args[0] for c in renderer.draw_texture.call_args_list[::2]]
+        assert drawn_stim == [paradigm._stim_textures[0], paradigm._stim_textures[0]]
+        assert paradigm.missed_frames == 0
+
+    def test_double_buffer_duplicate_regressed_and_boundary_slots_never_replay_stale_frame(
+        self, paradigm, trigger, monkeypatch
+    ):
+        import asyncio
+        from omnibci.infrastructure.stimulation.render_loop import RenderLoop
+
+        class _DoubleBufferedRenderer:
+            def __init__(self) -> None:
+                self.front: list[object] = ["UNINITIALIZED_FRONT"]
+                self.back: list[object] = ["UNINITIALIZED_BACK"]
+                self.presented: list[list[object]] = []
+                self._remaining = 0
+
+            def run_times(self, times: list[float]) -> None:
+                self._remaining = len(times)
+                samples = iter([0.0, *times])
+                monkeypatch.setattr(
+                    "omnibci.infrastructure.stimulation.render_loop.time.perf_counter",
+                    lambda: next(samples),
+                )
+                asyncio.run(RenderLoop(self, paradigm).run_async())
+
+            def should_close(self) -> bool:
+                if self._remaining <= 0:
+                    return True
+                self._remaining -= 1
+                return False
+
+            def poll_events(self) -> None:
+                pass
+
+            def refresh_rate_hz(self) -> float:
+                return 60.0
+
+            def upload_texture(self, image) -> TextureHandle:
+                return TextureHandle()
+
+            def release_texture(self, handle: TextureHandle) -> None:
+                pass
+
+            def clear(self, color=None) -> None:
+                self.back = []
+
+            def draw_rect(self, rect, color) -> None:
+                self.back.append(("rect", rect, color))
+
+            def draw_texture(self, handle, rect) -> None:
+                self.back.append(("tex", handle, rect))
+
+            def end_frame(self) -> None:
+                self.front, self.back = self.back, self.front
+                self.presented.append(list(self.front))
+
+        db = _DoubleBufferedRenderer()
+        paradigm.setup(renderer=db, trigger=trigger)
+
+        # Free-run duplicate slot + regressed timestamp: slot 0, slot 1, duplicate slot 1, regressed slot 0.
+        paradigm.present_trial({"event_id": 0})
+        db.run_times([0.0, 1 / 60, 0.020, 0.005])
+        assert all("UNINITIALIZED_FRONT" not in f and "UNINITIALIZED_BACK" not in f for f in db.presented)
+        presented_tex = [f[0][1] for f in db.presented]
+        assert presented_tex == [
+            paradigm._stim_textures[0],
+            paradigm._stim_textures[1],
+            paradigm._stim_textures[1],
+            paradigm._stim_textures[1],
+        ]
+
+        # Cued trial boundary: last cue frame (slot 59) + duplicate slot 59 (even though _state is now STIM!),
+        # then first stim frame (slot 60) + duplicate slot 60, then stimulus end (slot 65) + duplicate.
+        db.presented.clear()
+        trigger.reset_mock()
+        paradigm.present_trial({"event_id": 7})
+        db.run_times([
+            0.0,
+            59 / 60,
+            59 / 60 + 0.002,
+            60 / 60,
+            60 / 60 + 0.002,
+            (_CUE_FRAMES + _N_STIM_FRAMES) / 60,
+            (_CUE_FRAMES + _N_STIM_FRAMES) / 60 + 0.002,
+        ])
+        assert all("UNINITIALIZED_FRONT" not in f and "UNINITIALIZED_BACK" not in f for f in db.presented)
+        boundary_tex = [f[0][1] for f in db.presented]
+        assert boundary_tex == [
+            paradigm._cue_textures[6],
+            paradigm._cue_textures[6],
+            paradigm._cue_textures[6],
+            paradigm._stim_textures[0],
+            paradigm._stim_textures[0],
+            paradigm._init_tex,
+            paradigm._init_tex,
+        ]
+        assert trigger.mock_calls == [call.clear(), call.send(7), call.clear()]
 
 
 from unittest.mock import Mock

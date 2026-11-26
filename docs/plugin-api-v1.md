@@ -1,6 +1,6 @@
 # Plugin API v1 Domain Contracts
 
-This document specifies the implemented **Plugin API v1** Python contracts: the canonical 19-name `omnibci.sdk` exports, two constructor signatures, value invariants, role lifecycles, and display-timing boundaries. See the [manifest guide](plugin-manifest.md) for `manifest.toml` and schema rules, the [developer guide](plugin-development.md) for author workflows (`validate`, `package`, `develop`), and [validation](validation.md) for automated and physical-device verification.
+This document specifies the implemented **Plugin API v1** Python contracts: the canonical 18-name `omnibci.sdk` exports, two constructor signatures, value invariants, and role lifecycles. See the [manifest guide](plugin-manifest.md) for `manifest.toml` and schema rules, the [developer guide](plugin-development.md) for author workflows (`validate`, `package`, `develop`), and [validation](validation.md) for automated and physical-device verification.
 
 Terminology follows the [manifest guide](plugin-manifest.md): a **Package** declares **Contributions**; an owning **Module Host** constructs their **Instances**. The seven public role classes are contracts implemented by Contribution entry-point classes, and their methods are invoked on Instances. Package, catalog, profile, and binding identities stay outside the SDK; these names add no public base class or export.
 
@@ -16,7 +16,7 @@ Terminology follows the [manifest guide](plugin-manifest.md): a **Package** decl
 
 ## 2. Public export inventory
 
-The [SDK](../omnibci/sdk/__init__.py) has **19 public names**. Each is required by a role, a structured boundary value, or a narrow injected capability.
+The [SDK](../omnibci/sdk/__init__.py) has **18 public names**. Each is required by a role, a structured boundary value, or a narrow injected capability.
 
 | Group | Public names | Purpose |
 | --- | --- | --- |
@@ -25,7 +25,6 @@ The [SDK](../omnibci/sdk/__init__.py) has **19 public names**. Each is required 
 | Acquisition results | `SourceObservation`, `SourceCheckpoint` | Keep metadata inspection and resumable source state complete. |
 | Processing results | `Prediction`, `EpochBoundary` | Return validated predictions and ordered sample boundaries. |
 | Drawing | `RenderSurface`, `Color`, `Rect`, `TextureHandle` | Draw and manage textures without controlling the window or submission loop. |
-| Display timing | `FrameTiming` | Select content using the target refresh index, rendering-session target time, and refresh period. |
 | Trigger capability | `TriggerOutput` | Allow a paradigm to send/clear through the selected trigger without owning its lifecycle. |
 
 The SDK exports the same objects the host uses, not duplicate public models. Canonical definitions stay with the corresponding domain ports/values. Standard-library and NumPy types keep their own import paths. Generic contexts, a checkpoint subclass, decode-attempt/frame-phase wrappers, SDK-specific JSON aliases, and an exception hierarchy are omitted.
@@ -270,14 +269,16 @@ The trigger plugin owns device I/O; Stimulation owns `setup`/`clear`/`teardown` 
 
 ### 5.6 Paradigm
 
-`render_frame()` receives an immutable `FrameTiming(refresh_index, target_time, refresh_period)` and returns whether content is ready for submission. See [Section 7](#7-display-timing-and-platform-boundaries) for timeline semantics, missed-slot omission, and platform limits.
+`render_frame()` receives `elapsed_seconds` from a monotonic clock relative to the start of the rendering session, while the host owns event polling and VSync frame submission. Paradigms that require a fixed monitor refresh rate may declare `required_refresh_rate_hz: float | None = None` for startup nominal display-rate validation, while the host logs both the reported and measured refresh rates.
 
 ```python
 class Paradigm(ABC):
+    required_refresh_rate_hz: float | None = None
+
     def setup(self, *, renderer: RenderSurface, trigger: TriggerOutput) -> None: ...
     def present_trial(self, parameters: Mapping[str, object]) -> None: ...
     def present_result(self, result: Mapping[str, object]) -> None: ...
-    def render_frame(self, frame: FrameTiming) -> bool: ...
+    def render_frame(self, elapsed_seconds: float) -> None: ...
     def is_presenting(self) -> bool: ...
     def teardown(self) -> None: ...
 ```
@@ -286,7 +287,7 @@ All methods run serially on the renderer owner thread. `setup()` receives both r
 
 [Classic40SSVEP](../omnibci/infrastructure/plugins/paradigms/classic40SSVEP/ssvep.py) uses `{"event_id": 1..40}` for cued trials, `{"event_id": 0}` for explicit free run, and `{"target_id": 1..40}` for result feedback. Host validation copies the declared JSON object without applying defaults; missing or malformed payloads never silently select a different operation. REST/IPC batches retain `n_trials` and require an equally sized `trial_params` object list (1–10000 trials, aggregate JSON at most 1 MiB). Numeric frontend controls declare `payload_key`; acknowledgements return `trial_params`, while operation identity stays host-owned.
 
-`render_frame()` returns a Python `bool`: `True` when content is ready to submit, `False` when no new image should be submitted. The host also discards work whose opportunity expires during drawing. A `True` return is not a presentation receipt, and `None` returns are contract errors. `is_presenting()` returns a Python `bool`: `True` while a trial or feedback is active, `False` when another trial may be admitted. An exception or invalid return faults the instance.
+`is_presenting()` returns a Python `bool`: `True` while a trial or feedback is active, `False` when another trial may be admitted. An exception or invalid return faults the instance.
 
 ### 5.7 Effector
 
@@ -306,7 +307,7 @@ The host validates its internal command envelope, then checks the device payload
 
 No SDK exception hierarchy is required. Use `ValueError`/`TypeError` for invalid construction values and ordinary implementation exceptions for failures. The host supplies structured errors based on the operation and admission stage. Before invocation it can report schema or admission rejection; after an execution call begins, an exception is a failure with potentially uncertain effects, not proof that nothing happened.
 
-Contribution, configuration revision, and operation IDs stay in host records and are never injected into plugins merely for logging. Invalid returns at role boundaries (including non-boolean readiness/render/presenting values) fault the instance. Cleanup attempts all safe, applicable steps while preserving the original cause; it tolerates partial initialization and repeated release, and failed/unresolved cleanup is never reported as success. Teardown must not emit new work or race an unsettled call that still owns the resource.
+Contribution, configuration revision, and operation IDs stay in host records and are never injected into plugins merely for logging. Invalid returns at role boundaries (including non-boolean readiness/presenting values) fault the instance. Cleanup attempts all safe, applicable steps while preserving the original cause; it tolerates partial initialization and repeated release, and failed/unresolved cleanup is never reported as success. Teardown must not emit new work or race an unsettled call that still owns the resource.
 
 | Owner | Required execution discipline |
 | --- | --- |
@@ -316,47 +317,3 @@ Contribution, configuration revision, and operation IDs stay in host records and
 | Actuation | One execution owner for setup, commands, quiescence, and teardown; keep transport/heartbeat work responsive. |
 
 Stimulation preparation initializes the renderer, sets up and clears the selected trigger, then sets up the paradigm with both capabilities. Shutdown stops admission and settles callbacks before paradigm teardown, trigger clear/teardown, and renderer shutdown, in that order. Failed partial setup gets matching cleanup: only clear a trigger whose setup completed, while its teardown handles any partial acquisition. A cleanup exception never skips other safe releases, and one host owns the full cleanup sequence.
-
-## 7. Display timing and platform boundaries
-
-### 7.1 `FrameTiming` contract and missed-slot policy
-
-```python
-@dataclass(frozen=True, slots=True)
-class FrameTiming:
-    refresh_index: int
-    target_time: float
-    refresh_period: float
-```
-
-- `refresh_index`: nonnegative integer identifying the target display refresh within the rendering session. Derived from the native display timeline so gaps are preserved when callbacks are not serviced; it is not a count of Python callbacks, draws, or swaps.
-- `target_time`: predicted presentation time in monotonic seconds relative to the rendering-session origin (not callback arrival time, GPU completion, or optical presentation proof).
-- `refresh_period`: positive display period in seconds for this timing sample.
-
-The host owns the display clock and frame submission; plugins own content selection policy.
-
-- **Missed-slot omission (Classic40 SSVEP):** image selection follows `image_index = frame.refresh_index - stimulus_start_refresh`. Cue and stimulus origins are fixed when the trial starts and never shift when a refresh is missed or an image is unavailable. If refresh 101 is missed, refresh 102 draws image 2 without retrying image 1, catching up skipped images, or extending a 240-slot (~4 s at 60 Hz) stimulus interval. Classic40 requires a fixed 60 Hz display mode within ±0.01 Hz of the reported native rate (59.94 Hz, 75 Hz, and 120 Hz are rejected).
-- **Triggers and missed slots:** a missed image does not re-emit a start marker or rebase the stimulus phase. If the normal last-cue-frame marker opportunity is missed, the start marker emits once at the first serviced stimulus opportunity with a logged delay; if the entire stimulus interval elapsed, the expired marker is omitted.
-- **Video paradigms:** a video paradigm (for example 30 fps on a 60 Hz display) can align media presentation timestamps against `frame.target_time - playback_origin`, repeating or omitting decoded frames according to the media timeline while keeping decoding outside `render_frame()`.
-
-### 7.2 Host scheduling and presentation limits
-
-Both OpenGL adapters share one private `FrameClock`:
-
-1. The native display source records the latest timing; native callbacks never invoke plugin drawing or teardown.
-2. The render owner polls window events, then calls nonblocking `begin_frame()` (returning `None` until a new usable native sample arrives) while preserving the last consumed refresh across iterations.
-3. Stale notifications coalesce into the newest usable target with skipped refresh numbers preserved; there is no callback backlog or catch-up burst.
-4. `end_frame(frame, submit=...)` consumes the acquired opportunity exactly once. If `render_frame()` returns `False` or the target expires during drawing, the pending output is discarded rather than carried forward under a new target index.
-5. Clock loss for one second faults the Stimulation owner path; ordinary missed opportunities continue according to plugin policy. Shutdown logs skipped opportunities, discarded frames, and submission attempts without claiming optical presentation.
-
-An expired unsubmitted frame can be discarded, but work already queued to the GPU or OS compositor may still present late; neither GLFW swap intervals nor `end_frame() == True` prove optical onset. Validate display pacing and trigger alignment on target hardware (see [validation](validation.md)).
-
-### 7.3 Platform timing sources
-
-| Platform | Native source | Current boundary |
-| --- | --- | --- |
-| macOS | CoreVideo output video/host timestamps for the monitor containing most of the window | Native tests verified locally. Display/mode changes require restart. |
-| Windows | DWM refresh counter and QPC timestamps | Single active display; binding/layout and conversion covered by unit tests, native execution requires target-machine verification. |
-| Linux/X11 | `GLX_OML_sync_control` MSC/UST and reported refresh rate | Single active display, extension and monotonic-microsecond UST required. Wayland timing is unsupported. |
-
-Unsupported platforms, missing extensions, and display-clock failures raise explicit errors rather than falling back to a synthetic 60 Hz software timer.

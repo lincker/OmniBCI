@@ -10,11 +10,11 @@ from omnibci.domain.ports.acquisition import (
 from omnibci.domain.ports.algorithm import Decoder, EpochDetector, Filter, EpochBoundary, Prediction
 from omnibci.domain.ports.effector import Effector
 from omnibci.domain.ports.paradigm import Paradigm
-from omnibci.domain.ports.renderer import Color, FrameTiming, Rect, RenderSurface, TextureHandle
+from omnibci.domain.ports.renderer import Color, Rect, RenderSurface, TextureHandle
 from omnibci.domain.signal_info import ChannelDescriptor, SignalInfo
 
 __all__ = [
-    "Color", "Decoder", "Effector", "EpochDetector", "Filter", "EpochBoundary", "FrameTiming",
+    "Color", "Decoder", "Effector", "EpochDetector", "Filter", "EpochBoundary",
     "Paradigm", "Prediction", "Rect", "RenderSurface", "SignalSource", "SignalInfo",
     "ChannelDescriptor", "SourceObservation", "SourceCheckpoint", "TextureHandle",
     "TriggerEmitter", "TriggerOutput",

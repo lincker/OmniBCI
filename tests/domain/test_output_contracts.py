@@ -5,11 +5,9 @@ import math
 import numpy as np
 import pytest
 
-from omnibci.domain.ports import renderer
 from omnibci.domain.ports.effector import Effector
 from omnibci.domain.ports.paradigm import Paradigm
 from omnibci.domain.ports.renderer import Color, Rect
-from omnibci.sdk import FrameTiming
 
 
 @pytest.mark.parametrize("field", ["r", "g", "b", "a"])
@@ -50,30 +48,6 @@ def test_valid_values_keep_precision_defaults_and_coordinates_outside_viewport()
         rect.w = -1
 
 
-@pytest.mark.parametrize("index", [-1, True, 1.5, "1", None])
-def test_refresh_index_requires_nonnegative_integer(index):
-    with pytest.raises((TypeError, ValueError)):
-        renderer.FrameTiming(index, 1.0, 1 / 60)
-
-
-@pytest.mark.parametrize("field", ["target_time", "refresh_period"])
-@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, True, "1", None, -1])
-def test_invalid_clock_values_are_rejected(field, value):
-    values = dict(refresh_index=0, target_time=1.0, refresh_period=1 / 60)
-    values[field] = value
-    with pytest.raises((TypeError, ValueError)):
-        renderer.FrameTiming(**values)
-
-
-def test_zero_period_is_invalid_but_session_origin_is_valid():
-    with pytest.raises(ValueError):
-        renderer.FrameTiming(0, 0, 0)
-    frame = renderer.FrameTiming(0, 0, 1 / 60)
-    assert frame.target_time == 0.0
-    with pytest.raises(FrozenInstanceError):
-        frame.refresh_index = 1
-
-
 class _PresentationOnlyParadigm(Paradigm):
     def setup(self, *, renderer, trigger):
         pass
@@ -94,7 +68,7 @@ def test_incomplete_paradigm_cannot_be_constructed(missing):
     if missing == "render_frame":
         methods["is_presenting"] = lambda self: False
     elif missing == "is_presenting":
-        methods["render_frame"] = lambda self, frame: True
+        methods["render_frame"] = lambda self, elapsed_seconds: None
     implementation = type("IncompleteParadigm", (_PresentationOnlyParadigm,), methods)
 
     with pytest.raises(TypeError, match="abstract"):
@@ -103,17 +77,15 @@ def test_incomplete_paradigm_cannot_be_constructed(missing):
 
 def test_paradigm_with_both_required_methods_can_be_constructed():
     class CompleteParadigm(_PresentationOnlyParadigm):
-        def render_frame(self, frame):
-            self.frame = frame
-            return True
+        def render_frame(self, elapsed_seconds):
+            self.elapsed = elapsed_seconds
 
         def is_presenting(self):
             return False
 
     paradigm = CompleteParadigm()
-    frame = FrameTiming(15, 0.25, 1 / 60)
-    assert paradigm.render_frame(frame) is True
-    assert paradigm.frame is frame
+    paradigm.render_frame(0.25)
+    assert paradigm.elapsed == 0.25
     assert paradigm.is_presenting() is False
 
 

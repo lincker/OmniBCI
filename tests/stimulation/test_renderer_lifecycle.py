@@ -1,40 +1,8 @@
 """Both renderer adapters release partial resources without a display server."""
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-
-
-@pytest.mark.parametrize('adapter', ['pyopengl_renderer', 'moderngl_renderer'])
-def test_discarded_frame_never_swaps_and_clock_closes_before_window(adapter, monkeypatch):
-    import importlib
-    module = importlib.import_module('omnibci.infrastructure.stimulation.adapters.' + adapter)
-    implementation = module.PyOpenGLRenderer if adapter.startswith('py') else module.ModernGLRenderer
-    renderer = implementation()
-    renderer._ready = True
-    renderer._clock = Mock()
-    frame = renderer._clock.begin_frame.return_value
-    renderer._clock.end_frame.return_value = False
-    if adapter.startswith('py'):
-        renderer._win = Mock()
-        swap = renderer._win.flip
-    else:
-        renderer._window = object()
-        monkeypatch.setattr(module, 'glfw', Mock())
-        swap = module.glfw.swap_buffers
-    assert renderer.begin_frame() is frame
-    assert renderer.end_frame(frame, submit=False) is False
-    swap.assert_not_called()
-    renderer._clock.end_frame.return_value = True
-    assert renderer.end_frame(frame, submit=True) is True
-    swap.assert_called_once()
-    order = []
-    renderer._clock.close.side_effect = lambda: order.append('clock')
-    if adapter.startswith('py'):
-        renderer._win.teardown.side_effect = lambda: order.append('window')
-    else:
-        module.glfw.destroy_window.side_effect = lambda window: order.append('window')
-    renderer.shutdown()
-    assert order == ['clock', 'window']
 
 
 @pytest.mark.parametrize('adapter', ['pyopengl_renderer', 'moderngl_renderer'])
@@ -127,3 +95,23 @@ def test_window_current_context_precedes_vsync(monkeypatch):
     names = [call[0] for call in glfw.mock_calls]
     assert names.index('make_context_current') < names.index('swap_interval')
     window.teardown()
+
+
+def test_window_refresh_rate_selects_monitor_with_largest_overlap(monkeypatch):
+    from omnibci.infrastructure.stimulation.ui import window as module
+    primary = object()
+    secondary = object()
+    glfw = Mock()
+    glfw.get_monitors.return_value = [primary, secondary]
+    glfw.get_window_pos.return_value = (1920, 0)
+    glfw.get_window_size.return_value = (1920, 1080)
+    glfw.get_monitor_pos.side_effect = lambda m: (0, 0) if m is primary else (1920, 0)
+    glfw.get_video_mode.side_effect = lambda m: SimpleNamespace(
+        size=SimpleNamespace(width=1920, height=1080),
+        refresh_rate=120 if m is primary else 60,
+    )
+    monkeypatch.setattr(module, 'glfw', glfw)
+    assert module.window_refresh_rate_hz(object()) == 60.0
+
+    glfw.get_monitors.return_value = []
+    assert module.window_refresh_rate_hz(object()) is None

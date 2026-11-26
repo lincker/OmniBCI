@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 from types import SimpleNamespace
 
 import asyncio
+import logging
 import numpy as np
 import pytest
 
@@ -114,6 +115,53 @@ class TestStimulatorStart:
         ):
             asyncio.run(s.start_async())
         assert call_order == ["trigger", "paradigm"]
+
+    @pytest.mark.parametrize("observed_hz", [None, 0, -60, 59, 61, 75, 120, 144, float("nan"), True])
+    def test_unsupported_or_missing_display_rate_fails_before_trigger_or_paradigm_setup(self, observed_hz):
+        s, mock_renderer, mock_paradigm, mock_trigger, mock_loop = _make_stimulator()
+        mock_paradigm.required_refresh_rate_hz = 60.0
+        mock_renderer.refresh_rate_hz.return_value = observed_hz
+        with patch(
+            "omnibci.infrastructure.stimulation.stimulator._create_renderer",
+            return_value=mock_renderer,
+        ), patch(
+            "omnibci.infrastructure.stimulation.stimulator.RenderLoop",
+            return_value=mock_loop,
+        ):
+            with pytest.raises(RuntimeError, match="60 Hz"):
+                asyncio.run(s.start_async())
+        mock_trigger.setup.assert_not_called()
+        mock_paradigm.setup.assert_not_called()
+        mock_renderer.shutdown.assert_called_once()
+
+    @pytest.mark.parametrize("observed_hz", [60.0, 59.94])
+    def test_nominal_display_rate_matches_logs_and_does_not_requery_on_trial(self, observed_hz, caplog):
+        s, mock_renderer, mock_paradigm, _, mock_loop = _make_stimulator()
+        s._payload_schemas = {"trial": {"type": "object", "properties": {}, "additionalProperties": False}}
+        mock_paradigm.required_refresh_rate_hz = 60.0
+        mock_renderer.refresh_rate_hz.return_value = observed_hz
+        with caplog.at_level(logging.INFO, logger="omnibci.infrastructure.stimulation.render_loop"):
+            with patch(
+                "omnibci.infrastructure.stimulation.stimulator._create_renderer",
+                return_value=mock_renderer,
+            ), patch(
+                "omnibci.infrastructure.stimulation.stimulator.RenderLoop",
+                return_value=mock_loop,
+            ):
+                asyncio.run(s.start_async())
+        mock_renderer.refresh_rate_hz.assert_called_once()
+        assert any(
+            f"system={observed_hz:g} Hz" in record.getMessage() and "paradigm_required=60 Hz" in record.getMessage()
+            for record in caplog.records
+        )
+        s.paradigm = mock_paradigm
+        s._renderer = mock_renderer
+        mock_paradigm.present_trial.return_value = None
+        mock_renderer.refresh_rate_hz.reset_mock()
+        mock_renderer.refresh_rate_hz.return_value = 120.0
+        s.present_trial({})
+        mock_renderer.refresh_rate_hz.assert_not_called()
+        mock_paradigm.present_trial.assert_called_once_with({})
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +284,6 @@ class TestCreateRenderer:
 
 import threading
 from unittest.mock import Mock
-from omnibci.sdk import FrameTiming
 
 
 def make_owner(monkeypatch, failures=()):
@@ -249,14 +296,10 @@ def make_owner(monkeypatch, failures=()):
             threads.append(threading.get_ident())
             if name in failures:
                 raise RuntimeError(name)
-            if name == 'renderer.begin_frame':
-                return FrameTiming(1, 1 / 60, 1 / 60)
-            if name == 'paradigm.render_frame':
-                return True
         return call
 
     renderer = SimpleNamespace(**{name: operation('renderer.' + name) for name in
-        ('initialize', 'shutdown', 'poll_events', 'begin_frame', 'end_frame')})
+        ('initialize', 'shutdown', 'poll_events', 'end_frame')})
     renderer.should_close = Mock(side_effect=[False, True])
     trigger = SimpleNamespace(**{name: operation('trigger.' + name) for name in
         ('setup', 'clear', 'teardown', 'send')})
@@ -288,7 +331,7 @@ def test_one_thread_and_one_cleanup_owner(monkeypatch):
     asyncio.run(owner.start_async())
     assert calls == [
         'renderer.initialize', 'trigger.setup', 'trigger.clear', 'paradigm.setup',
-        'renderer.poll_events', 'renderer.begin_frame', 'paradigm.render_frame', 'renderer.end_frame',
+        'renderer.poll_events', 'paradigm.render_frame', 'renderer.end_frame',
         'paradigm.teardown', 'trigger.clear', 'trigger.teardown', 'renderer.shutdown',
     ]
     assert set(threads) == {threading.get_ident()}
@@ -365,10 +408,9 @@ def test_blocked_callback_retains_resources_until_it_returns(monkeypatch):
     entered, release = threading.Event(), threading.Event()
     failures = []
 
-    def blocked_frame(frame):
+    def blocked_frame(elapsed_seconds):
         entered.set()
         assert release.wait(2)
-        return True
 
     def run():
         try:

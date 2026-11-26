@@ -1,18 +1,20 @@
-"""Ten-command SSVEP driven by the host's fixed 60 Hz display timeline.
+"""Ten-command SSVEP driven by a fixed 60 Hz display and monotonic elapsed time.
 
-The host serializes setup, trial/result callbacks, rendering and teardown on
-the renderer owner thread. Only small label textures are uploaded; stimulus
-luminance is selected from refresh indices, including gaps between callbacks.
+The host validates the 60 Hz display mode and serializes setup, trial/result
+callbacks, rendering and teardown on the renderer owner thread. Only small
+label textures are uploaded; stimulus luminance and phase deadlines follow
+monotonic ``elapsed_seconds`` without extending missed intervals.
 """
 from collections.abc import Mapping
 from enum import Enum, auto
+import logging
 import math
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
-from omnibci.sdk import Color, FrameTiming, Paradigm, Rect, RenderSurface, TextureHandle, TriggerOutput
+from omnibci.sdk import Color, Paradigm, Rect, RenderSurface, TextureHandle, TriggerOutput
 from .targets import CUE_FRAMES, FREE_CHOICE_EVENT_ID, REFRESH_RATE_HZ, RESULT_FRAMES, STIM_FRAMES, TARGETS
 
 
@@ -49,6 +51,7 @@ def _payload_id(payload: Mapping[str, object], key: str, minimum: int) -> int:
 
 
 class Command10SSVEP(Paradigm):
+    required_refresh_rate_hz = float(REFRESH_RATE_HZ)
 
     def __init__(self, *, parameters: Mapping[str, object], resource_root: Path) -> None:
         if not isinstance(parameters, Mapping) or parameters:
@@ -59,11 +62,14 @@ class Command10SSVEP(Paradigm):
         self._textures: dict[int, TextureHandle] = {}
         self._ready = False
         self._state = _State.IDLE
-        self._phase_start_refresh: int | None = None
-        self._last_refresh = -1
+        self._trial_start_time: float | None = None
+        self._last_trial_slot = -1
+        self._cue_frames = 0
+        self._missed_frames = 0
         self._cue_target_id = 0
         self._result_target_id: int | None = None
         self._marker_sent = False
+        self._last_scene: tuple[_State, int, int, int | None] = (_State.IDLE, 0, 0, None)
 
     def setup(self, *, renderer: RenderSurface, trigger: TriggerOutput) -> None:
         if self._renderer is not None:
@@ -77,16 +83,20 @@ class Command10SSVEP(Paradigm):
                 pixels = np.ascontiguousarray(pixels[::-1])
             self._textures[target_id] = renderer.upload_texture(pixels)
         self._state = _State.IDLE
-        self._phase_start_refresh = None
-        self._last_refresh = -1
+        self._trial_start_time = None
+        self._last_trial_slot = -1
+        self._cue_frames = 0
+        self._missed_frames = 0
         self._result_target_id = None
         self._marker_sent = False
+        self._last_scene = (_State.IDLE, 0, 0, None)
         self._ready = True
 
     def teardown(self) -> None:
         """Release every owned texture; the host clears and releases its trigger."""
         self._ready = False
         self._state = _State.IDLE
+        self._last_scene = (_State.IDLE, 0, 0, None)
         if self._renderer is None:
             return
         errors = []
@@ -115,7 +125,10 @@ class Command10SSVEP(Paradigm):
         self._cue_target_id = target_id
         self._result_target_id = None
         self._marker_sent = False
-        self._phase_start_refresh = None
+        self._trial_start_time = None
+        self._last_trial_slot = -1
+        self._cue_frames = CUE_FRAMES if target_id else 0
+        self._missed_frames = 0
         self._state = _State.CUE if target_id else _State.STIM
 
     def present_result(self, result: Mapping[str, object]) -> None:
@@ -128,61 +141,105 @@ class Command10SSVEP(Paradigm):
         # Keep the four-second stimulus interval even when decoding finishes early.
         self._result_target_id = target_id
 
+    @property
+    def missed_frames(self) -> int:
+        """Number of omitted stimulus slots observed during the latest trial."""
+        return self._missed_frames
+
     def is_presenting(self) -> bool:
         return self._state is not _State.IDLE
 
-    def render_frame(self, frame: FrameTiming) -> bool:
+    def render_frame(self, t: float = 0.0) -> None:
         if not self._ready:
-            return False
-        if not math.isclose(1 / frame.refresh_period, REFRESH_RATE_HZ, rel_tol=0, abs_tol=.01):
-            raise ValueError("Command10 requires a fixed 60 Hz display mode")
-        if frame.refresh_index <= self._last_refresh:
-            return False
-        self._last_refresh = frame.refresh_index
-        if self._phase_start_refresh is None:
-            self._phase_start_refresh = frame.refresh_index
-        elapsed = frame.refresh_index - self._phase_start_refresh
+            return
+        if isinstance(t, bool) or not isinstance(t, (int, float)):
+            raise TypeError("elapsed_seconds must be a real number")
+        t = float(t)
+        if not math.isfinite(t) or t < 0:
+            raise ValueError("elapsed_seconds must be finite and nonnegative")
 
-        if self._state is _State.CUE and elapsed >= CUE_FRAMES:
-            self._phase_start_refresh += CUE_FRAMES
-            elapsed -= CUE_FRAMES
+        if self._state is _State.IDLE:
+            self._last_scene = (_State.IDLE, 0, 0, self._result_target_id)
+            self._draw_scene(*self._last_scene)
+            return
+
+        if self._trial_start_time is None:
+            self._trial_start_time = t
+        trial_slot = math.floor((t - self._trial_start_time) * REFRESH_RATE_HZ + 0.5)
+        if trial_slot <= self._last_trial_slot:
+            # Redraw the current slot's scene so the unconditional swap never
+            # presents a stale or undefined back buffer, without advancing state.
+            self._draw_scene(*self._last_scene)
+            return
+        if self._state in (_State.CUE, _State.STIM) and self._last_trial_slot >= 0 and trial_slot > self._last_trial_slot + 1:
+            missed_start = max(self._last_trial_slot + 1, self._cue_frames)
+            missed_end = min(trial_slot, self._cue_frames + STIM_FRAMES)
+            if missed_end > missed_start:
+                self._missed_frames += missed_end - missed_start
+        self._last_trial_slot = trial_slot
+
+        if self._state is _State.CUE and trial_slot >= self._cue_frames:
             self._state = _State.STIM
 
+        stim_idx = 0
         if self._state is _State.STIM:
-            if elapsed >= STIM_FRAMES:
+            stim_idx = trial_slot - self._cue_frames
+            if stim_idx >= STIM_FRAMES:
+                if self._missed_frames:
+                    logging.warning(
+                        "Command10 stimulus missed %d of %d frames",
+                        self._missed_frames,
+                        STIM_FRAMES,
+                    )
                 if self._marker_sent:
                     self._trigger.clear()
-                self._phase_start_refresh += STIM_FRAMES
-                elapsed -= STIM_FRAMES
+                else:
+                    logging.warning("Command10 stimulus interval elapsed before its start marker")
                 self._state = _State.RESULT
             elif not self._marker_sent:
+                if stim_idx > 0:
+                    logging.warning("Command10 start marker delayed by %d frames", stim_idx)
                 # A request before drawing is not a physical presentation receipt.
                 self._trigger.send(self._cue_target_id or FREE_CHOICE_EVENT_ID)
                 self._marker_sent = True
 
-        if self._state is _State.RESULT and elapsed >= RESULT_FRAMES:
+        if self._state is _State.RESULT and trial_slot >= self._cue_frames + STIM_FRAMES + RESULT_FRAMES:
             self._state = _State.IDLE
 
+        self._last_scene = (
+            self._state,
+            self._cue_target_id,
+            stim_idx if self._state is _State.STIM else 0,
+            self._result_target_id,
+        )
+        self._draw_scene(*self._last_scene)
+
+    def _draw_scene(
+        self,
+        state: _State,
+        cue_target_id: int,
+        stim_idx: int,
+        result_target_id: int | None,
+    ) -> None:
         renderer = self._renderer
         renderer.clear(_BACKGROUND)
         for target in TARGETS:
             cx, cy = (target.column - 3) * 360, (2 - target.row) * 300
-            if self._state is _State.CUE and target.target_id == self._cue_target_id:
+            if state is _State.CUE and target.target_id == cue_target_id:
                 renderer.draw_rect(_rect(cx, cy, 214, 214), _CUE_COLOR)
             color = _IDLE_TARGET
-            if self._state is _State.RESULT and target.target_id == self._result_target_id:
+            if state is _State.RESULT and target.target_id == result_target_id:
                 color = _RESULT_COLOR
-            elif self._state is _State.STIM:
+            elif state is _State.STIM:
                 brightness = .5 + .5 * math.sin(
-                    2 * math.pi * target.frequency_hz * elapsed / REFRESH_RATE_HZ + target.phase_rad,
+                    2 * math.pi * target.frequency_hz * stim_idx / REFRESH_RATE_HZ + target.phase_rad,
                 )
                 color = Color(brightness, brightness, brightness)
             renderer.draw_rect(_rect(cx, cy, 200, 200), color)
             renderer.draw_texture(self._textures[target.target_id], _rect(cx, cy, 128, 128))
 
         renderer.draw_texture(self._textures[0], _FEEDBACK_CAPTION)
-        if self._state in (_State.IDLE, _State.RESULT) and self._result_target_id is not None:
-            renderer.draw_texture(self._textures[self._result_target_id], _FEEDBACK_TARGET)
+        if state in (_State.IDLE, _State.RESULT) and result_target_id is not None:
+            renderer.draw_texture(self._textures[result_target_id], _FEEDBACK_TARGET)
         else:
             renderer.draw_rect(_FEEDBACK_EMPTY, _TEXT_COLOR)
-        return True

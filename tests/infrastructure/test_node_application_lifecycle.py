@@ -334,9 +334,7 @@ def _make_trig_app(monkeypatch, *, clear_error=False, render_error=False, setup_
             return False
         def poll_events(self):
             pass
-        def begin_frame(self):
-            return None
-        def end_frame(self, frame, *, submit):
+        def end_frame(self):
             pass
         def shutdown(self):
             steps.append("renderer-shutdown")
@@ -345,8 +343,8 @@ def _make_trig_app(monkeypatch, *, clear_error=False, render_error=False, setup_
         def setup(self, *, renderer, trigger):
             if setup_error:
                 raise RuntimeError("paradigm initialization failed")
-        def render_frame(self, frame):
-            return False
+        def render_frame(self, elapsed_seconds):
+            pass
         def teardown(self):
             steps.append("paradigm-teardown")
             if render_error:

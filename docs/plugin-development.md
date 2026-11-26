@@ -38,7 +38,7 @@ Construct local state, acquire role resources during the corresponding setup/con
 
 Declare `api_version = "1"`, `manifest_version = 1`, an exact release version, parameter schemas, and the kind-specific declarations in the [manifest guide](plugin-manifest.md). Empty parameters still use an empty closed object schema. Paradigm trial/result and Effector command schemas are separate from constructor parameters. Only Decoders declare channel requirements.
 
-Paradigms implement `render_frame(frame: FrameTiming) -> bool`. Import `FrameTiming` from `omnibci.sdk`; its `refresh_index`, `target_time` and `refresh_period` describe a target display opportunity, not a successful presentation. Select content from this timeline, not callback counts. Return `True` after drawing ready content or `False` to omit this submission; the host also discards expired output. Keep decoding/loading outside the draw callback. The host owns the display clock and submission, and plugins own content policy. See the [timing contract and platform limits](plugin-api-v1.md#7-display-timing-and-platform-boundaries).
+Paradigms implement `render_frame(elapsed_seconds: float) -> None` on the renderer owner thread. The host owns event polling and VSync frame submission, while plugins own stimulus state and drawing via `RenderSurface`.
 
 ## Validate and package
 
